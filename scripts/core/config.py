@@ -31,8 +31,10 @@ _load_dotenv()
 
 
 def dca_home() -> Path:
-    """Runtime data root. Override with env DCA_HOME (default: <project>/data)."""
-    raw = os.environ.get("DCA_HOME", "").strip()
+    """Runtime data root. Override with env FARB_HOME (primary) or DCA_HOME (legacy fallback).
+    Default: <project>/data."""
+    raw = os.environ.get("FARB_HOME", "") or os.environ.get("DCA_HOME", "")
+    raw = raw.strip()
     if raw:
         return Path(raw).expanduser().resolve()
     local = SKILL_ROOT / "data"
@@ -41,7 +43,10 @@ def dca_home() -> Path:
 
 
 def runs_namespace() -> str:
-    return os.environ.get("DCA_RUNS_NAMESPACE", "cex-bitget").strip() or "cex-bitget"
+    ns = os.environ.get("FARB_RUNS_NAMESPACE", "") or os.environ.get(
+        "DCA_RUNS_NAMESPACE", "funding-arb"
+    )
+    return ns.strip() or "funding-arb"
 
 
 def runs_base() -> Path:
@@ -128,7 +133,9 @@ def mode_label(cfg: dict[str, Any]) -> str:
 def mode_hint(cfg: dict[str, Any]) -> str | None:
     return MODE_HINTS.get(str(cfg.get("dcaMode", "")))
 
+
 # ── Strategy Timeframes & Periods ──────────────────────────────────────────
+
 
 def resolve_timeframes(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
     default_tf = {
@@ -146,7 +153,7 @@ def resolve_timeframes(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
         elif isinstance(val, dict):
             result[k] = {
                 "interval": val.get("interval", default_tf[k]["interval"]),
-                "limit": val.get("limit", default_tf[k]["limit"])
+                "limit": val.get("limit", default_tf[k]["limit"]),
             }
         else:
             result[k] = default_tf[k]

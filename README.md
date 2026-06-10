@@ -55,6 +55,18 @@ python3 scripts/cli/scan_funding_arbitrage.py --venues bitget,bybit,okx
 - [docs/PURE_FUTURES_SPREAD_ANALYSIS.md](docs/PURE_FUTURES_SPREAD_ANALYSIS.md) — 深度架构分析
 - [docs/PURE_FUTURES_IMPLEMENTATION_GUIDE.md](docs/PURE_FUTURES_IMPLEMENTATION_GUIDE.md) — 快速实现指南
 
+数据采样与日报：
+
+```bash
+# 每 5 分钟扫描一次并追加 JSONL
+python3 scripts/cli/scan_pure_futures_spreads.py --watch 5 \
+  --jsonl-file data/pure_futures_spreads.jsonl
+
+# 汇总最近 24 小时机会质量
+python3 scripts/cli/report_pure_futures_spreads.py \
+  --jsonl-file data/pure_futures_spreads.jsonl --since-hours 24 --min-samples 3
+```
+
 
 ## 配置
 
