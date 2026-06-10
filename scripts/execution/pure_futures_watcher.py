@@ -34,10 +34,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from cli.scan_pure_futures_spreads import (  # noqa: E402
-    FUTURES_TAKER_FEE_PCT,
-    fetch_all_fee_rate_rows_by_base,
-)
+from cli.scan_pure_futures_spreads import fetch_all_fee_rate_rows_by_base  # noqa: E402
 from core.notify import send_notification  # noqa: E402
 from execution.pure_futures_executor import (  # noqa: E402
     close_pure_futures_leg,

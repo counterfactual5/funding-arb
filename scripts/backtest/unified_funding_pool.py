@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from backtest.borrow_providers import borrow_cost_per_period, get_borrow_provider, _venue_reverse_executable
 from backtest.funding_providers import get_funding_provider
+from core.fee_providers import pair_open_taker_fee_pct, prefetch_futures_fee_rates, taker_fee_pct
 from market.parallel_fetch import run_io_parallel
 
 Direction = Literal["forward", "reverse"]
@@ -27,12 +28,6 @@ SPOT_TAKER_FEE = {
     "binance": 0.001,
     "okx": 0.001,
     "bybit": 0.001,
-}
-FUTURES_TAKER_FEE = {
-    "bitget": 0.0006,
-    "binance": 0.0005,
-    "okx": 0.0005,
-    "bybit": 0.00055,
 }
 VENUE_CLASSES = {
     "bitget": "venues.bitget.BitgetSpotVenue",
@@ -54,10 +49,6 @@ def _get_venue(venue: str):
 
 def _spot_fee_pct(venue: str) -> float:
     return SPOT_TAKER_FEE.get(venue, 0.001) * 100.0
-
-
-def _futures_fee_pct(venue: str) -> float:
-    return FUTURES_TAKER_FEE.get(venue, 0.0006) * 100.0
 
 
 def _borrow_interval_pct(daily_pct: float, annual_pct: float, interval_h: float, fallback_annual: float) -> float:
@@ -147,6 +138,23 @@ class UnifiedFundingPool:
     max_workers: int = DEFAULT_IO_WORKERS
     reference_trade_usd: float = DEFAULT_REFERENCE_TRADE_USD
     legs_by_base: dict[str, list[VenueLeg]] = field(default_factory=dict)
+    fee_cache: dict[tuple[str, str], dict[str, float]] = field(default_factory=dict)
+
+    def _leg_futures_fee_pct(self, leg: VenueLeg) -> float:
+        return taker_fee_pct(
+            leg.venue,
+            leg.symbol,
+            fee_cache=self.fee_cache or None,
+        )
+
+    def _pair_open_fee_pct(self, long_l: VenueLeg, short_l: VenueLeg) -> tuple[float, float, float]:
+        return pair_open_taker_fee_pct(
+            long_l.venue,
+            long_l.symbol,
+            short_l.venue,
+            short_l.symbol,
+            fee_cache=self.fee_cache or None,
+        )
 
     def _apply_transfer_cost(self, route: CrossRoute) -> CrossRoute:
         """跨所路由叠加 USDT 划转成本（按 reference_trade_usd 估算）。"""
@@ -292,6 +300,13 @@ class UnifiedFundingPool:
                     leg.max_borrow = str(info.get("max_borrow", "") or "")
                 self.legs_by_base.setdefault(leg.base, []).append(leg)
 
+        pairs: list[tuple[str, str]] = []
+        for legs in self.legs_by_base.values():
+            for leg in legs:
+                pairs.append((leg.venue, leg.symbol))
+        if pairs:
+            self.fee_cache = prefetch_futures_fee_rates(pairs, workers=self.max_workers)
+
     def _annual_funding(self, rate_pct: float, interval_h: float) -> float:
         return abs(rate_pct) * (24.0 / interval_h) * 365.0
 
@@ -305,7 +320,7 @@ class UnifiedFundingPool:
         if not spot_candidates:
             return None
         spot_leg = min(spot_candidates, key=lambda l: _spot_fee_pct(l.venue))
-        f_fee = _futures_fee_pct(futures_leg.venue)
+        f_fee = self._leg_futures_fee_pct(futures_leg)
         s_fee = _spot_fee_pct(spot_leg.venue)
         total_fee = f_fee + s_fee
         net = futures_leg.rate_pct - total_fee
@@ -350,7 +365,7 @@ class UnifiedFundingPool:
 
         margin_leg = min(borrow_candidates, key=borrow_cost)
         borrow_period = borrow_cost(margin_leg)
-        f_fee = _futures_fee_pct(futures_leg.venue)
+        f_fee = self._leg_futures_fee_pct(futures_leg)
         s_fee = _spot_fee_pct(margin_leg.venue)
         total_fee = f_fee + s_fee
         net = abs(futures_leg.rate_pct) - borrow_period - total_fee
@@ -466,7 +481,7 @@ class UnifiedFundingPool:
                 if spread <= min_spread_pct:
                     continue
 
-                fee = _futures_fee_pct(long_l.venue) + _futures_fee_pct(short_l.venue)
+                _, _, fee = self._pair_open_fee_pct(long_l, short_l)
                 net_edge = spread - fee
                 if net_edge <= 0:
                     continue
@@ -512,7 +527,7 @@ class UnifiedFundingPool:
                     long_l, short_l = long_leg, short_leg
 
                 spread = short_l.rate_pct - long_l.rate_pct
-                fee = _futures_fee_pct(long_l.venue) + _futures_fee_pct(short_l.venue)
+                _, _, fee = self._pair_open_fee_pct(long_l, short_l)
                 net_edge = spread - fee
 
                 if net_edge <= 0:
@@ -561,7 +576,7 @@ class UnifiedFundingPool:
         """同所完成两腿的最优净边际。"""
         best: dict[str, Any] | None = None
         for leg in legs:
-            fee = _spot_fee_pct(leg.venue) + _futures_fee_pct(leg.venue)
+            fee = _spot_fee_pct(leg.venue) + self._leg_futures_fee_pct(leg)
             if direction == "forward":
                 if leg.rate_pct < entry or not leg.has_spot:
                     continue

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.fee_providers import pair_open_taker_fee_pct, taker_fee_pct
+
 
 def decide_pure_futures_spread(
     futures_state: dict[str, Any],
@@ -25,6 +27,7 @@ def decide_pure_futures_spread(
     cfg: dict[str, Any],
     funding_rates: dict[str, dict[str, float]],
     current_time_ms: int = 0,
+    fee_cache: dict[tuple[str, str], dict[str, float]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """纯永续资金费差套利决策。
 
@@ -138,9 +141,16 @@ def decide_pure_futures_spread(
                 if spread < min_spread or spread > max_spread:
                     continue
 
-                long_fee = _fee_pct(long_venue, fee_rates)
-                short_fee = _fee_pct(short_venue, fee_rates)
-                total_fee = long_fee + short_fee
+                long_sym = f"{asset}USDT"
+                short_sym = f"{asset}USDT"
+                long_fee, short_fee, total_fee = pair_open_taker_fee_pct(
+                    long_venue,
+                    long_sym,
+                    short_venue,
+                    short_sym,
+                    fee_cache=fee_cache,
+                    config_overrides=fee_rates,
+                )
                 net_edge = spread - total_fee
 
                 if net_edge <= 0:
@@ -216,17 +226,19 @@ def _base_from_symbol(symbol: str) -> str:
     return s
 
 
-def _fee_pct(venue: str, fee_rates: dict[str, float]) -> float:
-    """获取交易所永续合约 taker 费率。"""
-    if venue in fee_rates:
-        return float(fee_rates[venue])
-    defaults = {
-        "bitget": 0.06,
-        "binance": 0.05,
-        "okx": 0.05,
-        "bybit": 0.055,
-    }
-    return defaults.get(venue, 0.06)
+def _fee_pct(
+    venue: str,
+    symbol: str,
+    fee_rates: dict[str, float],
+    fee_cache: dict[tuple[str, str], dict[str, float]] | None = None,
+) -> float:
+    """获取交易所永续合约 taker 费率（按 symbol，可缓存/配置覆盖）。"""
+    return taker_fee_pct(
+        venue,
+        symbol,
+        fee_cache=fee_cache,
+        config_overrides=fee_rates or None,
+    )
 
 
 def _annual_pct(rate_pct_per_8h: float, interval_h: float = 8.0) -> float:

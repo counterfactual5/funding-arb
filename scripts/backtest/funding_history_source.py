@@ -37,9 +37,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backtest.funding_providers import get_funding_provider  # noqa: E402
-from cli.scan_pure_futures_spreads import (  # noqa: E402
-    FUTURES_TAKER_FEE_PCT,
-    _scan_spreads,
+from cli.scan_pure_futures_spreads import _scan_spreads  # noqa: E402
+from core.fee_providers import (  # noqa: E402
+    offline_fee_cache_from_by_base,
+    prefetch_futures_fee_rates,
+    taker_fee_pct,
 )
 
 CACHE_DIR = ROOT / "data" / "cache" / "funding-history"
@@ -201,6 +203,7 @@ def _cc_rows(
     by_base: dict[str, dict[str, dict[str, Any]]],
     borrow_apr_pct: float,
     cc_capability: dict[tuple[str, str], dict[str, Any]] | None = None,
+    fee_cache: dict[tuple[str, str], dict[str, float]] | None = None,
 ) -> list[dict[str, Any]]:
     """从单所费率合成 cash-and-carry 行（与 pure 行同构，供回测引擎消费）。
 
@@ -233,7 +236,9 @@ def _cc_rows(
             if cap is not None and cap["borrow_apr_pct"] > 0:
                 effective_apr = cap["borrow_apr_pct"]
             interval_h = float(info["interval_h"])
-            fee = SPOT_TAKER_FEE_PCT + FUTURES_TAKER_FEE_PCT.get(venue, 0.06)
+            sym = str(info.get("symbol") or f"{base}USDT")
+            perp_fee = taker_fee_pct(venue, sym, fee_cache=fee_cache)
+            fee = SPOT_TAKER_FEE_PCT + perp_fee
             common = {
                 "base": base,
                 "fee_pct": round(fee, 4),
@@ -278,11 +283,25 @@ def build_snapshots(
     include_cc: bool = True,
     borrow_apr_pct: float = DEFAULT_BORROW_APR_PCT,
     cc_capability: dict[tuple[str, str], dict[str, Any]] | None = None,
+    fee_cache: dict[tuple[str, str], dict[str, float]] | None = None,
+    prefetch_live_fees: bool = False,
 ) -> list[dict[str, Any]]:
     """合成 run_backtest 可直接消费的快照序列（含 _ts）。
 
     histories: {(venue, base): [{ts, rate_pct} 升序]}
     """
+    if fee_cache is None:
+        pairs = [(v.lower(), f"{b.upper()}USDT") for v, b in histories.keys()]
+        if prefetch_live_fees and pairs:
+            fee_cache = prefetch_futures_fee_rates(pairs)
+        else:
+            by_base_seed: dict[str, dict[str, dict[str, Any]]] = {}
+            for venue, base in histories.keys():
+                by_base_seed.setdefault(base.upper(), {})[venue.lower()] = {
+                    "symbol": f"{base.upper()}USDT",
+                }
+            fee_cache = offline_fee_cache_from_by_base(by_base_seed)
+
     legs: dict[tuple[str, str], tuple[list[int], list[float], float]] = {}
     grid: set[int] = set()
     for (venue, base), rows in histories.items():
@@ -320,7 +339,9 @@ def build_snapshots(
                 "mark_price": 0.0,
             }
         # 阈值放开：行情持续可见，入场阈值交给 run_backtest 处理
-        forward, reverse = _scan_spreads(by_base, min_spread=0.0, min_edge=-999.0)
+        forward, reverse = _scan_spreads(
+            by_base, min_spread=0.0, min_edge=-999.0, fee_cache=fee_cache
+        )
         dt = datetime.fromtimestamp(t / 1000, timezone.utc)
         snap: dict[str, Any] = {
             "timestamp": dt.isoformat(),
@@ -329,7 +350,7 @@ def build_snapshots(
             "_ts": dt,
         }
         if include_cc:
-            snap["cc"] = _cc_rows(by_base, borrow_apr_pct, cc_capability)
+            snap["cc"] = _cc_rows(by_base, borrow_apr_pct, cc_capability, fee_cache)
         snapshots.append(snap)
     return snapshots
 
@@ -343,6 +364,7 @@ def fetch_history_snapshots(
     workers: int = 8,
     borrow_apr_pct: float = DEFAULT_BORROW_APR_PCT,
     check_cc_capability: bool = False,
+    prefetch_live_fees: bool = False,
 ) -> list[dict[str, Any]]:
     """并行拉取所有 venue × base 历史费率并合成快照。
 
@@ -374,5 +396,8 @@ def fetch_history_snapshots(
             file=sys.stderr,
         )
     return build_snapshots(
-        histories, borrow_apr_pct=borrow_apr_pct, cc_capability=cc_capability
+        histories,
+        borrow_apr_pct=borrow_apr_pct,
+        cc_capability=cc_capability,
+        prefetch_live_fees=prefetch_live_fees,
     )

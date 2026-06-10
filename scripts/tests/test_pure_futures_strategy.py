@@ -32,12 +32,18 @@ def test_annual_pct():
 
 
 def test_fee_pct():
-    assert _fee_pct("binance", {}) == 0.05
-    assert _fee_pct("okx", {}) == 0.05
-    assert _fee_pct("bitget", {}) == 0.06
-    assert _fee_pct("bybit", {}) == 0.055
-    assert _fee_pct("unknown", {}) == 0.06
-    assert _fee_pct("binance", {"binance": 0.04}) == 0.04
+    cache = {
+        ("binance", "BTCUSDT"): {"taker_pct": 0.05, "maker_pct": 0.02},
+        ("okx", "BTCUSDT"): {"taker_pct": 0.05, "maker_pct": 0.02},
+        ("bitget", "BTCUSDT"): {"taker_pct": 0.06, "maker_pct": 0.02},
+        ("bybit", "BTCUSDT"): {"taker_pct": 0.055, "maker_pct": 0.02},
+    }
+    assert _fee_pct("binance", "BTCUSDT", {}, fee_cache=cache) == 0.05
+    assert _fee_pct("okx", "BTCUSDT", {}, fee_cache=cache) == 0.05
+    assert _fee_pct("bitget", "BTCUSDT", {}, fee_cache=cache) == 0.06
+    assert _fee_pct("bybit", "BTCUSDT", {}, fee_cache=cache) == 0.055
+    assert _fee_pct("unknown", "FOOUSDT", {}, fee_cache=cache) == 0.06
+    assert _fee_pct("binance", "BTCUSDT", {"binance": 0.04}, fee_cache=cache) == 0.04
 
 
 def test_extract_existing_pairs_empty():

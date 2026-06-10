@@ -16,12 +16,8 @@
     "scanIntervalMinutes": 5,
     "jsonlFile": "data/pure_futures_spreads.jsonl",
 
-    "feeRates": {
-      "bitget": 0.06,
-      "binance": 0.05,
-      "okx": 0.05,
-      "bybit": 0.055
-    },
+    "feeRates": {},
+    "_feeRatesNote": "optional per-venue taker override (%); omit to fetch per-symbol rates from exchange APIs",
 
     "watcherCheckLegs": true,
     "rebalanceSkewPct": 1.0,

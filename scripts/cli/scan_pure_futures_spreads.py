@@ -50,13 +50,11 @@ DEFAULT_WATCH_INTERVAL = 5  # minutes
 DEFAULT_JSONL_FILE = "data/pure_futures_spreads.jsonl"
 HOURS_PER_YEAR = 365.0 * 24.0
 
-# Perp taker fees per venue (percentage points, same as unified_funding_pool)
-FUTURES_TAKER_FEE_PCT = {
-    "bitget": 0.06,
-    "binance": 0.05,
-    "okx": 0.05,
-    "bybit": 0.055,
-}
+from core.fee_providers import (
+    FUTURES_TAKER_FEE_PCT,
+    build_fee_cache_from_by_base,
+    pair_open_taker_fee_pct,
+)
 
 # USDT-stablecoin / wrapped-asset blacklist (no point arbing against CEX's internal USD)
 SYMBOL_BLACKLIST = {"USDC", "FDUSD", "TUSD", "BTCDOM", "BUSD", "USDP", "DAI"}
@@ -166,6 +164,7 @@ def _scan_spreads(
     by_base: dict[str, dict[str, dict[str, Any]]],
     min_spread: float,
     min_edge: float,
+    fee_cache: dict[tuple[str, str], dict[str, float]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Compute pairwise perp-perp spreads across venues, return (forward, reverse)."""
     forward: list[dict[str, Any]] = []
@@ -193,9 +192,15 @@ def _scan_spreads(
                 if spread < min_spread:
                     continue
 
-                fee_pct = FUTURES_TAKER_FEE_PCT.get(
-                    short_venue, 0.06
-                ) + FUTURES_TAKER_FEE_PCT.get(long_venue, 0.06)
+                long_sym = str(long_info.get("symbol") or f"{base}USDT")
+                short_sym = str(short_info.get("symbol") or f"{base}USDT")
+                long_fee, short_fee, fee_pct = pair_open_taker_fee_pct(
+                    long_venue,
+                    long_sym,
+                    short_venue,
+                    short_sym,
+                    fee_cache=fee_cache,
+                )
 
                 net_edge = spread - fee_pct
                 if net_edge < min_edge:
@@ -228,7 +233,10 @@ def _scan_spreads(
                     "long_rate_pct": round(long_rate, 6),
                     "short_rate_pct": round(short_rate, 6),
                     "spread_pct": round(spread, 6),
+                    "long_fee_pct": round(long_fee, 4),
+                    "short_fee_pct": round(short_fee, 4),
                     "fee_pct": round(fee_pct, 4),
+                    "round_trip_fee_pct": round(fee_pct * 2, 4),
                     "net_edge_pct": round(net_edge, 6),
                     "annual_apy_pct": round(annual, 1),
                     "long_settle_ms": long_info.get("next_funding_ts", 0),
@@ -262,8 +270,9 @@ def scan_pure_futures_spreads(
 
     by_base = fetch_all_fee_rate_rows_by_base(venues, workers)
     _backfill_missing_settle_times(by_base, venues, workers)
+    fee_cache = build_fee_cache_from_by_base(by_base, workers=workers)
 
-    forward, reverse = _scan_spreads(by_base, min_spread, min_edge)
+    forward, reverse = _scan_spreads(by_base, min_spread, min_edge, fee_cache)
 
     # Compute venue-level stats
     venue_pairs: dict[str, int] = {}

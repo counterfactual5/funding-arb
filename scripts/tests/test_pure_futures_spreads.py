@@ -14,6 +14,16 @@ from cli.scan_pure_futures_spreads import (
     _base_from_symbol,
     _scan_spreads,
 )
+from core.fee_providers import offline_fee_cache_from_by_base
+
+
+def _scan(by_base, min_spread: float, min_edge: float):
+    return _scan_spreads(
+        by_base,
+        min_spread,
+        min_edge,
+        fee_cache=offline_fee_cache_from_by_base(by_base),
+    )
 
 
 def test_base_from_symbol():
@@ -47,7 +57,7 @@ def test_scan_spreads_basic_forward():
             },
         },
     }
-    fwd, rev = _scan_spreads(by_base, min_spread=0.01, min_edge=0.001)
+    fwd, rev = _scan(by_base, min_spread=0.01, min_edge=0.001)
     assert len(fwd) == 1
     assert len(rev) == 0
     assert fwd[0]["base"] == "BTC"
@@ -80,7 +90,7 @@ def test_scan_spreads_basic_reverse():
             },
         },
     }
-    fwd, rev = _scan_spreads(by_base, min_spread=0.01, min_edge=0.001)
+    fwd, rev = _scan(by_base, min_spread=0.01, min_edge=0.001)
     # spread = (-0.01) - (-0.08) = 0.07, fee = 0.055 + 0.05 = 0.105 → net = -0.035 < 0.001 → filtered
     # Need spread > 0.11 to beat fees. Use larger gap.
     assert len(fwd) == 0
@@ -105,7 +115,7 @@ def test_scan_spreads_basic_reverse():
             },
         },
     }
-    fwd2, rev2 = _scan_spreads(by_base2, min_spread=0.01, min_edge=0.001)
+    fwd2, rev2 = _scan(by_base2, min_spread=0.01, min_edge=0.001)
     assert len(fwd2) == 0
     assert len(rev2) == 1  # Both negative → direction=reverse
     assert (
@@ -137,7 +147,7 @@ def test_scan_spreads_below_min_spread_ignored():
             },
         },
     }
-    fwd, rev = _scan_spreads(by_base, min_spread=0.05, min_edge=0.001)
+    fwd, rev = _scan(by_base, min_spread=0.05, min_edge=0.001)
     assert len(fwd) == 0
     assert len(rev) == 0
 
@@ -162,7 +172,7 @@ def test_scan_spreads_below_net_edge_ignored():
             },
         },
     }
-    fwd, rev = _scan_spreads(by_base, min_spread=0.02, min_edge=0.05)
+    fwd, rev = _scan(by_base, min_spread=0.02, min_edge=0.05)
     # spread=0.04, fee=0.11 → net=-0.07 < 0.05 → filtered out
     assert len(fwd) == 0
     assert len(rev) == 0
@@ -194,7 +204,7 @@ def test_scan_spreads_three_venues():
             },
         },
     }
-    fwd, rev = _scan_spreads(by_base, min_spread=0.01, min_edge=0.001)
+    fwd, rev = _scan(by_base, min_spread=0.01, min_edge=0.001)
     # binance(0.20)-bybit(0.02): spread=0.18, fee=0.05+0.055=0.105, net=0.075 → pass
     # binance(0.20)-okx(0.06): spread=0.14, fee=0.05+0.05=0.10, net=0.04 → pass
     # okx(0.06)-bybit(0.02): spread=0.04, fee=0.05+0.055=0.105, net=-0.065 → skip
@@ -220,7 +230,7 @@ def test_settle_mismatch_detection():
             },
         },
     }
-    fwd, rev = _scan_spreads(by_base, min_spread=0.01, min_edge=0.001)
+    fwd, rev = _scan(by_base, min_spread=0.01, min_edge=0.001)
     assert len(fwd) == 1
     # Bitget shorts at 0.20 (2h interval), Binance longs at 0.02 (8h interval) → mismatch
     assert fwd[0]["settle_mismatch"] is True

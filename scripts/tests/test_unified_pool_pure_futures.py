@@ -12,14 +12,22 @@ sys.path.insert(0, str(ROOT))
 from backtest.unified_funding_pool import (
     UnifiedFundingPool,
     VenueLeg,
-    _futures_fee_pct,
 )
+from core.fee_providers import offline_fee_cache_from_by_base
 
 
 def _pool_with_legs(*legs: VenueLeg) -> UnifiedFundingPool:
     pool = UnifiedFundingPool(venues=tuple({l.venue for l in legs}))
     for leg in legs:
         pool.legs_by_base.setdefault(leg.base, []).append(leg)
+    by_base = {
+        base: {
+            leg.venue: {"symbol": leg.symbol}
+            for leg in leg_list
+        }
+        for base, leg_list in pool.legs_by_base.items()
+    }
+    pool.fee_cache = offline_fee_cache_from_by_base(by_base)
     return pool
 
 

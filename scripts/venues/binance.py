@@ -58,12 +58,21 @@ def _ensure_env() -> None:
 
 def _get_key() -> str:
     _ensure_env()
-    return os.environ.get("BINANCE_API_KEY") or ""
+    return (
+        os.environ.get("BINANCE_API_KEY")
+        or os.environ.get("BINANCE_TRADE_API_KEY")
+        or ""
+    )
 
 
 def _get_secret() -> str:
     _ensure_env()
-    return os.environ.get("BINANCE_API_SECRET") or ""
+    return (
+        os.environ.get("BINANCE_API_SECRET")
+        or os.environ.get("BINANCE_SECRET_KEY")
+        or os.environ.get("BINANCE_TRADE_SECRET_KEY")
+        or ""
+    )
 
 
 def _sign(query: str) -> str:
