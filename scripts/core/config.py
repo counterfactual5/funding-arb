@@ -30,7 +30,7 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 
-def dca_home() -> Path:
+def farb_home() -> Path:
     """Runtime data root. Override with env FARB_HOME (primary) or DCA_HOME (legacy fallback).
     Default: <project>/data."""
     raw = os.environ.get("FARB_HOME", "") or os.environ.get("DCA_HOME", "")
@@ -42,6 +42,10 @@ def dca_home() -> Path:
     return local.resolve()
 
 
+def dca_home() -> Path:  # deprecated alias, use farb_home()
+    return farb_home()
+
+
 def runs_namespace() -> str:
     ns = os.environ.get("FARB_RUNS_NAMESPACE", "") or os.environ.get(
         "DCA_RUNS_NAMESPACE", "funding-arb"
@@ -50,7 +54,7 @@ def runs_namespace() -> str:
 
 
 def runs_base() -> Path:
-    return dca_home() / runs_namespace()
+    return farb_home() / runs_namespace()
 
 
 def strategy_dir(strategy_id: str) -> Path:
