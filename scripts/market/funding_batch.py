@@ -100,14 +100,15 @@ def fetch_funding_history_parallel(
         return {}
     if fp is None and fetch_since_fn is None:
         return {}
-    fp_nn = fp  # type narrowing for pyright
+    fp_ref = fp  # captured for closure type narrowing
 
     def _one(sym: str) -> tuple[str, list[dict[str, Any]]]:
         start = int(start_ms_by_sym[sym]) + 1
         pair = make_pair(sym, quote)
         if fetch_since_fn is not None:
             return sym, fetch_since_fn(pair, start)
-        return sym, fp_nn.fetch_since(pair, start)
+        assert fp_ref is not None
+        return sym, fp_ref.fetch_since(pair, start)
 
     raw = run_io_parallel(syms, _one, max_workers=workers, swallow_errors=True)
     out: dict[str, list[dict[str, Any]]] = {}
