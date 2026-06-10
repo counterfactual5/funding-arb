@@ -75,6 +75,7 @@
   - [x] `--auto-spread-watch` 启动 watcher
 - [x] `backtest_pure_futures_spread.py` 历史回测框架
   - [x] JSONL 快照加载
+  - [x] 历史 funding API 回测（`--history-bases`，无需采集，4 所公开端点 + 6h 缓存）
   - [x] 回放模拟（开仓/平仓/持仓）
   - [x] 统计指标（总收益/年化/回撤/Sharpe/胜率）
   - [x] Equity 曲线
@@ -193,7 +194,10 @@ python3 scripts/cli/pure_futures_trade.py close <position_id> --dry-run
 
 ### Q: 回测数据从哪来？
 
-**A**: `scan_pure_futures_spreads.py --watch 5 --jsonl-file data/pure_futures_spreads.jsonl` 会持续采集快照。回测直接读取这个 JSONL 文件。
+**A**: 两种来源：
+
+1. **scanner JSONL**：`scan_pure_futures_spreads.py --watch 5 --jsonl-file data/pure_futures_spreads.jsonl` 持续采集，回测读这个文件。优点是完整保留 scanner 视角（含 mark price），缺点是只有采集期内的数据。
+2. **历史 funding API**（`--history-bases BTC,ETH --history-days 90`）：直接拉 4 所已结算的历史资金费（公开端点，磁盘缓存 6h），在每个真实结算点合成快照。无需提前采集，可回看任意天数；局限是无 mark price、且时刻 t 的可见费率取「下一个结算将结算的费率」（多数所当期费率区间内实时可见，与实盘 scanner 行为一致）。
 
 ### Q: 回测的资金费怎么计？
 

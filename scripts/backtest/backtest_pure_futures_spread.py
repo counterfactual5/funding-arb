@@ -14,6 +14,10 @@
   python3 scripts/backtest/backtest_pure_futures_spread.py \
     --jsonl-file data/pure_futures_spreads.jsonl
 
+  # 直接拉交易所历史 funding API（无需采集，缓存 6h）
+  python3 scripts/backtest/backtest_pure_futures_spread.py \
+    --history-bases BTC,ETH,SOL --history-days 90
+
   # 指定参数
   python3 scripts/backtest/backtest_pure_futures_spread.py \
     --jsonl-file data/pure_futures_spreads.jsonl \
@@ -565,6 +569,22 @@ def main() -> int:
         default="data/pure_futures_spreads.jsonl",
         help="Scanner JSONL file",
     )
+    parser.add_argument(
+        "--history-bases",
+        default="",
+        help="逗号分隔 base 列表（如 BTC,ETH,SOL）；非空时直接拉交易所历史 funding API，忽略 --jsonl-file",
+    )
+    parser.add_argument(
+        "--history-days", type=int, default=30, help="历史回看天数（默认 30）"
+    )
+    parser.add_argument(
+        "--venues",
+        default="binance,bitget,bybit,okx",
+        help="history 模式的交易所列表",
+    )
+    parser.add_argument(
+        "--refresh-cache", action="store_true", help="忽略 6h 磁盘缓存强制重新拉取"
+    )
     parser.add_argument("--capital", type=float, default=100000.0, help="Initial capital USD")
     parser.add_argument("--trade-usd", type=float, default=5000.0, help="USD per pair")
     parser.add_argument("--max-pairs", type=int, default=3, help="Max concurrent pairs")
@@ -577,16 +597,30 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="JSON output")
     args = parser.parse_args()
 
-    jsonl_path = Path(args.jsonl_file)
-    if not jsonl_path.is_absolute():
-        jsonl_path = ROOT / jsonl_path
+    if args.history_bases.strip():
+        from backtest.funding_history_source import fetch_history_snapshots
 
-    print(f"Loading snapshots from {jsonl_path}...", file=sys.stderr)
-    try:
-        snapshots = load_snapshots(jsonl_path)
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+        bases = [b.strip().upper() for b in args.history_bases.split(",") if b.strip()]
+        venues = [v.strip().lower() for v in args.venues.split(",") if v.strip()]
+        print(
+            f"Fetching {args.history_days}d funding history: "
+            f"{len(venues)} venues × {len(bases)} bases...",
+            file=sys.stderr,
+        )
+        snapshots = fetch_history_snapshots(
+            venues, bases, args.history_days, refresh=args.refresh_cache
+        )
+    else:
+        jsonl_path = Path(args.jsonl_file)
+        if not jsonl_path.is_absolute():
+            jsonl_path = ROOT / jsonl_path
+
+        print(f"Loading snapshots from {jsonl_path}...", file=sys.stderr)
+        try:
+            snapshots = load_snapshots(jsonl_path)
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
 
     if not snapshots:
         print("No snapshots found.", file=sys.stderr)
