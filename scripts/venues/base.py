@@ -37,11 +37,15 @@ class CexVenue(Protocol):
         """Fetch annualized borrow rates for given coins. Returns dict of {coin: rate_decimal}. E.g. 0.12 for 12%."""
         return {}
 
-    def fetch_futures_symbol_rules(self, pair: str, cache_sec: int = 3600) -> dict[str, Any] | None:
+    def fetch_futures_symbol_rules(
+        self, pair: str, cache_sec: int = 3600
+    ) -> dict[str, Any] | None:
         """Fetch symbol rules specific to futures/mix contracts."""
         return None
 
-    def transfer_asset(self, asset: str, amount: float, from_account: str, to_account: str) -> bool:
+    def transfer_asset(
+        self, asset: str, amount: float, from_account: str, to_account: str
+    ) -> bool:
         """Transfer assets between sub-accounts (e.g., spot to futures). Returns True if successful."""
         return False
 
@@ -64,7 +68,7 @@ class CexVenue(Protocol):
     def fetch_usdt_account_balances(self) -> dict[str, float]:
         """Fetch separate Spot and Futures USDT balances. Returns {'spot': val, 'futures': val}."""
         return {"spot": 0.0, "futures": 0.0}
-        
+
     def fetch_live_state(self, assets: list[str]) -> dict[str, Any]:
         """Fetch unified global state: spot balances, margin debt, futures margin, futures positions."""
         return {}
@@ -79,17 +83,27 @@ class CexVenue(Protocol):
         state = self.fetch_live_state(["USDT"]) or {}
         out: list[dict[str, Any]] = []
         for base, p in (state.get("futures_positions") or {}).items():
-            out.append({
-                "symbol": f"{base}{quote.upper()}",
-                "side": str(p.get("side", "")).lower(),
-                "qty": abs(float(p.get("amount", 0) or 0)),
-                "entry_price": float(p.get("entry_price", 0) or 0),
-                "liq_price": float(p.get("liq_price", 0) or 0),
-                "leverage": float(p.get("leverage", 1) or 1),
-                "unrealized_pnl": float(p.get("unrealized_pnl", 0) or 0),
-            })
+            out.append(
+                {
+                    "symbol": f"{base}{quote.upper()}",
+                    "side": str(p.get("side", "")).lower(),
+                    "qty": abs(float(p.get("amount", 0) or 0)),
+                    "entry_price": float(p.get("entry_price", 0) or 0),
+                    "liq_price": float(p.get("liq_price", 0) or 0),
+                    "leverage": float(p.get("leverage", 1) or 1),
+                    "unrealized_pnl": float(p.get("unrealized_pnl", 0) or 0),
+                }
+            )
         return out
-        
+
+    def get_ticker(self, pair: str) -> float:
+        """Spot ticker price fallback; futures callers should prefer get_futures_ticker()."""
+        return 0.0
+
+    def get_futures_ticker(self, pair: str) -> float:
+        """Perpetual futures ticker price fallback."""
+        return 0.0
+
     def initialize_futures_symbol(self, pair: str) -> None:
         """Initialize futures configuration (marginType, leverage, positionSide) for a specific pair."""
         pass

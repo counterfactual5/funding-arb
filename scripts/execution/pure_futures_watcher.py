@@ -347,6 +347,8 @@ def watch_cycle(
         "alerts": [],
         "checked": 0,
     }
+    actions: list[dict[str, Any]] = []
+    alerts: list[Any] = []
 
     open_positions = [
         p for p in load_pure_futures_positions() if p.get("status") == "open"
@@ -360,7 +362,7 @@ def watch_cycle(
     try:
         scan_rates = fetch_all_fee_rate_rows_by_base(venues, workers)
     except Exception as e:
-        cycle_result["alerts"].append(f"rate_fetch_error: {e}")
+        alerts.append(f"rate_fetch_error: {e}")
         return cycle_result
 
     # Fetch actual positions from venues (for leg/margin check)
@@ -377,9 +379,7 @@ def watch_cycle(
             rows = _fetch_positions_from_venue(vid)
             if rows is None:
                 failed_venues.add(vid)
-                cycle_result["alerts"].append(
-                    {"alert": "positions_fetch_failed", "venue": vid}
-                )
+                alerts.append({"alert": "positions_fetch_failed", "venue": vid})
             else:
                 venue_positions[vid] = rows
 
@@ -416,15 +416,12 @@ def watch_cycle(
                     )
             else:
                 action["note"] = "dry_run position, skipping live close"
-            cycle_result["actions"].append(action)
+            actions.append(action)
             continue
 
-        # 2. Check leg alive (only for live positions, and only when
-        #    both venues' position snapshots fetched successfully)
+        # 1b. PnL-based stop loss
         pos_long_v = str(pos.get("long_venue", ""))
         pos_short_v = str(pos.get("short_venue", ""))
-
-        # 1b. PnL-based stop loss
         if not pos_dry_run:
             long_px = _get_mark_price(pos_long_v, base)
             short_px = _get_mark_price(pos_short_v, base)
@@ -465,13 +462,11 @@ def watch_cycle(
                     )
                     res = close_pure_futures_pair(pos_id, dry_run=False, config=cfg)
                     action["result"] = res.to_dict()
-                    cycle_result["actions"].append(action)
+                    actions.append(action)
                     continue
 
         # 2. Check leg alive (only for live positions, and only when
         #    both venues' position snapshots fetched successfully)
-        pos_long_v = str(pos.get("long_venue", ""))
-        pos_short_v = str(pos.get("short_venue", ""))
         legs_checkable = (
             check_legs
             and not pos_dry_run
@@ -481,7 +476,7 @@ def watch_cycle(
         if legs_checkable:
             alive, leg_reason = check_leg_alive(pos, venue_positions)
             if not alive:
-                action = {
+                action: dict[str, Any] = {
                     "action": "emergency_close",
                     "position_id": pos_id,
                     "base": base,
@@ -515,7 +510,7 @@ def watch_cycle(
                         close_reason=f"emergency: {leg_reason}",
                     )
                     action["result"] = res.to_dict()
-                cycle_result["actions"].append(action)
+                actions.append(action)
                 continue
 
             # 2b. 逐腿强平距离预警（不自动操作，及时通知补保证金/减仓）
@@ -529,7 +524,7 @@ def watch_cycle(
                     "alert": "margin_distance_low",
                     **ma,
                 }
-                cycle_result["alerts"].append(alert)
+                alerts.append(alert)
                 send_notification(
                     "MARGIN DISTANCE LOW",
                     f"Position {pos_id} {base} {ma['leg']}@{ma['venue']}: "
@@ -552,7 +547,7 @@ def watch_cycle(
                 "long_notional": round(long_n, 2),
                 "short_notional": round(short_n, 2),
             }
-            cycle_result["alerts"].append(alert)
+            alerts.append(alert)
             if verbose:
                 print(
                     f"[{_ts_str()}] REBALANCE {pos_id} {base}: {rebal_reason} "
@@ -579,8 +574,10 @@ def watch_cycle(
                         f"[{_ts_str()}] REBALANCED {pos_id} {base}: {res.logs[-1] if res.logs else ''}",
                         file=sys.stderr,
                     )
-                cycle_result["actions"].append(action)
+                actions.append(action)
 
+    cycle_result["actions"] = actions
+    cycle_result["alerts"] = alerts
     _append_log(log_path, cycle_result)
     return cycle_result
 
