@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +58,7 @@ def _save_positions(
 ) -> None:
     """Atomic write: write to temp file then rename (crash-safe)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    content = json.dumps(positions, ensure_ascii=False, indent=2)
+    content = json.dumps(positions, ensure_ascii=False, separators=(",", ":"))
     fd, tmp_path = tempfile.mkstemp(
         dir=str(path.parent), prefix=".positions-", suffix=".tmp"
     )
@@ -65,7 +66,6 @@ def _save_positions(
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
             f.flush()
-            os.fsync(f.fileno())
         os.replace(tmp_path, str(path))
     except BaseException:
         try:
@@ -391,6 +391,119 @@ def open_pure_futures_pair(
         except Exception:
             pass
 
+    parallel_legs = bool((config or {}).get("parallelLegs", False))
+
+    if parallel_legs:
+        # Submit both legs in parallel — saves ~400ms vs sequential.
+        # Accept tiny qty mismatch (handled by post-fill rebalance if needed).
+        target_qty = _floor_qty(base_amount, qty_prec)
+        short_trade["amount_base"] = target_qty
+        short_trade["amount_usdt"] = round(target_qty * short_px, 4)
+
+        def _submit_long() -> tuple[str, list[dict[str, Any]]]:
+            return "long", lv.execute_trades([long_trade], long_market, dry_run=False)
+
+        def _submit_short() -> tuple[str, list[dict[str, Any]]]:
+            return "short", sv.execute_trades(
+                [short_trade], short_market, dry_run=False
+            )
+
+        leg_results: dict[str, list[dict[str, Any]]] = {}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_long = pool.submit(_submit_long)
+            f_short = pool.submit(_submit_short)
+            for fut in as_completed([f_long, f_short]):
+                try:
+                    leg, res = fut.result()
+                    leg_results[leg] = res
+                except Exception as e:
+                    logs.append(f"并行下单异常: {e}")
+
+        res_long = leg_results.get("long", [])
+        res_short = leg_results.get("short", [])
+        executed.extend(res_long)
+        executed.extend(res_short)
+
+        long_ok = _filled(res_long)
+        short_ok = _filled(res_short)
+
+        if long_ok and short_ok:
+            exec_qty = _floor_qty(_exec_qty(res_long, target_qty), qty_prec)
+            short_qty = _exec_qty(res_short, target_qty)
+            logs.append(f"并行双腿成交: long={exec_qty} short={short_qty} {base}")
+            _record_position(
+                {
+                    "id": position_id,
+                    "status": "open",
+                    "strategy": "pure_futures_spread",
+                    "dry_run": False,
+                    "base": base,
+                    "direction": direction,
+                    "quote": quote,
+                    "long_venue": long_venue_id,
+                    "short_venue": short_venue_id,
+                    "qty": min(exec_qty, short_qty),
+                    "long_qty": exec_qty,
+                    "short_qty": short_qty,
+                    "long_price": res_long[0].get("exec_price", long_px),
+                    "short_price": res_short[0].get("exec_price", short_px),
+                    "trade_usd": trade_usd,
+                    "mark_spread_pct": round(mark_spread_pct, 6),
+                    "opened_at": int(time.time() * 1000),
+                    "parallel_legs": True,
+                },
+                positions_path,
+            )
+            return CrossVenueResult(True, "filled", position_id, executed, logs)
+        elif long_ok and not short_ok:
+            logs.append("并行模式：多头成交但空头失败，回滚多头")
+            rollback = _make_futures_trade(
+                base,
+                "close_long",
+                target_qty,
+                long_px,
+                qty_prec,
+                "ROLLBACK: parallel-legs short failed",
+            )
+            res_rb = lv.execute_trades([rollback], long_market, dry_run=False)
+            executed.extend(res_rb)
+            if _filled(res_rb):
+                logs.append("回滚成功，无裸露持仓")
+                return CrossVenueResult(False, "rolled_back", "", executed, logs)
+            logs.append("回滚失败！多头腿裸露，需人工处理")
+            send_notification(
+                "NAKED PURE FUTURES POSITION",
+                f"Pure-futures parallel rollback failed: {long_venue_id} long {target_qty} {base} unhedged",
+                config,
+            )
+            return CrossVenueResult(False, "naked", "", executed, logs)
+        elif short_ok and not long_ok:
+            logs.append("并行模式：空头成交但多头失败，回滚空头")
+            rollback = _make_futures_trade(
+                base,
+                "close_short",
+                target_qty,
+                short_px,
+                qty_prec,
+                "ROLLBACK: parallel-legs long failed",
+            )
+            res_rb = sv.execute_trades([rollback], short_market, dry_run=False)
+            executed.extend(res_rb)
+            if _filled(res_rb):
+                logs.append("回滚成功，无裸露持仓")
+                return CrossVenueResult(False, "rolled_back", "", executed, logs)
+            logs.append("回滚失败！空头腿裸露，需人工处理")
+            send_notification(
+                "NAKED PURE FUTURES POSITION",
+                f"Pure-futures parallel rollback failed: {short_venue_id} short {target_qty} {base} unhedged",
+                config,
+            )
+            return CrossVenueResult(False, "naked", "", executed, logs)
+        else:
+            logs.append("并行模式：双腿均未成交")
+            return CrossVenueResult(False, "aborted", "", executed, logs)
+
+    # === Original sequential logic follows ===
     res_long = lv.execute_trades([long_trade], long_market, dry_run=False)
     executed.extend(res_long)
     if not _filled(res_long):

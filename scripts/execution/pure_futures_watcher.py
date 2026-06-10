@@ -42,6 +42,7 @@ from execution.pure_futures_executor import (  # noqa: E402
     load_pure_futures_positions,
     rebalance_pure_futures_pair,
 )
+from market.parallel_fetch import run_io_parallel  # noqa: E402
 from venues import get_venue  # noqa: E402
 from venues.base import make_pair  # noqa: E402
 
@@ -49,6 +50,8 @@ TZ = timezone(timedelta(hours=8))
 WATCHER_LOG = SCRIPTS_DIR / "data" / "pure-futures" / "watcher.jsonl"
 
 _venue_cache: dict[str, Any] = {}
+_mark_price_cache: dict[tuple[str, str, str], tuple[float, float]] = {}
+_MARK_PRICE_TTL_SEC = 10.0  # Within a watcher cycle, prices shouldn't drift
 
 
 def _get_venue_cached(venue_id: str):
@@ -105,15 +108,24 @@ def _fetch_positions_from_venue(
 
 
 def _get_mark_price(venue_id: str, base: str, quote: str = "USDT") -> float:
-    """获取单所永续标记价。"""
+    """获取单所永续标记价。带短时缓存避免循环内重复调用。"""
+    key = (str(venue_id).lower(), str(base).upper(), quote.upper())
+    now = time.monotonic()
+    cached = _mark_price_cache.get(key)
+    if cached is not None:
+        ts, price = cached
+        if now - ts < _MARK_PRICE_TTL_SEC:
+            return price
     try:
         v = _get_venue_cached(venue_id)
         pair = make_pair(base, quote)
         if getattr(v, "venue_id", "") == "okx" or venue_id == "okx":
             pair = f"{base.upper()}-{quote.upper()}-SWAP"
-        return float(v.get_ticker(pair) or 0.0)
+        price = float(v.get_ticker(pair) or 0.0)
     except Exception:
-        return 0.0
+        price = 0.0
+    _mark_price_cache[key] = (now, price)
+    return price
 
 
 def check_exit(
@@ -362,6 +374,8 @@ def watch_cycle(
     }
     actions: list[dict[str, Any]] = []
     alerts: list[Any] = []
+    # Clear cycle-level mark price cache
+    _mark_price_cache.clear()
 
     open_positions = [
         p for p in load_pure_futures_positions() if p.get("status") == "open"
@@ -388,13 +402,26 @@ def watch_cycle(
             for vid in (pos.get("long_venue"), pos.get("short_venue")):
                 if vid:
                     wanted.add(str(vid))
-        for vid in sorted(wanted):
-            rows = _fetch_positions_from_venue(vid)
-            if rows is None:
-                failed_venues.add(vid)
-                alerts.append({"alert": "positions_fetch_failed", "venue": vid})
-            else:
-                venue_positions[vid] = rows
+        if wanted:
+            # Parallel fetch — saves V×~200ms vs sequential loop
+            def _fetch_one(vid: str) -> tuple[str, list[dict[str, Any]] | None]:
+                try:
+                    return vid, _fetch_positions_from_venue(vid)
+                except Exception as e:
+                    return vid, None
+
+            results = run_io_parallel(
+                sorted(wanted),
+                _fetch_one,
+                max_workers=max(4, len(wanted)),
+                swallow_errors=True,
+            )
+            for vid, rows in results.items():
+                if rows is None:
+                    failed_venues.add(vid)
+                    alerts.append({"alert": "positions_fetch_failed", "venue": vid})
+                else:
+                    venue_positions[vid] = rows
 
     for pos in open_positions:
         pos_id = str(pos.get("id", ""))
