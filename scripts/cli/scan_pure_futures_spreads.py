@@ -45,13 +45,13 @@ TZ_UTC = timezone.utc
 # Default thresholds
 DEFAULT_MIN_SPREAD = 0.03  # 0.03% minimum rate spread
 DEFAULT_MIN_EDGE = 0.01  # 0.01% minimum net edge after fees
-DEFAULT_IO_WORKERS = 4  # 4 venues, 4 workers = max concurrency
+DEFAULT_IO_WORKERS = 16  # I/O-bound; threads release GIL during urllib calls
 DEFAULT_WATCH_INTERVAL = 5  # minutes
 DEFAULT_JSONL_FILE = "data/pure_futures_spreads.jsonl"
 HOURS_PER_YEAR = 365.0 * 24.0
 
 from core.fee_providers import (
-    build_fee_cache_from_by_base,
+    offline_fee_cache_from_by_base,
     pair_open_taker_fee_pct,
 )
 
@@ -285,7 +285,7 @@ def scan_pure_futures_spreads(
 
     by_base = fetch_all_fee_rate_rows_by_base(venues, workers)
     _backfill_missing_settle_times(by_base, venues, workers)
-    fee_cache = build_fee_cache_from_by_base(by_base, workers=workers)
+    fee_cache = offline_fee_cache_from_by_base(by_base)
 
     forward, reverse = _scan_spreads(
         by_base, min_spread, min_edge, fee_cache, max_mark_spread_pct

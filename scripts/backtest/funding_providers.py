@@ -11,6 +11,32 @@ from venues.http_util import http_get_json
 _DEFAULT_INTERVAL_MS = 8 * 60 * 60 * 1000
 
 
+def estimate_next_funding_ts(interval_h: float = 8.0) -> int:
+    """Estimate next funding timestamp from current time and interval.
+
+    Works for any venue with fixed-interval settlements:
+    - 8h: settles at 00:00, 08:00, 16:00 UTC
+    - 4h: settles at 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC
+    - 1h: settles every hour at :00
+
+    Returns ms timestamp.
+    """
+    if interval_h <= 0:
+        interval_h = 8.0
+    interval_ms = int(interval_h * 3600 * 1000)
+    now_ms = int(time.time() * 1000)
+    # Start of current UTC day
+    day_ms = (now_ms // (24 * 3600 * 1000)) * (24 * 3600 * 1000)
+    # Check each settlement time today
+    steps = int(24 / interval_h)
+    for i in range(steps):
+        ts = day_ms + int(i * interval_h * 3600 * 1000)
+        if ts > now_ms:
+            return ts
+    # Next day first slot
+    return day_ms + 24 * 3600 * 1000
+
+
 def _http_get_with_retry(url: str, max_retries: int = 5) -> Any:
     last_err: Exception | None = None
     for attempt in range(max_retries):
@@ -146,7 +172,7 @@ class BitgetFundingProvider(FundingProvider):
                 {
                     "symbol": sym,
                     "rate_pct": rate,
-                    "next_funding_ts": 0,
+                    "next_funding_ts": estimate_next_funding_ts(),
                     "mark_price": float(
                         row.get("markPrice", row.get("lastPr", 0)) or 0
                     ),
@@ -170,22 +196,9 @@ class BitgetFundingProvider(FundingProvider):
         interval_ms = int(float(row.get("fundingRateInterval", "8") or 8) * 3600 * 1000)
         if interval_ms <= 0:
             interval_ms = _DEFAULT_INTERVAL_MS
-        # Fetch next funding time from dedicated endpoint
-        next_ts = 0
-        try:
-            ft_url = (
-                f"{self.BASE}/api/v2/mix/market/funding-time"
-                f"?symbol={encoded_sym}&productType=USDT-FUTURES"
-            )
-            ft_payload = _http_get_with_retry(ft_url)
-            ft_row = (
-                (ft_payload.get("data") or [{}])[0]
-                if isinstance(ft_payload, dict)
-                else {}
-            )
-            next_ts = int(ft_row.get("nextFundingTime", 0) or 0)
-        except Exception:
-            pass
+        # Compute next funding time locally (Bitget settles at fixed 8h intervals)
+        interval_h_for_est = interval_ms / 3600 / 1000 if interval_ms > 0 else 8.0
+        next_ts = estimate_next_funding_ts(interval_h_for_est)
         last_settle_ts = next_ts - interval_ms if next_ts else 0
         return {
             "rate_pct": rate,

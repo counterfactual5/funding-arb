@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Shared HTTP helpers for CEX venue adapters."""
+
 from __future__ import annotations
 
 import json
@@ -7,16 +8,32 @@ import time
 import urllib.request
 from typing import Any, Optional
 
+import requests
+
 _DEFAULT_UA = "Mozilla/5.0 (compatible; funding-arb-cex/1.0)"
 
+# Module-level session with connection pooling and keep-alive.
+# Thread-safe: requests.Session is safe for concurrent use across threads.
+_session = requests.Session()
+_session.headers.update({"User-Agent": _DEFAULT_UA})
+# Connection pool settings: reuse up to 20 connections per host, 100 total
+_adapter = requests.adapters.HTTPAdapter(
+    pool_connections=20, pool_maxsize=20, max_retries=0
+)
+_session.mount("https://", _adapter)
+_session.mount("http://", _adapter)
 
-def http_get_json(url: str, timeout: int = 8, retries: int = 3, backoff: float = 0.5) -> Any:
+
+def http_get_json(
+    url: str, timeout: int = 8, retries: int = 3, backoff: float = 0.5
+) -> Any:
+    """Fetch JSON from URL with retries and connection pooling."""
     last_err: Optional[Exception] = None
     for attempt in range(retries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": _DEFAULT_UA})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode())
+            resp = _session.get(url, timeout=timeout)
+            resp.raise_for_status()
+            return resp.json()
         except Exception as e:
             last_err = e
             if attempt < retries - 1:
