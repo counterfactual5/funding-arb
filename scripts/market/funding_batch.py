@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Batch / parallel funding-rate snapshot helpers."""
+
 from __future__ import annotations
 
 from typing import Any, Callable
@@ -11,7 +12,6 @@ from venues.base import make_pair
 def _snap_from_all_row(
     row: dict[str, Any], quote: str, interval_map: dict[str, float]
 ) -> dict[str, Any]:
-    quote_u = quote.upper()
     sym = str(row.get("symbol", "")).upper()
     interval_h = float(interval_map.get(sym, 8.0) or 8.0)
     interval_ms = int(interval_h * 3600 * 1000)
@@ -100,13 +100,14 @@ def fetch_funding_history_parallel(
         return {}
     if fp is None and fetch_since_fn is None:
         return {}
+    fp_nn = fp  # type narrowing for pyright
 
     def _one(sym: str) -> tuple[str, list[dict[str, Any]]]:
         start = int(start_ms_by_sym[sym]) + 1
         pair = make_pair(sym, quote)
         if fetch_since_fn is not None:
             return sym, fetch_since_fn(pair, start)
-        return sym, fp.fetch_since(pair, start)
+        return sym, fp_nn.fetch_since(pair, start)
 
     raw = run_io_parallel(syms, _one, max_workers=workers, swallow_errors=True)
     out: dict[str, list[dict[str, Any]]] = {}

@@ -120,7 +120,6 @@ def check_exit(
     base = str(pos.get("base", "")).upper()
     long_venue = str(pos.get("long_venue", ""))
     short_venue = str(pos.get("short_venue", ""))
-    direction = str(pos.get("direction", "forward"))
 
     current_spread = _get_current_spread(base, long_venue, short_venue, scan_rates)
     if current_spread is None:
