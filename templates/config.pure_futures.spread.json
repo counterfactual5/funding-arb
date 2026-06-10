@@ -5,7 +5,7 @@
   "cash": "USDT",
   "venue": { "type": "binance" },
   "pureFuturesArbitrage": {
-    "venues": ["binance", "bitget", "bybit", "okx"],
+    "venues": ["binance", "bitget", "bybit", "okx", "hyperliquid"],
     "maxConcurrentPairs": 3,
     "tradeUsdPerPair": 500.0,
     "minSpreadPct": 0.05,

@@ -473,12 +473,27 @@ _PROVIDERS: dict[str, FundingProvider] = {
     "okx": OkxFundingProvider(),
 }
 
+# Lazy import to avoid circular dependency (hyperliquid_funding imports requests)
+def _get_hyperliquid_provider() -> FundingProvider:
+    from venues.hyperliquid_funding import HyperliquidFundingProvider
+    return HyperliquidFundingProvider()
+
+_PROVIDERS["hyperliquid"] = None  # placeholder, resolved lazily
+
+
+def _resolve_provider(venue: str) -> FundingProvider:
+    if venue == "hyperliquid" and _PROVIDERS.get("hyperliquid") is None:
+        _PROVIDERS["hyperliquid"] = _get_hyperliquid_provider()
+    return _PROVIDERS[venue]
+
 
 def get_funding_provider(venue: str) -> FundingProvider:
     v = str(venue or "binance").strip().lower()
-    provider = _PROVIDERS.get(v)
-    if provider is None:
+    if v not in _PROVIDERS:
         raise ValueError(
             f"不支持的 funding venue={v!r}，可选: {', '.join(sorted(_PROVIDERS))}"
         )
+    provider = _PROVIDERS[v]
+    if provider is None:
+        provider = _resolve_provider(v)
     return provider

@@ -8,6 +8,7 @@ from venues.base import CexVenue, resolve_venue_config
 from venues.binance import BinanceSpotVenue
 from venues.bitget import BitgetSpotVenue
 from venues.bybit import BybitSpotVenue
+from venues.hyperliquid import HyperliquidVenue
 from venues.okx import OkxSpotVenue
 
 _REGISTRY: dict[str, type] = {
@@ -15,6 +16,7 @@ _REGISTRY: dict[str, type] = {
     "binance": BinanceSpotVenue,
     "bybit": BybitSpotVenue,
     "okx": OkxSpotVenue,
+    "hyperliquid": HyperliquidVenue,
 }
 
 

@@ -18,6 +18,7 @@ DEFAULT_TAKER_PCT: dict[str, float] = {
     "binance": 0.05,
     "okx": 0.05,
     "bybit": 0.055,
+    "hyperliquid": 0.035,
 }
 
 DEFAULT_MAKER_PCT: dict[str, float] = {
@@ -25,6 +26,7 @@ DEFAULT_MAKER_PCT: dict[str, float] = {
     "binance": 0.02,
     "okx": 0.02,
     "bybit": 0.02,
+    "hyperliquid": 0.01,
 }
 
 # Backward-compatible alias used by scanners / history backfill
