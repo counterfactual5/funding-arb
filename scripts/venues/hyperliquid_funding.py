@@ -157,26 +157,47 @@ class HyperliquidFundingProvider:
         """Fetch historical funding rates since start_ms.
 
         Returns list of {ts, rate_pct} sorted ascending.
+
+        Hyperliquid returns max 500 records per call (≈20 days at 1h interval).
+        We paginate by advancing startTime to the last timestamp + 1.
         """
         if start_ms <= 0:
             return []
         coin = _symbol_to_coin(symbol)
-        try:
-            data = _post({"type": "fundingHistory", "coin": coin, "startTime": start_ms})
-        except Exception:
-            return []
-        if not isinstance(data, list):
-            return []
         out: list[dict[str, Any]] = []
-        for row in data:
-            ts = int(row.get("time", 0) or 0)
-            if ts <= start_ms:
-                continue
+        cursor = start_ms
+
+        for _ in range(max_pages):
             try:
-                rate = float(row.get("fundingRate", 0) or 0) * 100
-            except (ValueError, TypeError):
-                rate = 0.0
-            out.append({"ts": ts, "rate_pct": rate})
+                data = _post({"type": "fundingHistory", "coin": coin, "startTime": cursor})
+            except Exception:
+                break
+            if not isinstance(data, list) or not data:
+                break
+
+            page_items: list[dict[str, Any]] = []
+            for row in data:
+                ts = int(row.get("time", 0) or 0)
+                if ts <= start_ms:
+                    continue
+                try:
+                    rate = float(row.get("fundingRate", 0) or 0) * 100
+                except (ValueError, TypeError):
+                    rate = 0.0
+                page_items.append({"ts": ts, "rate_pct": rate})
+
+            if not page_items:
+                break
+            out.extend(page_items)
+            # Advance cursor past the last record to get the next page
+            last_ts = max(r["ts"] for r in page_items)
+            if last_ts <= cursor:
+                break
+            cursor = last_ts + 1
+            # If we got fewer than 500, we've reached the end
+            if len(data) < 500:
+                break
+
         out.sort(key=lambda x: x["ts"])
         return out
 
