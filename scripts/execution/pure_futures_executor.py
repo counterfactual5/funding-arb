@@ -106,8 +106,9 @@ def _venue(venue_id: str, injected: Any = None):
 def _check_futures_margin(
     venue: Any, venue_id: str, quote: str, required_usd: float, logs: list[str]
 ) -> bool:
-    """校验 futures USDT ≥ required；不足时尝试 spot→futures 划转差额。
+    """校验 futures USDT ≥ required；不足时尝试 earn→spot→futures 链路。
 
+    链路: futures 不足 → spot 划转 → spot 不足 → earn 赎回到 spot → 再划转。
     返回 False 表示保证金确认不足（应放弃开仓）。
     余额 API 异常时跳过校验放行（不让偶发接口故障阻塞交易）。
     """
@@ -121,6 +122,17 @@ def _check_futures_margin(
         return True
     shortfall = required_usd - futures_avail
     spot_avail = float(balances.get("spot", 0) or 0)
+
+    # Step 1: earn → spot（仅 Bitget，仅 spot 不足时）
+    if spot_avail < shortfall and venue_id == "bitget":
+        earn_shortfall = shortfall - spot_avail
+        earn_redeemed = _redeem_bitget_earn(quote, earn_shortfall, logs)
+        if earn_redeemed > 0:
+            import time as _t
+            _t.sleep(1.0)
+            spot_avail += earn_redeemed
+
+    # Step 2: spot → futures
     if spot_avail >= shortfall:
         try:
             if venue.transfer_asset(quote, shortfall, "spot", "futures"):
@@ -135,6 +147,49 @@ def _check_futures_margin(
         f"spot={spot_avail:.2f} 需 {required_usd:.2f}"
     )
     return False
+
+
+_EARN_PRODUCTS = {"USDT": "964334561256718336"}
+_MIN_REDEEM_USDT = 1.0
+
+
+def _redeem_bitget_earn(
+    coin: str, amount: float, logs: list[str]
+) -> float:
+    """从 Bitget 活期理财赎回。成功返回赎回金额，失败返回 0。"""
+    pid = _EARN_PRODUCTS.get(coin)
+    if not pid:
+        return 0.0
+    if amount < _MIN_REDEEM_USDT:
+        return 0.0
+    try:
+        from venues.bitget import _api_call as _bitget_api
+        # 查询理财余额
+        data = _bitget_api("GET", "/api/v2/earn/account/assets")
+        earn_bal = 0.0
+        for a in data.get("data", []):
+            if a.get("coin") == coin:
+                earn_bal = float(a.get("amount", "0"))
+                break
+        if earn_bal < _MIN_REDEEM_USDT:
+            logs.append(f"bitget earn: {coin} 理财余额 {earn_bal:.2f}，无需赎回")
+            return 0.0
+        redeem_amt = min(amount, earn_bal)
+        # 赎回
+        result = _bitget_api("POST", "/api/v2/earn/savings/redeem", body={
+            "productId": pid,
+            "periodType": "flexible",
+            "amount": f"{redeem_amt:.2f}",
+        })
+        if result.get("code") == "00000":
+            logs.append(f"bitget earn: 赎回 {redeem_amt:.2f} {coin} 到 spot")
+            return redeem_amt
+        else:
+            logs.append(f"bitget earn: 赎回失败 {result.get('msg', '')}")
+            return 0.0
+    except Exception as e:
+        logs.append(f"bitget earn: 赎回异常 ({e})")
+        return 0.0
 
 
 def _make_futures_trade(

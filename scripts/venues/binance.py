@@ -122,6 +122,14 @@ class BinanceSpotVenue:
         except Exception:
             return 0.0
 
+    def get_futures_ticker(self, pair: str) -> float:
+        """USDT-M 永续合约最新价。pair 格式如 BTCUSDT。"""
+        try:
+            data = _api_call("GET", "/fapi/v1/ticker/price", {"symbol": pair})
+            return float(data.get("price", 0))
+        except Exception:
+            return 0.0
+
     def get_all_spot_tickers(self, cache_sec: int = 5) -> dict[str, float]:
         """Bulk spot last prices {PAIR: price}. Cached briefly for screener loops."""
         global _spot_ticker_loaded_at, _spot_ticker_prices

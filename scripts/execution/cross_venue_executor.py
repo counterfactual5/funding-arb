@@ -103,14 +103,18 @@ def _leg_market(venue: Any, base: str, quote: str, *, futures: bool) -> dict[str
         rules = venue.fetch_futures_symbol_rules(pair) or venue.fetch_symbol_rules(pair) or default_rules
         price = 0.0
         try:
-            # OKX 永续 ticker 需 SWAP instId（如 ETH-USDT-SWAP），不能用 ETHUSDT
-            if getattr(venue, "venue_id", "") == "okx":
-                swap = f"{base.upper()}-{quote.upper()}-SWAP"
-                price = float(venue.get_ticker(swap) or 0.0)
+            if hasattr(venue, "get_futures_ticker"):
+                price = float(venue.get_futures_ticker(pair) or 0.0)
             else:
                 price = float(venue.get_ticker(pair) or 0.0)
         except Exception:
             price = 0.0
+        # Fallback: spot ticker if futures ticker returned 0
+        if price <= 0:
+            try:
+                price = float(venue.get_ticker(pair) or 0.0)
+            except Exception:
+                pass
     else:
         # 现货腿优先用 fetch_asset_market，自动处理 OKX 的 ETH-USDT 等格式差异；
         # 测试 fake / 旧 venue 适配器没有该方法时，回落到通用 pair 查询。

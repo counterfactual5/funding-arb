@@ -148,6 +148,21 @@ class OkxSpotVenue:
         except Exception:
             return 0.0
 
+    def get_futures_ticker(self, pair: str) -> float:
+        """永续合约最新价。pair 格式可以是 BTCUSDT（自动转为 BTC-USDT-SWAP）或完整 instId。"""
+        inst = pair
+        if "-" not in pair:
+            # BTCUSDT → BTC-USDT-SWAP
+            base = pair.replace("USDT", "")
+            if base:
+                inst = f"{base}-USDT-SWAP"
+        url = f"{BASE}/api/v5/market/ticker?instId={inst}"
+        try:
+            data = http_get_json(url)
+            return float(data.get("data", [{}])[0].get("last", 0))
+        except Exception:
+            return 0.0
+
     def get_klines(self, pair: str, granularity: str = "1day", limit: int = 200) -> list:
         bar = self.GRANULARITY_MAP.get(granularity, granularity)
         url = f"{BASE}/api/v5/market/candles?instId={pair}&bar={bar}&limit={limit}"

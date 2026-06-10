@@ -129,6 +129,15 @@ class BybitSpotVenue:
         except Exception:
             return 0.0
 
+    def get_futures_ticker(self, pair: str) -> float:
+        """USDT 永续合约最新价。pair 格式如 BTCUSDT。"""
+        url = f"{BASE}/v5/market/tickers?category=linear&symbol={pair}"
+        try:
+            data = http_get_json(url)
+            return float(data.get("result", {}).get("list", [{}])[0].get("lastPrice", 0))
+        except Exception:
+            return 0.0
+
     def get_all_spot_tickers(self, cache_sec: int = 5) -> dict[str, float]:
         """Bulk spot last prices {PAIR: price}. Cached briefly for screener loops."""
         global _spot_ticker_loaded_at, _spot_ticker_prices

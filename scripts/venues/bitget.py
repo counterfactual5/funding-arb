@@ -126,6 +126,19 @@ class BitgetSpotVenue:
             pass
         return 0.0
 
+    def get_futures_ticker(self, pair: str) -> float:
+        """USDT-M 永续合约最新价。pair 格式同 get_ticker (如 BTCUSDT)。"""
+        url = f"{BASE}/api/v2/mix/market/ticker?symbol={pair}&productType=USDT-FUTURES"
+        try:
+            data = http_get_json(url).get("data", [])
+            if isinstance(data, list) and data:
+                return float(data[0].get("lastPr", 0) or 0)
+            elif isinstance(data, dict):
+                return float(data.get("lastPr", 0) or 0)
+        except Exception:
+            pass
+        return 0.0
+
     def get_all_spot_tickers(self, cache_sec: int = 5) -> dict[str, float]:
         """Bulk spot last prices {PAIR: price}. Cached briefly for screener loops."""
         global _spot_ticker_loaded_at, _spot_ticker_prices

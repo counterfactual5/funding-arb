@@ -88,15 +88,18 @@
 
 ### 测试覆盖
 
-- [x] 78 tests, 100% pass（无回归）
+- [x] 118 tests, 100% pass（无回归）
   - 10 tests — watcher (exit/rebalance/leg_alive)
   - 6 tests — settle_mismatch_planner
   - 10 tests — pure_futures_strategy
-  - 5 tests — backtest
+  - 8 tests — backtest (5 new + 3 existing)
+  - 10 tests — funding_history_source
   - 6 tests — pure_futures_executor
   - 8 tests — scan_pure_futures_spreads
   - 3 tests — report_pure_futures_spreads
   - 1 test — run_pure_futures_spread
+  - 6 tests — settle_mismatch_planner
+  - 4 tests — unified_pool_pure_futures
   - 其余 — 现有模块
 
 ### Phase 3（后置，未开始）
@@ -112,18 +115,19 @@
 
 | 文件 | 行数 | 说明 |
 |------|------|------|
-| `scripts/strategies/futures/pure_futures_spread.py` | ~200 | 决策引擎 |
+| `scripts/strategies/futures/pure_futures_spread.py` | ~276 | 决策引擎 |
 | `scripts/cli/scan_pure_futures_spreads.py` | ~350 | 全市场扫描 CLI |
 | `scripts/cli/report_pure_futures_spreads.py` | ~250 | JSONL 报告 CLI |
-| `scripts/cli/pure_futures_trade.py` | ~100 | 手动交易 CLI |
-| `scripts/execution/pure_futures_executor.py` | ~350 | 执行器（开/平/回滚） |
-| `scripts/execution/run_pure_futures_spread.py` | ~150 | Runner |
-| `scripts/execution/pure_futures_watcher.py` | ~300 | 独立常驻监控 |
-| `scripts/execution/settle_mismatch_planner.py` | ~200 | 结算错配分析 |
-| `scripts/backtest/backtest_pure_futures_spread.py` | ~350 | 历史回测 |
-| `scripts/cli/orchestrate_funding.py` | ~400 | 编排器（含 --pure-futures） |
+| `scripts/cli/pure_futures_trade.py` | ~113 | 手动交易 CLI |
+| `scripts/execution/pure_futures_executor.py` | ~600 | 执行器（开/平/回滚+保证金校验） |
+| `scripts/execution/run_pure_futures_spread.py` | ~235 | Runner（scan→decide→execute） |
+| `scripts/execution/pure_futures_watcher.py` | ~483 | 独立常驻监控 |
+| `scripts/execution/settle_mismatch_planner.py` | ~239 | 结算错配分析 |
+| `scripts/backtest/backtest_pure_futures_spread.py` | ~727 | 历史回测（JSONL + API） |
+| `scripts/backtest/funding_history_source.py` | ~378 | 历史资金费数据合成 |
+| `scripts/cli/orchestrate_funding.py` | ~500 | 编排器（含 --pure-futures） |
 | `templates/config.pure_futures.spread.json` | ~30 | 配置模板 |
-| **Total** | **~2700** | |
+| **Total** | **~5400** | |
 
 ---
 

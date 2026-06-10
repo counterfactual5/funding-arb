@@ -89,7 +89,7 @@ python3 scripts/cli/orchestrate_funding.py --pure-futures  # 纯永续模式
 
 ```bash
 pip install pytest
-python3 -m pytest scripts/tests/ -q   # 78 tests, 全部 pass
+python3 -m pytest scripts/tests/ -q   # 118 tests, 全部 pass
 ```
 
 ## 配置
