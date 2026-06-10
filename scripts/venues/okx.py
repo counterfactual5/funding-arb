@@ -16,9 +16,9 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
+from core.config import resolve_timeframes
 from venues.base import make_pair
 from venues.http_util import http_get_json, parse_kline_ohlcv, rules_for_price
-from core.config import resolve_timeframes
 
 BASE = "https://www.okx.com"
 CONFIG_PATH = os.path.expanduser("~/.funding-arb/funding-arb.json")
@@ -27,6 +27,8 @@ _futures_rules_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _initialized_symbols: set[str] = set()
 _env_loaded = False
 _acct_config_cache: tuple[float, dict] | None = None
+_futures_ticker_loaded_at: float = 0.0
+_futures_ticker_prices: dict[str, float] = {}
 
 
 def _ensure_env() -> None:
@@ -76,7 +78,7 @@ def _api_call(
         raise RuntimeError(
             "OKX API 凭证缺失：请设置 OKX_API_KEY / OKX_SECRET_KEY / OKX_PASSPHRASE，"
             "或在 ~/.funding-arb/funding-arb.json 的 env 中配置。"
-    )
+        )
 
     query = urllib.parse.urlencode(params) if params else ""
     body_str = json.dumps(body) if body else ""
@@ -103,7 +105,9 @@ def _api_call(
             with urllib.request.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read().decode())
             if data.get("code") != "0":
-                raise RuntimeError(f"OKX API error: {data.get('msg', data.get('code'))}")
+                raise RuntimeError(
+                    f"OKX API error: {data.get('msg', data.get('code'))}"
+                )
             return data
         except Exception as e:
             last_err = e
@@ -134,9 +138,20 @@ class OkxSpotVenue:
     venue_id = "okx"
 
     GRANULARITY_MAP: dict[str, str] = {
-        "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m", "30m": "30m",
-        "1h": "1H", "2h": "2H", "4h": "4H", "6h": "6H", "12h": "12H",
-        "1day": "1D", "1d": "1D", "1week": "1W", "1w": "1W",
+        "1m": "1m",
+        "3m": "3m",
+        "5m": "5m",
+        "15m": "15m",
+        "30m": "30m",
+        "1h": "1H",
+        "2h": "2H",
+        "4h": "4H",
+        "6h": "6H",
+        "12h": "12H",
+        "1day": "1D",
+        "1d": "1D",
+        "1week": "1W",
+        "1w": "1W",
     }
 
     def get_ticker(self, pair: str) -> float:
@@ -163,7 +178,36 @@ class OkxSpotVenue:
         except Exception:
             return 0.0
 
-    def get_klines(self, pair: str, granularity: str = "1day", limit: int = 200) -> list:
+    def get_all_futures_tickers(self, cache_sec: int = 5) -> dict[str, float]:
+        """Bulk SWAP last prices {BTCUSDT: price, BTC-USDT-SWAP: price}. Cached briefly."""
+        global _futures_ticker_loaded_at, _futures_ticker_prices
+        now = time.time()
+        if _futures_ticker_prices and (now - _futures_ticker_loaded_at) < cache_sec:
+            return dict(_futures_ticker_prices)
+        try:
+            rows = http_get_json(f"{BASE}/api/v5/market/tickers?instType=SWAP").get(
+                "data", []
+            )
+            new_prices: dict[str, float] = {}
+            for r in rows:
+                inst_id = str(r.get("instId", "")).upper()
+                last = float(r.get("last", 0) or 0)
+                if not inst_id or last <= 0:
+                    continue
+                # Map both formats: BTC-USDT-SWAP → BTCUSDT
+                new_prices[inst_id] = last  # e.g. "BTC-USDT-SWAP"
+                if "-USDT-SWAP" in inst_id:
+                    base = inst_id.replace("-USDT-SWAP", "")
+                    new_prices[f"{base}USDT"] = last
+            _futures_ticker_prices = new_prices
+            _futures_ticker_loaded_at = now
+        except Exception:
+            pass
+        return dict(_futures_ticker_prices)
+
+    def get_klines(
+        self, pair: str, granularity: str = "1day", limit: int = 200
+    ) -> list:
         bar = self.GRANULARITY_MAP.get(granularity, granularity)
         url = f"{BASE}/api/v5/market/candles?instId={pair}&bar={bar}&limit={limit}"
         try:
@@ -205,7 +249,9 @@ class OkxSpotVenue:
         _symbol_rules_cache[pair] = (now, rules)
         return dict(rules)
 
-    def fetch_futures_symbol_rules(self, pair: str, cache_sec: int = 3600) -> dict[str, Any] | None:
+    def fetch_futures_symbol_rules(
+        self, pair: str, cache_sec: int = 3600
+    ) -> dict[str, Any] | None:
         now = time.time()
         cached = _futures_rules_cache.get(pair)
         if cached and (now - cached[0]) < cache_sec:
@@ -259,7 +305,9 @@ class OkxSpotVenue:
         cfg = cfg if cfg is not None else self._get_account_config()
         return str(cfg.get("acctLv", "")) in ("3", "4")
 
-    def transfer_asset(self, asset: str, amount: float, from_account: str, to_account: str) -> bool:
+    def transfer_asset(
+        self, asset: str, amount: float, from_account: str, to_account: str
+    ) -> bool:
         # OKX 各账户模式下 margin 都在交易账户（18）内，spot↔margin 无需划转
         if "margin" in (from_account, to_account):
             return True
@@ -271,11 +319,16 @@ class OkxSpotVenue:
         else:
             return False
         try:
-            _api_call("POST", "/api/v5/asset/transfer", body={
-                "from": okx_from, "to": okx_to,
-                "currency": asset.upper(),
-                "amount": f"{amount:.8f}".rstrip("0").rstrip("."),
-            })
+            _api_call(
+                "POST",
+                "/api/v5/asset/transfer",
+                body={
+                    "from": okx_from,
+                    "to": okx_to,
+                    "currency": asset.upper(),
+                    "amount": f"{amount:.8f}".rstrip("0").rstrip("."),
+                },
+            )
             return True
         except Exception:
             return False
@@ -287,18 +340,43 @@ class OkxSpotVenue:
         price = self.get_ticker(pair)
         rules = self.fetch_symbol_rules(pair)
         if rules is None:
-            return {"symbol": asset, "price": price, "rules_error": True, "venue": self.venue_id}
+            return {
+                "symbol": asset,
+                "price": price,
+                "rules_error": True,
+                "venue": self.venue_id,
+            }
         limits = rules_for_price(rules, price)
         cfg = cfg or {}
         tf = resolve_timeframes(cfg)
-        klines_1d = [parse_kline_ohlcv(k) for k in self.get_klines(pair, tf["slow"]["interval"], tf["slow"]["limit"]) if k]
-        klines_4h = [parse_kline_ohlcv(k) for k in self.get_klines(pair, tf["mid"]["interval"], tf["mid"]["limit"]) if k]
-        klines_1w = [parse_kline_ohlcv(k) for k in self.get_klines(pair, tf["macro"]["interval"], tf["macro"]["limit"]) if k]
+        klines_1d = [
+            parse_kline_ohlcv(k)
+            for k in self.get_klines(pair, tf["slow"]["interval"], tf["slow"]["limit"])
+            if k
+        ]
+        klines_4h = [
+            parse_kline_ohlcv(k)
+            for k in self.get_klines(pair, tf["mid"]["interval"], tf["mid"]["limit"])
+            if k
+        ]
+        klines_1w = [
+            parse_kline_ohlcv(k)
+            for k in self.get_klines(
+                pair, tf["macro"]["interval"], tf["macro"]["limit"]
+            )
+            if k
+        ]
         return {
-            "symbol": asset, "pair": pair, "price": price,
-            "rules_error": False, "venue": self.venue_id,
-            "symbol_rules": rules, **limits,
-            "klines_1d": klines_1d, "klines_4h": klines_4h, "klines_1w": klines_1w,
+            "symbol": asset,
+            "pair": pair,
+            "price": price,
+            "rules_error": False,
+            "venue": self.venue_id,
+            "symbol_rules": rules,
+            **limits,
+            "klines_1d": klines_1d,
+            "klines_4h": klines_4h,
+            "klines_1w": klines_1w,
         }
 
     def fetch_balances(self, coins: list[str]) -> dict[str, float]:
@@ -350,15 +428,17 @@ class OkxSpotVenue:
             if abs(amt) <= 1e-12:
                 continue
             base = inst.split("-")[0]
-            out.append({
-                "symbol": f"{base}{quote_u}",
-                "side": "long" if amt > 0 else "short",
-                "qty": abs(amt),
-                "entry_price": float(pos.get("avgPx", 0) or 0),
-                "liq_price": float(pos.get("liqPx", 0) or 0),
-                "leverage": float(pos.get("lever", 1) or 1),
-                "unrealized_pnl": float(pos.get("upl", 0) or 0),
-            })
+            out.append(
+                {
+                    "symbol": f"{base}{quote_u}",
+                    "side": "long" if amt > 0 else "short",
+                    "qty": abs(amt),
+                    "entry_price": float(pos.get("avgPx", 0) or 0),
+                    "liq_price": float(pos.get("liqPx", 0) or 0),
+                    "leverage": float(pos.get("lever", 1) or 1),
+                    "unrealized_pnl": float(pos.get("upl", 0) or 0),
+                }
+            )
         return out
 
     def initialize_futures_symbol(self, pair: str) -> None:
@@ -367,13 +447,23 @@ class OkxSpotVenue:
         asset = pair.replace("USDT", "") if pair.endswith("USDT") else pair
         swap = _swap_inst_id(asset)
         try:
-            _api_call("POST", "/api/v5/account/set-position-mode", body={"posMode": "net_mode"})
+            _api_call(
+                "POST",
+                "/api/v5/account/set-position-mode",
+                body={"posMode": "net_mode"},
+            )
         except Exception:
             pass
         try:
-            _api_call("POST", "/api/v5/account/set-leverage", body={
-                "instId": swap, "lever": "1", "mgnMode": "isolated",
-            })
+            _api_call(
+                "POST",
+                "/api/v5/account/set-leverage",
+                body={
+                    "instId": swap,
+                    "lever": "1",
+                    "mgnMode": "isolated",
+                },
+            )
         except Exception:
             pass
         _initialized_symbols.add(pair)
@@ -445,9 +535,13 @@ class OkxSpotVenue:
         se = side_effect.lower()
         try:
             if se == "auto_borrow":
-                _api_call("POST", "/api/v5/account/set-auto-loan", body={"autoLoan": True})
+                _api_call(
+                    "POST", "/api/v5/account/set-auto-loan", body={"autoLoan": True}
+                )
             elif se == "auto_repay":
-                _api_call("POST", "/api/v5/account/set-auto-repay", body={"autoRepay": True})
+                _api_call(
+                    "POST", "/api/v5/account/set-auto-repay", body={"autoRepay": True}
+                )
         except Exception:
             pass
 
@@ -465,7 +559,9 @@ class OkxSpotVenue:
             print(f"okx fetch_margin_debt balance failed: {e}", file=sys.stderr)
         # 合约模式下杠杆负债挂在 MARGIN 持仓的 liab/liabCcy 上
         try:
-            pos = _api_call("GET", "/api/v5/account/positions", params={"instType": "MARGIN"})
+            pos = _api_call(
+                "GET", "/api/v5/account/positions", params={"instType": "MARGIN"}
+            )
             for p in pos.get("data", []):
                 coin = str(p.get("liabCcy", "")).upper()
                 liab = abs(float(p.get("liab", 0) or 0))
@@ -553,7 +649,9 @@ class OkxSpotVenue:
             # IOC 限价上浮 1%：精确控制 base 数量，等效市价成交
             px_ref = ref_price if ref_price and ref_price > 0 else self.get_ticker(pair)
             if not px_ref or px_ref <= 0:
-                return False, {"error": "okx margin buy requires ref_price for IOC limit"}
+                return False, {
+                    "error": "okx margin buy requires ref_price for IOC limit"
+                }
             rules = self.fetch_symbol_rules(pair) or {}
             qp = int(rules.get("quote_precision", 4))
             body["ordType"] = "ioc"
@@ -566,7 +664,9 @@ class OkxSpotVenue:
             fill_ts = time.time()
             order_id = result.get("data", [{}])[0].get("ordId", "?")
             time.sleep(0.3)
-            detail = _api_call("GET", "/api/v5/trade/order", params={"instId": pair, "ordId": order_id})
+            detail = _api_call(
+                "GET", "/api/v5/trade/order", params={"instId": pair, "ordId": order_id}
+            )
             od = detail.get("data", [{}])[0]
             state = str(od.get("state", ""))
             exec_price = float(od.get("avgPx", 0) or ref_price)
@@ -616,31 +716,53 @@ class OkxSpotVenue:
         return rates
 
     def place_buy(
-        self, pair: str, amount_usdt: float, quote_precision: int = 2, ref_price: float = 0.0,
+        self,
+        pair: str,
+        amount_usdt: float,
+        quote_precision: int = 2,
+        ref_price: float = 0.0,
     ) -> tuple[bool, dict[str, Any]]:
         client_oid = f"qbuy{int(time.time())}{random.randint(0, 9999)}"
         sz = f"{amount_usdt:.{quote_precision}f}"
         submit_ts = time.time()
         try:
-            result = _api_call("POST", "/api/v5/trade/order", body={
-                "instId": pair, "tdMode": "cash", "side": "buy",
-                "ordType": "market", "tgtCcy": "quote_ccy",
-                "sz": sz, "clOrdId": client_oid,
-            })
+            result = _api_call(
+                "POST",
+                "/api/v5/trade/order",
+                body={
+                    "instId": pair,
+                    "tdMode": "cash",
+                    "side": "buy",
+                    "ordType": "market",
+                    "tgtCcy": "quote_ccy",
+                    "sz": sz,
+                    "clOrdId": client_oid,
+                },
+            )
             fill_ts = time.time()
             order_id = result.get("data", [{}])[0].get("ordId", "?")
             time.sleep(0.3)
-            detail = _api_call("GET", "/api/v5/trade/order", params={"instId": pair, "ordId": order_id})
+            detail = _api_call(
+                "GET", "/api/v5/trade/order", params={"instId": pair, "ordId": order_id}
+            )
             od = detail.get("data", [{}])[0]
             exec_price = float(od.get("avgPx", 0) or ref_price)
             exec_quote = float(od.get("fillCxqFee", od.get("fillSzQuote", sz)))
             exec_qty = exec_quote / exec_price if exec_price > 0 else 0
-            slippage = round((exec_price - ref_price) / ref_price, 6) if ref_price and exec_price else None
+            slippage = (
+                round((exec_price - ref_price) / ref_price, 6)
+                if ref_price and exec_price
+                else None
+            )
             return True, {
-                "order_id": order_id, "exec_price": exec_price,
-                "exec_qty": exec_qty, "exec_quote_usd": exec_quote,
-                "ref_price": ref_price, "slippage": slippage,
-                "submit_ts": round(submit_ts, 3), "fill_ts": round(fill_ts, 3),
+                "order_id": order_id,
+                "exec_price": exec_price,
+                "exec_qty": exec_qty,
+                "exec_quote_usd": exec_quote,
+                "ref_price": ref_price,
+                "slippage": slippage,
+                "submit_ts": round(submit_ts, 3),
+                "fill_ts": round(fill_ts, 3),
                 "latency_ms": round((fill_ts - submit_ts) * 1000),
                 "order_status": od.get("state", ""),
             }
@@ -648,30 +770,52 @@ class OkxSpotVenue:
             return False, {"error": str(e)}
 
     def place_sell(
-        self, pair: str, amount_base: float, quantity_precision: int = 6, ref_price: float = 0.0,
+        self,
+        pair: str,
+        amount_base: float,
+        quantity_precision: int = 6,
+        ref_price: float = 0.0,
     ) -> tuple[bool, dict[str, Any]]:
         client_oid = f"qsell{int(time.time())}{random.randint(0, 9999)}"
         sz = f"{amount_base:.{quantity_precision}f}".rstrip("0").rstrip(".")
         submit_ts = time.time()
         try:
-            result = _api_call("POST", "/api/v5/trade/order", body={
-                "instId": pair, "tdMode": "cash", "side": "sell",
-                "ordType": "market", "sz": sz, "clOrdId": client_oid,
-            })
+            result = _api_call(
+                "POST",
+                "/api/v5/trade/order",
+                body={
+                    "instId": pair,
+                    "tdMode": "cash",
+                    "side": "sell",
+                    "ordType": "market",
+                    "sz": sz,
+                    "clOrdId": client_oid,
+                },
+            )
             fill_ts = time.time()
             order_id = result.get("data", [{}])[0].get("ordId", "?")
             time.sleep(0.3)
-            detail = _api_call("GET", "/api/v5/trade/order", params={"instId": pair, "ordId": order_id})
+            detail = _api_call(
+                "GET", "/api/v5/trade/order", params={"instId": pair, "ordId": order_id}
+            )
             od = detail.get("data", [{}])[0]
             exec_price = float(od.get("avgPx", 0) or ref_price)
             exec_qty = float(od.get("fillSz", 0) or amount_base)
             exec_quote = exec_qty * exec_price
-            slippage = round((exec_price - ref_price) / ref_price, 6) if ref_price and exec_price else None
+            slippage = (
+                round((exec_price - ref_price) / ref_price, 6)
+                if ref_price and exec_price
+                else None
+            )
             return True, {
-                "order_id": order_id, "exec_price": exec_price,
-                "exec_qty": exec_qty, "exec_quote_usd": exec_quote,
-                "ref_price": ref_price, "slippage": slippage,
-                "submit_ts": round(submit_ts, 3), "fill_ts": round(fill_ts, 3),
+                "order_id": order_id,
+                "exec_price": exec_price,
+                "exec_qty": exec_qty,
+                "exec_quote_usd": exec_quote,
+                "ref_price": ref_price,
+                "slippage": slippage,
+                "submit_ts": round(submit_ts, 3),
+                "fill_ts": round(fill_ts, 3),
                 "latency_ms": round((fill_ts - submit_ts) * 1000),
                 "order_status": od.get("state", ""),
             }
@@ -679,8 +823,12 @@ class OkxSpotVenue:
             return False, {"error": str(e)}
 
     def place_futures_order(
-        self, pair: str, side: str, amount_base: float,
-        quantity_precision: int = 3, ref_price: float = 0.0,
+        self,
+        pair: str,
+        side: str,
+        amount_base: float,
+        quantity_precision: int = 3,
+        ref_price: float = 0.0,
     ) -> tuple[bool, dict[str, Any]]:
         asset = pair.replace("USDT", "") if pair.endswith("USDT") else pair
         swap = _swap_inst_id(asset)
@@ -692,28 +840,48 @@ class OkxSpotVenue:
 
         okx_side = "buy" if side in ("open_long", "close_short") else "sell"
         try:
-            result = _api_call("POST", "/api/v5/trade/order", body={
-                "instId": swap, "tdMode": "isolated", "side": okx_side,
-                "ordType": "market", "sz": sz, "clOrdId": client_oid,
-            })
+            result = _api_call(
+                "POST",
+                "/api/v5/trade/order",
+                body={
+                    "instId": swap,
+                    "tdMode": "isolated",
+                    "side": okx_side,
+                    "ordType": "market",
+                    "sz": sz,
+                    "clOrdId": client_oid,
+                },
+            )
             fill_ts = time.time()
             order_id = result.get("data", [{}])[0].get("ordId", "?")
 
             exec_price = ref_price
             try:
                 time.sleep(0.5)
-                detail = _api_call("GET", "/api/v5/trade/order", params={"instId": swap, "ordId": order_id})
+                detail = _api_call(
+                    "GET",
+                    "/api/v5/trade/order",
+                    params={"instId": swap, "ordId": order_id},
+                )
                 od = detail.get("data", [{}])[0]
                 exec_price = float(od.get("avgPx", 0) or ref_price)
             except Exception:
                 pass
 
-            slippage = round((exec_price - ref_price) / ref_price, 6) if ref_price and exec_price else None
+            slippage = (
+                round((exec_price - ref_price) / ref_price, 6)
+                if ref_price and exec_price
+                else None
+            )
             return True, {
-                "order_id": order_id, "exec_price": exec_price,
-                "exec_qty": amount_base, "exec_quote_usd": amount_base * exec_price,
-                "ref_price": ref_price, "slippage": slippage,
-                "submit_ts": round(submit_ts, 3), "fill_ts": round(fill_ts, 3),
+                "order_id": order_id,
+                "exec_price": exec_price,
+                "exec_qty": amount_base,
+                "exec_quote_usd": amount_base * exec_price,
+                "ref_price": ref_price,
+                "slippage": slippage,
+                "submit_ts": round(submit_ts, 3),
+                "fill_ts": round(fill_ts, 3),
                 "latency_ms": round((fill_ts - submit_ts) * 1000),
                 "order_status": "filled",
             }
@@ -721,7 +889,10 @@ class OkxSpotVenue:
             return False, {"error": str(e)}
 
     def execute_trades(
-        self, trades: list[dict[str, Any]], market: dict[str, dict[str, Any]], dry_run: bool,
+        self,
+        trades: list[dict[str, Any]],
+        market: dict[str, dict[str, Any]],
+        dry_run: bool,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for trade in trades:
@@ -751,31 +922,53 @@ class OkxSpotVenue:
                     side_effect=str(trade.get("side_effect", "")),
                 )
             elif trade["type"] == "buy":
-                ok, detail = self.place_buy(pair, trade["amount_usdt"], int(mkt.get("quote_precision", 2)), ref_price=ref_price)
+                ok, detail = self.place_buy(
+                    pair,
+                    trade["amount_usdt"],
+                    int(mkt.get("quote_precision", 2)),
+                    ref_price=ref_price,
+                )
             elif trade["type"] == "sell":
-                ok, detail = self.place_sell(pair, trade["amount_base"], int(mkt.get("quantity_precision", 6)), ref_price=ref_price)
-            elif trade["type"] in ("open_short", "close_long", "close_short", "open_long"):
+                ok, detail = self.place_sell(
+                    pair,
+                    trade["amount_base"],
+                    int(mkt.get("quantity_precision", 6)),
+                    ref_price=ref_price,
+                )
+            elif trade["type"] in (
+                "open_short",
+                "close_long",
+                "close_short",
+                "open_long",
+            ):
                 ok, detail = self.place_futures_order(
-                    pair, trade["type"], trade["amount_base"],
-                    int(trade.get("quantity_precision") or mkt.get("quantity_precision", 3)),
+                    pair,
+                    trade["type"],
+                    trade["amount_base"],
+                    int(
+                        trade.get("quantity_precision")
+                        or mkt.get("quantity_precision", 3)
+                    ),
                     ref_price=ref_price,
                 )
             else:
                 ok, detail = False, {"error": f"Unknown trade type {trade['type']}"}
             record["status"] = "filled" if ok else "failed"
             if ok:
-                record.update({
-                    "order_id": detail.get("order_id"),
-                    "exec_price": detail.get("exec_price"),
-                    "exec_qty": detail.get("exec_qty"),
-                    "exec_quote_usd": detail.get("exec_quote_usd"),
-                    "slippage": detail.get("slippage"),
-                    "latency_ms": detail.get("latency_ms"),
-                    "submit_ts": detail.get("submit_ts"),
-                    "fill_ts": detail.get("fill_ts"),
-                    "order_status": detail.get("order_status"),
-                    "error": None,
-                })
+                record.update(
+                    {
+                        "order_id": detail.get("order_id"),
+                        "exec_price": detail.get("exec_price"),
+                        "exec_qty": detail.get("exec_qty"),
+                        "exec_quote_usd": detail.get("exec_quote_usd"),
+                        "slippage": detail.get("slippage"),
+                        "latency_ms": detail.get("latency_ms"),
+                        "submit_ts": detail.get("submit_ts"),
+                        "fill_ts": detail.get("fill_ts"),
+                        "order_status": detail.get("order_status"),
+                        "error": None,
+                    }
+                )
             else:
                 record["order_id"] = None
                 record["error"] = detail.get("error", str(detail))

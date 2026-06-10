@@ -128,6 +128,50 @@ def _get_mark_price(venue_id: str, base: str, quote: str = "USDT") -> float:
     return price
 
 
+def _prefetch_all_mark_prices(venue_ids: set[str], cache_sec: int = 5) -> None:
+    """Bulk-fetch all futures tickers for the given venues in parallel.
+
+    Populates `_mark_price_cache` so subsequent `_get_mark_price` calls
+    return instantly without hitting the API.
+    """
+    if not venue_ids:
+        return
+    valid: set[str] = set()
+    for vid in venue_ids:
+        try:
+            v = _get_venue_cached(vid)
+            if hasattr(v, "get_all_futures_tickers"):
+                valid.add(vid)
+        except Exception:
+            continue
+    if not valid:
+        return
+
+    def _fetch_one(vid: str) -> tuple[str, dict[str, float]]:
+        try:
+            v = _get_venue_cached(vid)
+            return vid, v.get_all_futures_tickers(cache_sec=cache_sec)
+        except Exception:
+            return vid, {}
+
+    results = run_io_parallel(
+        sorted(valid), _fetch_one, max_workers=max(4, len(valid)), swallow_errors=True
+    )
+
+    now = time.monotonic()
+    for vid, tickers in results.items():
+        for pair, price in tickers.items():
+            if "-USDT-SWAP" in pair:
+                base = pair.replace("-USDT-SWAP", "")
+                key = (vid.lower(), base.upper(), "USDT")
+            elif pair.endswith("USDT"):
+                base = pair[:-4]
+                key = (vid.lower(), base.upper(), "USDT")
+            else:
+                continue
+            _mark_price_cache[key] = (now, float(price))
+
+
 def check_exit(
     pos: dict[str, Any],
     scan_rates: dict[str, dict[str, dict[str, Any]]],
@@ -384,6 +428,14 @@ def watch_cycle(
         if verbose:
             print(f"[{_ts_str()}] no open positions", file=sys.stderr)
         return cycle_result
+
+    # Bulk-fetch mark prices for all venues that have open positions (parallel, one call per venue)
+    wanted_venues: set[str] = set()
+    for pos in open_positions:
+        for vid in (pos.get("long_venue"), pos.get("short_venue")):
+            if vid:
+                wanted_venues.add(str(vid))
+    _prefetch_all_mark_prices(wanted_venues)
 
     # Fetch current funding rates for all venues
     try:

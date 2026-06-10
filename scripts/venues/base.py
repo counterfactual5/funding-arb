@@ -104,6 +104,10 @@ class CexVenue(Protocol):
         """Perpetual futures ticker price fallback."""
         return 0.0
 
+    def get_all_futures_tickers(self, cache_sec: int = 5) -> dict[str, float]:
+        """Bulk perpetual futures last prices {PAIR: price}. Cached briefly for watcher loops."""
+        return {}
+
     def initialize_futures_symbol(self, pair: str) -> None:
         """Initialize futures configuration (marginType, leverage, positionSide) for a specific pair."""
         pass

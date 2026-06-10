@@ -12,9 +12,9 @@ import urllib.error
 import urllib.request
 from typing import Any, Optional
 
+from core.config import resolve_timeframes
 from venues.base import make_pair
 from venues.http_util import http_get_json, parse_kline_ohlcv, rules_for_price
-from core.config import resolve_timeframes
 
 BASE = "https://api.bitget.com"
 CONFIG_PATH = os.path.expanduser("~/.funding-arb/funding-arb.json")
@@ -22,6 +22,8 @@ _symbol_rules_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _futures_rules_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _spot_ticker_loaded_at: float = 0.0
 _spot_ticker_prices: dict[str, float] = {}
+_futures_ticker_loaded_at: float = 0.0
+_futures_ticker_prices: dict[str, float] = {}
 _env_loaded = False
 _initialized_symbols: set[str] = set()
 
@@ -157,22 +159,42 @@ class BitgetSpotVenue:
             pass
         return dict(_spot_ticker_prices)
 
+    def get_all_futures_tickers(self, cache_sec: int = 5) -> dict[str, float]:
+        """Bulk USDT-M perpetual last prices {BTCUSDT: price}. Cached briefly."""
+        global _futures_ticker_loaded_at, _futures_ticker_prices
+        now = time.time()
+        if _futures_ticker_prices and (now - _futures_ticker_loaded_at) < cache_sec:
+            return dict(_futures_ticker_prices)
+        try:
+            rows = http_get_json(
+                f"{BASE}/api/v2/mix/market/tickers?productType=USDT-FUTURES"
+            ).get("data", [])
+            _futures_ticker_prices = {
+                str(r.get("symbol", "")).upper(): float(r.get("lastPr", 0) or 0)
+                for r in rows
+                if r.get("symbol")
+            }
+            _futures_ticker_loaded_at = now
+        except Exception:
+            pass
+        return dict(_futures_ticker_prices)
+
     # Bitget 接受的 granularity 格式与通用简写的映射
     GRANULARITY_MAP: dict[str, str] = {
-        "1m":   "1min",
-        "3m":   "3min",
-        "5m":   "5min",
-        "15m":  "15min",
-        "30m":  "30min",
-        "1h":   "1h",
-        "2h":   "2h",
-        "4h":   "4h",
-        "6h":   "6h",
-        "12h":  "12h",
-        "1d":   "1day",
+        "1m": "1min",
+        "3m": "3min",
+        "5m": "5min",
+        "15m": "15min",
+        "30m": "30min",
+        "1h": "1h",
+        "2h": "2h",
+        "4h": "4h",
+        "6h": "6h",
+        "12h": "12h",
+        "1d": "1day",
         "1day": "1day",
-        "1w":   "1week",
-        "1week":"1week",
+        "1w": "1week",
+        "1week": "1week",
     }
 
     def get_klines(
@@ -217,7 +239,9 @@ class BitgetSpotVenue:
         _symbol_rules_cache[pair] = (now, rules)
         return dict(rules)
 
-    def fetch_futures_symbol_rules(self, pair: str, cache_sec: int = 3600) -> dict[str, Any] | None:
+    def fetch_futures_symbol_rules(
+        self, pair: str, cache_sec: int = 3600
+    ) -> dict[str, Any] | None:
         now = time.time()
         cached = _futures_rules_cache.get(pair)
         if cached and (now - cached[0]) < cache_sec:
@@ -229,26 +253,26 @@ class BitgetSpotVenue:
             return dict(cached[1]) if cached else None
         if payload.get("code") != "00000" or not payload.get("data"):
             return dict(cached[1]) if cached else None
-            
+
         sym_info = None
         target_sym = pair
         for s in payload["data"]:
             if s.get("symbol") == target_sym:
                 sym_info = s
                 break
-                
+
         if not sym_info:
             return dict(cached[1]) if cached else None
 
         size_mult = str(sym_info.get("sizeMultiplier", "0.001"))
         qty_prec = len(size_mult.split(".")[1]) if "." in size_mult else 0
-            
+
         quote_prec = int(sym_info.get("pricePlace", 2))
         min_base = float(sym_info.get("minTradeNum", 0))
-        
+
         if min_base <= 0:
             min_base = 10 ** (-qty_prec)
-            
+
         rules = {
             "symbol": pair,
             "min_trade_usdt": 0,
@@ -261,9 +285,15 @@ class BitgetSpotVenue:
         return dict(rules)
 
     # 官方 wallet/transfer 文档：futures 账户类型为 usdt_futures（非 mix_usdt）
-    _ACCOUNT_TYPES = {"spot": "spot", "futures": "usdt_futures", "margin": "crossed_margin"}
+    _ACCOUNT_TYPES = {
+        "spot": "spot",
+        "futures": "usdt_futures",
+        "margin": "crossed_margin",
+    }
 
-    def transfer_asset(self, asset: str, amount: float, from_account: str, to_account: str) -> bool:
+    def transfer_asset(
+        self, asset: str, amount: float, from_account: str, to_account: str
+    ) -> bool:
         """Transfer between spot / USDT-M futures / cross margin on Bitget."""
         fromType = self._ACCOUNT_TYPES.get(from_account)
         toType = self._ACCOUNT_TYPES.get(to_account)
@@ -279,7 +309,7 @@ class BitgetSpotVenue:
                     "toType": toType,
                     "amount": f"{amount:.8f}".rstrip("0").rstrip("."),
                     "coin": asset,
-                    "clientOid": f"t{int(time.time()*1000)}",
+                    "clientOid": f"t{int(time.time() * 1000)}",
                 },
             )
             return res.get("code") == "00000"
@@ -298,10 +328,14 @@ class BitgetSpotVenue:
         except Exception as e:
             print(f"fetch_usdt_account_balances spot error: {e}", file=sys.stderr)
             raise e
-            
+
         futures_usdt = 0.0
         try:
-            f_data = _api_call("GET", "/api/v2/mix/account/accounts", params={"productType": "USDT-FUTURES"})
+            f_data = _api_call(
+                "GET",
+                "/api/v2/mix/account/accounts",
+                params={"productType": "USDT-FUTURES"},
+            )
             for asset in f_data.get("data", []):
                 if str(asset.get("marginCoin", "")).upper() == "USDT":
                     futures_usdt = float(asset.get("available", "0"))
@@ -309,7 +343,7 @@ class BitgetSpotVenue:
         except Exception as e:
             print(f"fetch_usdt_account_balances futures error: {e}", file=sys.stderr)
             raise e
-            
+
         return {"spot": spot_usdt, "futures": futures_usdt}
 
     def fetch_asset_market(
@@ -326,12 +360,14 @@ class BitgetSpotVenue:
                 "venue": self.venue_id,
             }
         limits = rules_for_price(rules, price)
-        
+
         cfg = cfg or {}
         tf = resolve_timeframes(cfg)
-        
+
         klines_1d = [
-            parse_kline_ohlcv(k) for k in self.get_klines(pair, tf["slow"]["interval"], tf["slow"]["limit"]) if k
+            parse_kline_ohlcv(k)
+            for k in self.get_klines(pair, tf["slow"]["interval"], tf["slow"]["limit"])
+            if k
         ]
         klines_4h = [
             parse_kline_ohlcv(k)
@@ -339,7 +375,11 @@ class BitgetSpotVenue:
             if k
         ]
         klines_1w = [
-            parse_kline_ohlcv(k) for k in self.get_klines(pair, tf["macro"]["interval"], tf["macro"]["limit"]) if k
+            parse_kline_ohlcv(k)
+            for k in self.get_klines(
+                pair, tf["macro"]["interval"], tf["macro"]["limit"]
+            )
+            if k
         ]
         return {
             "symbol": asset,
@@ -362,26 +402,34 @@ class BitgetSpotVenue:
             coin = str(asset.get("coin", "")).upper()
             if coin in balances:
                 balances[coin] = float(asset.get("available", "0"))
-                
+
         # Fetch futures balance if USDT is requested
         if "USDT" in balances:
             try:
-                f_data = _api_call("GET", "/api/v2/mix/account/accounts", params={"productType": "USDT-FUTURES"})
+                f_data = _api_call(
+                    "GET",
+                    "/api/v2/mix/account/accounts",
+                    params={"productType": "USDT-FUTURES"},
+                )
                 for asset in f_data.get("data", []):
                     if str(asset.get("marginCoin", "")).upper() == "USDT":
                         balances["USDT"] += float(asset.get("balance", "0"))
             except Exception as e:
                 print(f"bitget fetch_futures_balances error: {e}", file=sys.stderr)
-                
+
         return balances
 
     def fetch_live_state(self, assets: list[str]) -> dict[str, Any]:
         """Fetch unified global state for Bitget: spot balances and futures positions."""
         balances = self.fetch_balances(assets + ["USDT"])
-        
+
         positions = {}
         try:
-            pos_data = _api_call("GET", "/api/v2/mix/position/all-position", params={"productType": "USDT-FUTURES"})
+            pos_data = _api_call(
+                "GET",
+                "/api/v2/mix/position/all-position",
+                params={"productType": "USDT-FUTURES"},
+            )
             for pos in pos_data.get("data", []):
                 total_amt = float(pos.get("total", "0") or 0)
                 if total_amt > 1e-9:
@@ -389,30 +437,31 @@ class BitgetSpotVenue:
                     base_sym = raw_sym
                     if raw_sym.endswith("USDT"):
                         base_sym = raw_sym[:-4]
-                    
-                    side = str(pos.get("holdSide", "")).lower() # "long" or "short"
-                    entry = float(pos.get("averageOpenPrice", 0) or pos.get("openPriceAvg", 0) or 0)
+
+                    side = str(pos.get("holdSide", "")).lower()  # "long" or "short"
+                    entry = float(
+                        pos.get("averageOpenPrice", 0)
+                        or pos.get("openPriceAvg", 0)
+                        or 0
+                    )
                     unrealized = float(pos.get("unrealizedPL", 0) or 0)
                     liq_price = float(pos.get("liquidationPrice", 0) or 0)
                     lev = float(pos.get("leverage", 1) or 1)
-                    
+
                     positions[base_sym] = {
                         "amount": total_amt,
                         "side": side,
                         "entry_price": entry,
                         "unrealized_pnl": unrealized,
                         "liq_price": liq_price,
-                        "leverage": lev
+                        "leverage": lev,
                     }
         except Exception as e:
             print(f"fetch_live_state futures positions error: {e}", file=sys.stderr)
             raise e
-            
-        return {
-            "balances": balances,
-            "futures_positions": positions
-        }
-        
+
+        return {"balances": balances, "futures_positions": positions}
+
     def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
         """USDT 永续持仓列表（单端点，失败抛异常）。"""
         pos_data = _api_call(
@@ -425,17 +474,21 @@ class BitgetSpotVenue:
             qty = abs(float(pos.get("total", 0) or 0))
             if qty <= 1e-12:
                 continue
-            out.append({
-                "symbol": str(pos.get("symbol", "")).upper(),
-                "side": str(pos.get("holdSide", "")).lower(),
-                "qty": qty,
-                "entry_price": float(
-                    pos.get("averageOpenPrice", 0) or pos.get("openPriceAvg", 0) or 0
-                ),
-                "liq_price": float(pos.get("liquidationPrice", 0) or 0),
-                "leverage": float(pos.get("leverage", 1) or 1),
-                "unrealized_pnl": float(pos.get("unrealizedPL", 0) or 0),
-            })
+            out.append(
+                {
+                    "symbol": str(pos.get("symbol", "")).upper(),
+                    "side": str(pos.get("holdSide", "")).lower(),
+                    "qty": qty,
+                    "entry_price": float(
+                        pos.get("averageOpenPrice", 0)
+                        or pos.get("openPriceAvg", 0)
+                        or 0
+                    ),
+                    "liq_price": float(pos.get("liquidationPrice", 0) or 0),
+                    "leverage": float(pos.get("leverage", 1) or 1),
+                    "unrealized_pnl": float(pos.get("unrealizedPL", 0) or 0),
+                }
+            )
         return out
 
     def initialize_futures_symbol(self, pair: str) -> None:
@@ -444,16 +497,29 @@ class BitgetSpotVenue:
             return
         mix_symbol = f"{pair}_UMCBL"
         try:
-            _api_call("POST", "/api/v2/mix/account/set-margin-mode", body={
-                "symbol": mix_symbol, "marginCoin": "USDT", "marginMode": "isolated",
-            })
+            _api_call(
+                "POST",
+                "/api/v2/mix/account/set-margin-mode",
+                body={
+                    "symbol": mix_symbol,
+                    "marginCoin": "USDT",
+                    "marginMode": "isolated",
+                },
+            )
         except Exception:
             pass
         for side in ("long", "short"):
             try:
-                _api_call("POST", "/api/v2/mix/account/set-leverage", body={
-                    "symbol": mix_symbol, "marginCoin": "USDT", "leverage": "1", "holdSide": side,
-                })
+                _api_call(
+                    "POST",
+                    "/api/v2/mix/account/set-leverage",
+                    body={
+                        "symbol": mix_symbol,
+                        "marginCoin": "USDT",
+                        "leverage": "1",
+                        "holdSide": side,
+                    },
+                )
             except Exception:
                 pass
         _initialized_symbols.add(pair)
@@ -594,14 +660,18 @@ class BitgetSpotVenue:
             body["baseSize"] = sz or f"{amount_base:.{quantity_precision}f}"
         else:
             if ref_price <= 0:
-                return False, {"error": "margin market buy 需要 ref_price 折算 quoteSize"}
+                return False, {
+                    "error": "margin market buy 需要 ref_price 折算 quoteSize"
+                }
             body["quoteSize"] = f"{amount_base * ref_price * 1.01:.4f}"
         submit_ts = time.time()
         try:
             result = _api_call("POST", "/api/v2/margin/crossed/place-order", body=body)
             fill_ts = time.time()
             if result.get("code") != "00000":
-                return False, {"error": f"{result.get('code')}: {result.get('msg', 'unknown')}"}
+                return False, {
+                    "error": f"{result.get('code')}: {result.get('msg', 'unknown')}"
+                }
             order_id = str((result.get("data") or {}).get("orderId", "?"))
             time.sleep(0.3)
             parsed = self._fetch_margin_fills(pair, order_id)
@@ -782,7 +852,7 @@ class BitgetSpotVenue:
     def place_futures_order(
         self,
         pair: str,
-        side: str, # "open_long", "open_short", "close_long", "close_short"
+        side: str,  # "open_long", "open_short", "close_long", "close_short"
         amount_base: float,
         quantity_precision: int = 3,
         ref_price: float = 0.0,
@@ -818,9 +888,14 @@ class BitgetSpotVenue:
                 exec_price = ref_price
                 try:
                     time.sleep(0.5)
-                    detail = _api_call("GET", "/api/v2/mix/order/detail", params={
-                        "symbol": pair, "orderId": order_id,
-                    })
+                    detail = _api_call(
+                        "GET",
+                        "/api/v2/mix/order/detail",
+                        params={
+                            "symbol": pair,
+                            "orderId": order_id,
+                        },
+                    )
                     dp = detail.get("data", {})
                     if dp.get("priceAvg"):
                         exec_price = float(dp["priceAvg"])
@@ -911,13 +986,21 @@ class BitgetSpotVenue:
                     int(mkt.get("quantity_precision", 6)),
                     ref_price=ref_price,
                 )
-            elif trade["type"] in ("open_short", "close_long", "close_short", "open_long"):
+            elif trade["type"] in (
+                "open_short",
+                "close_long",
+                "close_short",
+                "open_long",
+            ):
                 # 永续开平
                 ok, detail = self.place_futures_order(
                     pair,
                     trade["type"],
                     trade["amount_base"],
-                    int(trade.get("quantity_precision") or mkt.get("quantity_precision", 3)),
+                    int(
+                        trade.get("quantity_precision")
+                        or mkt.get("quantity_precision", 3)
+                    ),
                     ref_price=ref_price,
                 )
             else:

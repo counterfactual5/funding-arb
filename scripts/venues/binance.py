@@ -15,9 +15,9 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
+from core.config import resolve_timeframes
 from venues.base import make_pair
 from venues.http_util import http_get_json, parse_kline_ohlcv, rules_for_price
-from core.config import resolve_timeframes
 
 BASE = "https://api.binance.com"
 CONFIG_PATH = os.path.expanduser("~/.funding-arb/funding-arb.json")
@@ -29,6 +29,8 @@ _fapi_exchange_info_loaded_at: float = 0.0
 _fapi_exchange_info_rules: dict[str, dict[str, Any]] = {}
 _spot_ticker_loaded_at: float = 0.0
 _spot_ticker_prices: dict[str, float] = {}
+_futures_ticker_loaded_at: float = 0.0
+_futures_ticker_prices: dict[str, float] = {}
 _initialized_symbols: set[str] = set()
 _env_loaded = False
 
@@ -158,6 +160,28 @@ class BinanceSpotVenue:
         _spot_ticker_loaded_at = now
         return dict(_spot_ticker_prices)
 
+    def get_all_futures_tickers(self, cache_sec: int = 5) -> dict[str, float]:
+        """Bulk USDT-M perpetual last prices {PAIR: price}. Cached briefly for screener loops."""
+        global _futures_ticker_loaded_at, _futures_ticker_prices
+        now = time.time()
+        if _futures_ticker_prices and (now - _futures_ticker_loaded_at) < cache_sec:
+            return dict(_futures_ticker_prices)
+        try:
+            data = _api_call("GET", "https://fapi.binance.com/fapi/v1/ticker/price")
+            if isinstance(data, dict):
+                rows = [data]
+            else:
+                rows = list(data or [])
+            _futures_ticker_prices = {
+                str(r.get("symbol", "")).upper(): float(r.get("price", 0) or 0)
+                for r in rows
+                if r.get("symbol")
+            }
+            _futures_ticker_loaded_at = now
+        except Exception:
+            pass
+        return dict(_futures_ticker_prices)
+
     def _ensure_spot_exchange_info(self, cache_sec: int = 3600) -> None:
         global _exchange_info_loaded_at, _exchange_info_symbols
         now = time.time()
@@ -174,7 +198,10 @@ class BinanceSpotVenue:
     def _ensure_fapi_exchange_info(self, cache_sec: int = 3600) -> None:
         global _fapi_exchange_info_loaded_at, _fapi_exchange_info_rules
         now = time.time()
-        if _fapi_exchange_info_rules and (now - _fapi_exchange_info_loaded_at) < cache_sec:
+        if (
+            _fapi_exchange_info_rules
+            and (now - _fapi_exchange_info_loaded_at) < cache_sec
+        ):
             return
         info = _api_call("GET", "/fapi/v1/exchangeInfo")
         rules: dict[str, dict[str, Any]] = {}
@@ -265,7 +292,9 @@ class BinanceSpotVenue:
         _symbol_rules_cache[pair] = (now, rules)
         return dict(rules)
 
-    def fetch_futures_symbol_rules(self, pair: str, cache_sec: int = 3600) -> dict[str, Any] | None:
+    def fetch_futures_symbol_rules(
+        self, pair: str, cache_sec: int = 3600
+    ) -> dict[str, Any] | None:
         now = time.time()
         cached = _futures_rules_cache.get(pair)
         if cached and (now - cached[0]) < cache_sec:
@@ -280,20 +309,31 @@ class BinanceSpotVenue:
             return dict(rules)
         return dict(cached[1]) if cached else None
 
-    def transfer_asset(self, asset: str, amount: float, from_account: str, to_account: str) -> bool:
+    def transfer_asset(
+        self, asset: str, amount: float, from_account: str, to_account: str
+    ) -> bool:
         """Transfer between main spot and UM futures."""
         # 1: spot -> UM futures, 2: UM futures -> spot
-        transfer_type = 1 if from_account == "spot" and to_account == "futures" else \
-                        2 if from_account == "futures" and to_account == "spot" else None
+        transfer_type = (
+            1
+            if from_account == "spot" and to_account == "futures"
+            else 2
+            if from_account == "futures" and to_account == "spot"
+            else None
+        )
         if not transfer_type:
             return False
-            
+
         try:
             res = _api_call(
-                "POST", 
-                "/sapi/v1/futures/transfer", 
-                {"type": transfer_type, "asset": asset, "amount": f"{amount:.8f}".rstrip("0").rstrip(".")},
-                signed=True
+                "POST",
+                "/sapi/v1/futures/transfer",
+                {
+                    "type": transfer_type,
+                    "asset": asset,
+                    "amount": f"{amount:.8f}".rstrip("0").rstrip("."),
+                },
+                signed=True,
             )
             return "tranId" in res
         except Exception:
@@ -311,7 +351,7 @@ class BinanceSpotVenue:
         except Exception as e:
             print(f"fetch_usdt_account_balances spot error: {e}", file=sys.stderr)
             raise e
-            
+
         futures_usdt = 0.0
         try:
             f_data = _api_call("GET", "/fapi/v2/account", signed=True)
@@ -322,7 +362,7 @@ class BinanceSpotVenue:
         except Exception as e:
             print(f"fetch_usdt_account_balances futures error: {e}", file=sys.stderr)
             raise e
-            
+
         return {"spot": spot_usdt, "futures": futures_usdt}
 
     def fetch_asset_market(
@@ -339,12 +379,14 @@ class BinanceSpotVenue:
                 "venue": self.venue_id,
             }
         limits = rules_for_price(rules, price)
-        
+
         cfg = cfg or {}
         tf = resolve_timeframes(cfg)
-        
+
         klines_1d = [
-            parse_kline_ohlcv(k) for k in self.get_klines(pair, tf["slow"]["interval"], tf["slow"]["limit"]) if k
+            parse_kline_ohlcv(k)
+            for k in self.get_klines(pair, tf["slow"]["interval"], tf["slow"]["limit"])
+            if k
         ]
         klines_4h = [
             parse_kline_ohlcv(k)
@@ -352,7 +394,11 @@ class BinanceSpotVenue:
             if k
         ]
         klines_1w = [
-            parse_kline_ohlcv(k) for k in self.get_klines(pair, tf["macro"]["interval"], tf["macro"]["limit"]) if k
+            parse_kline_ohlcv(k)
+            for k in self.get_klines(
+                pair, tf["macro"]["interval"], tf["macro"]["limit"]
+            )
+            if k
         ]
         return {
             "symbol": asset,
@@ -370,13 +416,13 @@ class BinanceSpotVenue:
     def fetch_balances(self, coins: list[str]) -> dict[str, float]:
         # 不吞异常：拉余额失败必须让上层 abort，绝不返回全 0（否则策略误判账户为空、只用现金下单）
         balances: dict[str, float] = {c: 0.0 for c in coins}
-        
+
         data = _api_call("GET", "/api/v3/account", signed=True)
         for asset in data.get("balances", []):
             coin = str(asset.get("asset", "")).upper()
             if coin in balances:
                 balances[coin] = float(asset.get("free", "0"))
-        
+
         # Fetch futures balance if USDT is requested
         if "USDT" in balances:
             try:
@@ -386,7 +432,7 @@ class BinanceSpotVenue:
                         balances["USDT"] += float(asset.get("marginBalance", "0"))
             except Exception as e:
                 print(f"fetch_futures_balances error: {e}", file=sys.stderr)
-                
+
         return balances
 
     def initialize_futures_symbol(self, pair: str) -> None:
@@ -394,15 +440,30 @@ class BinanceSpotVenue:
         if pair in _initialized_symbols:
             return
         try:
-            _api_call("POST", "/fapi/v1/marginType", {"symbol": pair, "marginType": "ISOLATED"}, signed=True)
+            _api_call(
+                "POST",
+                "/fapi/v1/marginType",
+                {"symbol": pair, "marginType": "ISOLATED"},
+                signed=True,
+            )
         except Exception:
             pass
         try:
-            _api_call("POST", "/fapi/v1/leverage", {"symbol": pair, "leverage": 1}, signed=True)
+            _api_call(
+                "POST",
+                "/fapi/v1/leverage",
+                {"symbol": pair, "leverage": 1},
+                signed=True,
+            )
         except Exception:
             pass
         try:
-            _api_call("POST", "/fapi/v1/positionSide/dual", {"dualSidePosition": "false"}, signed=True)
+            _api_call(
+                "POST",
+                "/fapi/v1/positionSide/dual",
+                {"dualSidePosition": "false"},
+                signed=True,
+            )
         except Exception:
             pass
         _initialized_symbols.add(pair)
@@ -416,10 +477,12 @@ class BinanceSpotVenue:
             for asset in data.get("balances", []):
                 coin = str(asset.get("asset", "")).upper()
                 if coin in spot_balances:
-                    spot_balances[coin] = float(asset.get("free", "0")) + float(asset.get("locked", "0"))
+                    spot_balances[coin] = float(asset.get("free", "0")) + float(
+                        asset.get("locked", "0")
+                    )
         except Exception as e:
             print(f"fetch_live_state spot error: {e}", file=sys.stderr)
-            raise e # Must propagate if spot fails
+            raise e  # Must propagate if spot fails
 
         # 2. Cross Margin Balances & Debt (for Reverse Arb)
         margin_balances: dict[str, float] = {c: 0.0 for c in assets}
@@ -428,7 +491,9 @@ class BinanceSpotVenue:
             for asset in margin_data.get("userAssets", []):
                 coin = str(asset.get("asset", "")).upper()
                 if coin in margin_balances:
-                    free = float(asset.get("free", "0")) + float(asset.get("locked", "0"))
+                    free = float(asset.get("free", "0")) + float(
+                        asset.get("locked", "0")
+                    )
                     borrowed = float(asset.get("borrowed", "0"))
                     interest = float(asset.get("interest", "0"))
                     # Net balance = free - borrowed - interest
@@ -451,7 +516,7 @@ class BinanceSpotVenue:
         except Exception as e:
             print(f"fetch_live_state futures account error: {e}", file=sys.stderr)
             raise e
-            
+
         if "USDT" in combined_balances:
             combined_balances["USDT"] += futures_usdt
 
@@ -477,16 +542,13 @@ class BinanceSpotVenue:
                         "entry_price": entry,
                         "unrealized_pnl": unrealized,
                         "liq_price": liq_price,
-                        "leverage": lev
+                        "leverage": lev,
                     }
         except Exception as e:
             print(f"fetch_live_state positionRisk error: {e}", file=sys.stderr)
             raise e
 
-        return {
-            "balances": combined_balances,
-            "futures_positions": positions
-        }
+        return {"balances": combined_balances, "futures_positions": positions}
 
     def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
         """USDT 永续持仓列表（单端点，失败抛异常）。"""
@@ -496,15 +558,17 @@ class BinanceSpotVenue:
             amt = float(pos.get("positionAmt", "0") or 0)
             if abs(amt) <= 1e-12:
                 continue
-            out.append({
-                "symbol": str(pos.get("symbol", "")).upper(),
-                "side": "long" if amt > 0 else "short",
-                "qty": abs(amt),
-                "entry_price": float(pos.get("entryPrice", 0) or 0),
-                "liq_price": float(pos.get("liquidationPrice", 0) or 0),
-                "leverage": float(pos.get("leverage", 1) or 1),
-                "unrealized_pnl": float(pos.get("unRealizedProfit", 0) or 0),
-            })
+            out.append(
+                {
+                    "symbol": str(pos.get("symbol", "")).upper(),
+                    "side": "long" if amt > 0 else "short",
+                    "qty": abs(amt),
+                    "entry_price": float(pos.get("entryPrice", 0) or 0),
+                    "liq_price": float(pos.get("liquidationPrice", 0) or 0),
+                    "leverage": float(pos.get("leverage", 1) or 1),
+                    "unrealized_pnl": float(pos.get("unRealizedProfit", 0) or 0),
+                }
+            )
         return out
 
     def fetch_borrow_rates(self, coins: list[str]) -> dict[str, float]:
@@ -515,9 +579,13 @@ class BinanceSpotVenue:
             for item in data:
                 coin = str(item.get("coin", "")).upper()
                 if coin in rates:
-                    rates[coin] = float(item.get("yearlyInterest", float(item.get("dailyInterest", 0)) * 365))
+                    rates[coin] = float(
+                        item.get(
+                            "yearlyInterest", float(item.get("dailyInterest", 0)) * 365
+                        )
+                    )
         except Exception:
-            pass # Fall back to static config defaults
+            pass  # Fall back to static config defaults
         return rates
 
     # ── cross margin（Reverse C&C：借币卖出 / 买回还币） ──────────────────────
@@ -541,7 +609,9 @@ class BinanceSpotVenue:
         for item in data.get("userAssets", []):
             coin = str(item.get("asset", "")).upper()
             if coin in debt:
-                debt[coin] = float(item.get("borrowed", "0")) + float(item.get("interest", "0"))
+                debt[coin] = float(item.get("borrowed", "0")) + float(
+                    item.get("interest", "0")
+                )
         return debt
 
     def _margin_borrow_repay(self, asset: str, amount: float, op: str) -> bool:
@@ -778,9 +848,9 @@ class BinanceSpotVenue:
         if "." not in qty:
             qty = f"{amount_base:.{quantity_precision}f}"
         submit_ts = time.time()
-        
+
         # Mode settings are now handled by initialize_futures_symbol at startup
-        
+
         params = {
             "symbol": pair,
             "side": side,
@@ -805,7 +875,7 @@ class BinanceSpotVenue:
             # fapi /order 返回 avgPrice，如果没有则退化为 ref_price
             exec_price = float(result.get("avgPrice", 0)) or ref_price
             exec_quote = exec_price * exec_qty
-            
+
             slippage = (
                 round((exec_price - ref_price) / ref_price, 6)
                 if ref_price and exec_price
@@ -860,7 +930,9 @@ class BinanceSpotVenue:
                 # Reverse C&C 的现货腿走 cross margin：
                 # sell + auto_borrow = 借币卖出；buy + auto_repay = 买回自动还币。
                 effect_map = {"auto_borrow": "MARGIN_BUY", "auto_repay": "AUTO_REPAY"}
-                side_effect = effect_map.get(str(trade.get("side_effect", "")).lower(), "NO_SIDE_EFFECT")
+                side_effect = effect_map.get(
+                    str(trade.get("side_effect", "")).lower(), "NO_SIDE_EFFECT"
+                )
                 ok, detail = self.place_margin_order(
                     pair,
                     "BUY" if trade["type"] == "buy" else "SELL",
@@ -893,7 +965,7 @@ class BinanceSpotVenue:
                     trade["amount_base"],
                     int(trade.get("quantity_precision") or f_prec),
                     ref_price=ref_price,
-                    reduce_only=(trade["type"] == "close_long")
+                    reduce_only=(trade["type"] == "close_long"),
                 )
             elif trade["type"] in ("close_short", "open_long"):
                 # 永续买入 (开多单或平空单)
@@ -905,7 +977,7 @@ class BinanceSpotVenue:
                     trade["amount_base"],
                     int(trade.get("quantity_precision") or f_prec),
                     ref_price=ref_price,
-                    reduce_only=(trade["type"] == "close_short")
+                    reduce_only=(trade["type"] == "close_short"),
                 )
             else:
                 ok, detail = False, {"error": f"Unknown trade type {trade['type']}"}
