@@ -68,6 +68,9 @@ class OpenPair:
     long_settlements: int = 0
     short_settlements: int = 0
     accumulated_funding_pct: float = 0.0
+    # cash-and-carry 反向腿的借币成本（按结算周期折算，随结算累计）
+    borrow_per_settle_pct: float = 0.0
+    borrow_paid_pct: float = 0.0
 
 
 def _settlements_crossed(t0: datetime, t1: datetime, interval_h: float) -> int:
@@ -91,6 +94,9 @@ def _update_pair_rates(pair: OpenPair, row: dict[str, Any]) -> None:
     pair.short_interval_h = float(
         row.get("short_interval_h", pair.short_interval_h) or 8.0
     )
+    pair.borrow_per_settle_pct = float(
+        row.get("borrow_per_settle_pct", pair.borrow_per_settle_pct) or 0.0
+    )
 
 
 def _accrue_funding(pair: OpenPair, ts: datetime) -> None:
@@ -108,6 +114,9 @@ def _accrue_funding(pair: OpenPair, ts: datetime) -> None:
         )
         pair.long_settlements += n_long
         pair.short_settlements += n_short
+        # 借币利息随永续腿（cc_reverse 的 long 腿）结算周期累计
+        if pair.borrow_per_settle_pct > 0:
+            pair.borrow_paid_pct += n_long * pair.borrow_per_settle_pct
     pair.last_accrual_ts = ts
 
 
@@ -131,6 +140,7 @@ class ClosedTrade:
     win: bool
     long_settlements: int = 0
     short_settlements: int = 0
+    borrow_paid_pct: float = 0.0
 
 
 @dataclass
@@ -188,6 +198,14 @@ def _opp_key(row: dict[str, Any]) -> str:
     ])
 
 
+_STRATEGY_OF_DIRECTION = {
+    "forward": "pure",
+    "reverse": "pure",
+    "cc_forward": "cc",
+    "cc_reverse": "cc",
+}
+
+
 def _iter_rows(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for direction in ("forward", "reverse"):
@@ -195,6 +213,10 @@ def _iter_rows(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             item = dict(row)
             item["direction"] = item.get("direction") or direction
             rows.append(item)
+    for row in snapshot.get("cc", []) or []:
+        item = dict(row)
+        item["direction"] = item.get("direction") or "cc_forward"
+        rows.append(item)
     for row in snapshot.get("spreads", []) or []:
         item = dict(row)
         item["direction"] = item.get("direction") or "unknown"
@@ -238,9 +260,17 @@ def run_backtest(
     exit_edge_pct: float = 0.01,
     max_holding_hours: float = 720.0,  # 30 days
     allow_mismatch: bool = False,
+    strategies: set[str] | None = None,
     verbose: bool = False,
 ) -> BacktestResult:
-    """回放历史快照，模拟纯永续资金费差策略。"""
+    """回放历史快照，模拟资金费策略组合。
+
+    strategies: 允许开仓的策略集合，默认 {"pure"}。
+      - "pure": 跨所纯永续价差（forward/reverse 行）
+      - "cc":   单所 cash-and-carry（cc_forward/cc_reverse 行，history 模式合成）
+    """
+    if strategies is None:
+        strategies = {"pure"}
     capital = initial_capital
     equity_curve: list[dict[str, Any]] = []
     open_pairs: dict[str, OpenPair] = {}
@@ -266,6 +296,9 @@ def run_backtest(
         # Entry candidates（受入场阈值过滤；mismatch 走 planner 调整后边际）
         current_spreads: dict[str, dict[str, Any]] = {}
         for row in rows:
+            strat = _STRATEGY_OF_DIRECTION.get(str(row.get("direction", "")), "pure")
+            if strat not in strategies:
+                continue
             edge = float(row.get("net_edge_pct", 0))
             if row.get("settle_mismatch"):
                 if not allow_mismatch:
@@ -336,7 +369,9 @@ def run_backtest(
                 to_close.append(pair_id)
 
                 total_fee = pair.open_fee_pct * 2  # open + close
-                net_pnl = pair.accumulated_funding_pct - total_fee
+                net_pnl = (
+                    pair.accumulated_funding_pct - pair.borrow_paid_pct - total_fee
+                )
                 pnl_usd = pair.amount_usd * net_pnl / 100.0
                 # 归还开仓时锁定的保证金 + 结算盈亏
                 capital += pair.amount_usd + pnl_usd
@@ -358,6 +393,7 @@ def run_backtest(
                     win=net_pnl > 0,
                     long_settlements=pair.long_settlements,
                     short_settlements=pair.short_settlements,
+                    borrow_paid_pct=round(pair.borrow_paid_pct, 6),
                 ))
 
         for pid in to_close:
@@ -390,10 +426,14 @@ def run_backtest(
             short_venue = str(row.get("short_venue", ""))
             pair_id = _opp_key(row)
 
-            open_fee = (
-                FEE_RATES.get(long_venue, 0.06) +
-                FEE_RATES.get(short_venue, 0.06)
-            )
+            # 行自带 fee_pct（单边两腿合计）优先——cc 行含现货费率，
+            # 永续费率表查不到 "venue:spot" 这类腿名
+            open_fee = float(row.get("fee_pct", 0) or 0)
+            if open_fee <= 0:
+                open_fee = (
+                    FEE_RATES.get(long_venue, 0.06) +
+                    FEE_RATES.get(short_venue, 0.06)
+                )
 
             pair = OpenPair(
                 pair_id=pair_id,
@@ -448,7 +488,7 @@ def run_backtest(
     final_equity = capital
     for pair in open_pairs.values():
         total_fee = pair.open_fee_pct * 2
-        net_pnl = pair.accumulated_funding_pct - total_fee
+        net_pnl = pair.accumulated_funding_pct - pair.borrow_paid_pct - total_fee
         pnl_usd = pair.amount_usd * net_pnl / 100.0
         final_equity += pair.amount_usd + pnl_usd
 
@@ -469,6 +509,7 @@ def run_backtest(
             win=net_pnl > 0,
             long_settlements=pair.long_settlements,
             short_settlements=pair.short_settlements,
+            borrow_paid_pct=round(pair.borrow_paid_pct, 6),
         ))
 
     # Calculate stats
@@ -525,6 +566,7 @@ def run_backtest(
             "win": t.win,
             "long_settlements": t.long_settlements,
             "short_settlements": t.short_settlements,
+            "borrow_paid_pct": t.borrow_paid_pct,
         } for t in closed_trades],
         equity_curve=equity_curve,
     )
@@ -594,6 +636,22 @@ def main() -> int:
     parser.add_argument("--exit-edge", type=float, default=0.01, help="Exit when edge ≤ this %%")
     parser.add_argument("--max-holding-hours", type=float, default=720.0, help="Max holding time")
     parser.add_argument("--allow-mismatch", action="store_true", help="Allow settle mismatch pairs")
+    parser.add_argument(
+        "--strategies",
+        default="pure",
+        help="逗号分隔策略集合：pure（跨所纯永续）/ cc（单所现货+永续）；如 pure,cc",
+    )
+    parser.add_argument(
+        "--cc-borrow-apr",
+        type=float,
+        default=15.0,
+        help="cc_reverse 借币年化假设 %%（历史借币利率无公开数据，默认 15）",
+    )
+    parser.add_argument(
+        "--cc-check-caps",
+        action="store_true",
+        help="实时探测现货可买/可借状态过滤 cc 行（用当前状态代理历史，更接近可执行收益）",
+    )
     parser.add_argument("--verbose", "-V", action="store_true")
     parser.add_argument("--json", action="store_true", help="JSON output")
     args = parser.parse_args()
@@ -609,7 +667,12 @@ def main() -> int:
             file=sys.stderr,
         )
         snapshots = fetch_history_snapshots(
-            venues, bases, args.history_days, refresh=args.refresh_cache
+            venues,
+            bases,
+            args.history_days,
+            refresh=args.refresh_cache,
+            borrow_apr_pct=args.cc_borrow_apr,
+            check_cc_capability=args.cc_check_caps,
         )
     else:
         jsonl_path = Path(args.jsonl_file)
@@ -646,6 +709,9 @@ def main() -> int:
         exit_edge_pct=args.exit_edge,
         max_holding_hours=args.max_holding_hours,
         allow_mismatch=args.allow_mismatch,
+        strategies={
+            s.strip().lower() for s in args.strategies.split(",") if s.strip()
+        },
         verbose=args.verbose,
     )
 

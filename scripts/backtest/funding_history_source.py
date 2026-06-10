@@ -13,8 +13,13 @@
   - 快照网格 = 所有腿结算时间的并集（取整到分钟去重）。
   - 上市前空窗 / 数据洞（相邻结算间隔 > 8h×1.5）期间该腿视为不可交易，
     避免把首笔结算费率向前桥接产生幻影资金费累计。
+  - 除纯永续配对（forward/reverse）外，还合成单所 cash-and-carry 行
+    （snapshot["cc"]）：cc_forward = 现货多 + 永续空吃正费率；
+    cc_reverse = 借币卖出 + 永续多吃负费率（扣借币利息）。
+    历史借币利率无公开数据，按 --cc-borrow-apr 常数假设折算到结算周期。
   - 已知局限：价差正负反转时 long/short 腿排序翻转，原配对 key 消失，
-    回测会以 spread_disappeared 平仓（结果等价于价差崩塌退出）。
+    回测会以 spread_disappeared 平仓（结果等价于价差崩塌退出）；
+    cc 行假设该币在对应所现货可买/可借（历史上市与可借状态无从查证）。
 """
 
 from __future__ import annotations
@@ -32,10 +37,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backtest.funding_providers import get_funding_provider  # noqa: E402
-from cli.scan_pure_futures_spreads import _scan_spreads  # noqa: E402
+from cli.scan_pure_futures_spreads import (  # noqa: E402
+    FUTURES_TAKER_FEE_PCT,
+    _scan_spreads,
+)
 
 CACHE_DIR = ROOT / "data" / "cache" / "funding-history"
 CACHE_TTL_SEC = 6 * 3600
+SPOT_TAKER_FEE_PCT = 0.10  # 四所现货 taker 普遍 0.1%
+DEFAULT_BORROW_APR_PCT = 15.0  # cc_reverse 借币年化假设（小币种实际可能更高）
+HOURS_PER_YEAR = 365.0 * 24.0
 
 
 def fetch_leg_history(
@@ -115,8 +126,158 @@ def infer_interval_h(rows: list[dict[str, Any]]) -> float:
     return _snap_interval(diffs[len(diffs) // 2])
 
 
+def fetch_cc_capability(
+    venues: list[str],
+    bases: list[str],
+    *,
+    workers: int = 8,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """实时探测各 venue × base 的现货可买 / 可借状态（历史无从查证，用当前代理）。
+
+    返回 {(venue, base): {"has_spot", "borrowable", "borrow_apr_pct"}}。
+    探测失败按保守处理（不可买/不可借）。
+    """
+    from backtest.borrow_providers import get_borrow_provider
+    from backtest.unified_funding_pool import _get_venue
+    from market.parallel_fetch import run_io_parallel
+
+    out: dict[tuple[str, str], dict[str, Any]] = {
+        (v.lower(), b.upper()): {
+            "has_spot": False, "borrowable": False, "borrow_apr_pct": 0.0,
+        }
+        for v in venues for b in bases
+    }
+
+    def _spot_one(pair: tuple[str, str]) -> tuple[tuple[str, str], bool]:
+        venue, base = pair
+        try:
+            px = _get_venue(venue).get_ticker(f"{base}USDT")
+            return pair, float(px or 0) > 0
+        except Exception:
+            return pair, False
+
+    spot_map = run_io_parallel(
+        list(out.keys()), _spot_one,
+        max_workers=min(workers, len(out)), swallow_errors=True,
+    )
+    for pair, has_spot in spot_map.items():
+        out[pair]["has_spot"] = has_spot
+
+    def _borrow_one(venue: str) -> tuple[str, dict[str, Any]]:
+        try:
+            return venue, get_borrow_provider(venue).fetch_borrow_info(
+                [b.upper() for b in bases]
+            )
+        except Exception:
+            return venue, {}
+
+    borrow_map = run_io_parallel(
+        [v.lower() for v in venues], _borrow_one,
+        max_workers=len(venues), swallow_errors=True,
+    )
+    for venue in (v.lower() for v in venues):
+        info = borrow_map.get(venue) or {}
+        if not any(i.get("borrowable") for i in info.values()):
+            # 全 False 可能是 API 凭证缺失（bitget/bybit/binance 借币查询需鉴权）
+            print(
+                f"[history] {venue}: 0 borrowable（若该所需要 API key，"
+                f"探测可能失败而非真不可借）",
+                file=sys.stderr,
+            )
+    for venue, info_by_coin in borrow_map.items():
+        for base, info in (info_by_coin or {}).items():
+            key = (venue, base.upper())
+            if key not in out:
+                continue
+            out[key]["borrowable"] = bool(info.get("borrowable"))
+            apr = float(info.get("annual_rate_pct", 0) or 0)
+            if apr <= 0 and float(info.get("daily_rate_pct", 0) or 0) > 0:
+                apr = float(info["daily_rate_pct"]) * 365.0
+            out[key]["borrow_apr_pct"] = apr
+    return out
+
+
+def _cc_rows(
+    by_base: dict[str, dict[str, dict[str, Any]]],
+    borrow_apr_pct: float,
+    cc_capability: dict[tuple[str, str], dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """从单所费率合成 cash-and-carry 行（与 pure 行同构，供回测引擎消费）。
+
+    cc_forward: 现货多(费率 0) + 永续空(收正费率)，short 腿挂费率。
+    cc_reverse: 永续多(负费率→收钱) + 借币卖出，long 腿挂费率，
+                借币利息按 APR 折算到结算周期，记入 borrow_per_settle_pct。
+
+    cc_capability 非空时：cc_forward 要求该所现货可买，cc_reverse 要求可借，
+    且可借时用真实借币 APR 替代常数假设。
+    """
+    rows: list[dict[str, Any]] = []
+    for base, venue_map in by_base.items():
+        for venue, info in venue_map.items():
+            rate = float(info["rate_pct"])
+            if rate == 0:
+                continue
+            cap = (
+                cc_capability.get((venue, base))
+                if cc_capability is not None
+                else None
+            )
+            if cc_capability is not None and cap is None:
+                continue
+            if cap is not None:
+                if rate > 0 and not cap["has_spot"]:
+                    continue  # 无现货（如 pre-market 合约）→ 正向不可执行
+                if rate < 0 and not cap["borrowable"]:
+                    continue  # 不可借 → 反向不可执行
+            effective_apr = borrow_apr_pct
+            if cap is not None and cap["borrow_apr_pct"] > 0:
+                effective_apr = cap["borrow_apr_pct"]
+            interval_h = float(info["interval_h"])
+            fee = SPOT_TAKER_FEE_PCT + FUTURES_TAKER_FEE_PCT.get(venue, 0.06)
+            common = {
+                "base": base,
+                "fee_pct": round(fee, 4),
+                "long_interval_h": interval_h,
+                "short_interval_h": interval_h,
+                "settle_mismatch": False,
+                "long_settle_ms": info.get("next_funding_ts", 0),
+                "short_settle_ms": info.get("next_funding_ts", 0),
+            }
+            if rate > 0:
+                rows.append({
+                    **common,
+                    "direction": "cc_forward",
+                    "long_venue": f"{venue}:spot",
+                    "short_venue": venue,
+                    "long_rate_pct": 0.0,
+                    "short_rate_pct": rate,
+                    "spread_pct": round(rate, 6),
+                    "net_edge_pct": round(rate - fee, 6),
+                    "borrow_per_settle_pct": 0.0,
+                })
+            else:
+                borrow_per_settle = effective_apr / HOURS_PER_YEAR * interval_h
+                rows.append({
+                    **common,
+                    "direction": "cc_reverse",
+                    "long_venue": venue,
+                    "short_venue": f"{venue}:margin",
+                    "long_rate_pct": rate,
+                    "short_rate_pct": 0.0,
+                    "spread_pct": round(abs(rate), 6),
+                    "net_edge_pct": round(abs(rate) - borrow_per_settle - fee, 6),
+                    "borrow_per_settle_pct": round(borrow_per_settle, 6),
+                })
+    rows.sort(key=lambda x: -x["net_edge_pct"])
+    return rows
+
+
 def build_snapshots(
     histories: dict[tuple[str, str], list[dict[str, Any]]],
+    *,
+    include_cc: bool = True,
+    borrow_apr_pct: float = DEFAULT_BORROW_APR_PCT,
+    cc_capability: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """合成 run_backtest 可直接消费的快照序列（含 _ts）。
 
@@ -161,12 +322,15 @@ def build_snapshots(
         # 阈值放开：行情持续可见，入场阈值交给 run_backtest 处理
         forward, reverse = _scan_spreads(by_base, min_spread=0.0, min_edge=-999.0)
         dt = datetime.fromtimestamp(t / 1000, timezone.utc)
-        snapshots.append({
+        snap: dict[str, Any] = {
             "timestamp": dt.isoformat(),
             "forward": forward,
             "reverse": reverse,
             "_ts": dt,
-        })
+        }
+        if include_cc:
+            snap["cc"] = _cc_rows(by_base, borrow_apr_pct, cc_capability)
+        snapshots.append(snap)
     return snapshots
 
 
@@ -177,8 +341,14 @@ def fetch_history_snapshots(
     *,
     refresh: bool = False,
     workers: int = 8,
+    borrow_apr_pct: float = DEFAULT_BORROW_APR_PCT,
+    check_cc_capability: bool = False,
 ) -> list[dict[str, Any]]:
-    """并行拉取所有 venue × base 历史费率并合成快照。"""
+    """并行拉取所有 venue × base 历史费率并合成快照。
+
+    check_cc_capability=True 时实时探测现货/借币能力过滤 cc 行
+    （用当前状态代理历史，新上市币的历史可借性无从查证）。
+    """
     from market.parallel_fetch import run_io_parallel
 
     pairs = [(v.lower(), b.upper()) for v in venues for b in bases]
@@ -192,4 +362,17 @@ def fetch_history_snapshots(
     histories = run_io_parallel(
         pairs, _one, max_workers=min(workers, len(pairs)), swallow_errors=True
     )
-    return build_snapshots(histories)
+    cc_capability = None
+    if check_cc_capability:
+        print("[history] probing spot/borrow capability...", file=sys.stderr)
+        cc_capability = fetch_cc_capability(venues, bases, workers=workers)
+        n_spot = sum(1 for c in cc_capability.values() if c["has_spot"])
+        n_borrow = sum(1 for c in cc_capability.values() if c["borrowable"])
+        print(
+            f"[history] capability: {n_spot}/{len(cc_capability)} legs have spot, "
+            f"{n_borrow} borrowable",
+            file=sys.stderr,
+        )
+    return build_snapshots(
+        histories, borrow_apr_pct=borrow_apr_pct, cc_capability=cc_capability
+    )

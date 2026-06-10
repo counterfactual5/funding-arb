@@ -213,6 +213,117 @@ def test_data_hole_drops_leg():
     assert "spread_disappeared" in result.trades[0]["close_reason"]
 
 
+def test_cc_forward_end_to_end():
+    """cc_forward：单所正费率，现货多+永续空，手算资金费与手续费。"""
+    n = 10
+    histories = {("binance", "BTC"): _hist(T0, 8.0, [0.30] * n)}
+    snaps = build_snapshots(histories)
+    assert all(len(s["forward"]) + len(s["reverse"]) == 0 for s in snaps)  # 单腿无 pure 配对
+    row = snaps[0]["cc"][0]
+    assert row["direction"] == "cc_forward"
+    assert abs(row["net_edge_pct"] - (0.30 - 0.15)) < 1e-9  # fee = 0.10 spot + 0.05 binance perp
+    result = run_backtest(
+        snaps,
+        initial_capital=100000.0,
+        trade_usd=5000.0,
+        min_spread_pct=0.0,
+        min_edge_pct=0.0,
+        exit_edge_pct=-999.0,
+        max_holding_hours=9999.0,
+        strategies={"cc"},
+    )
+    assert result.trade_count == 1
+    # funding = 9 × 0.30 = 2.7，fee = 2 × 0.15 = 0.30
+    assert abs(result.total_funding_collected_pct - 2.7) < 1e-9
+    assert abs(result.total_return_pct - (2.7 - 0.30) * 5000 / 100000) < 1e-6
+
+
+def test_cc_reverse_borrow_cost():
+    """cc_reverse：负费率 + 借币成本按周期累计。"""
+    n = 10
+    borrow_apr = 17.52  # 17.52%/8760h × 8h = 0.016%/期，方便手算
+    histories = {("binance", "BTC"): _hist(T0, 8.0, [-0.30] * n)}
+    snaps = build_snapshots(histories, borrow_apr_pct=borrow_apr)
+    row = snaps[0]["cc"][0]
+    assert row["direction"] == "cc_reverse"
+    assert abs(row["borrow_per_settle_pct"] - 0.016) < 1e-9
+    result = run_backtest(
+        snaps,
+        initial_capital=100000.0,
+        trade_usd=5000.0,
+        min_spread_pct=0.0,
+        min_edge_pct=0.0,
+        exit_edge_pct=-999.0,
+        max_holding_hours=9999.0,
+        strategies={"cc"},
+    )
+    assert result.trade_count == 1
+    trade = result.trades[0]
+    # funding = 9 × 0.30，借息 = 9 × 0.016，fee = 0.30
+    assert abs(result.total_funding_collected_pct - 2.7) < 1e-9
+    assert abs(trade["borrow_paid_pct"] - 9 * 0.016) < 1e-9
+    expected = (2.7 - 9 * 0.016 - 0.30) * 5000 / 100000
+    assert abs(result.total_return_pct - expected) < 1e-6
+
+
+def test_cc_capability_filter():
+    """无现货 → 不出 cc_forward；不可借 → 不出 cc_reverse；可借用真实 APR。"""
+    histories = {
+        ("binance", "BTC"): _hist(T0, 8.0, [0.30] * 5),   # 正费率 → cc_forward
+        ("bybit", "ETH"): _hist(T0, 8.0, [-0.30] * 5),    # 负费率 → cc_reverse
+    }
+    caps = {
+        ("binance", "BTC"): {"has_spot": False, "borrowable": False, "borrow_apr_pct": 0.0},
+        ("bybit", "ETH"): {"has_spot": True, "borrowable": True, "borrow_apr_pct": 87.6},
+    }
+    snaps = build_snapshots(histories, cc_capability=caps)
+    cc = snaps[0]["cc"]
+    # binance BTC 无现货 → cc_forward 被滤掉；只剩 bybit ETH cc_reverse
+    assert len(cc) == 1
+    row = cc[0]
+    assert row["direction"] == "cc_reverse"
+    # 真实 APR 87.6%/8760h × 8h = 0.08%/期
+    assert abs(row["borrow_per_settle_pct"] - 0.08) < 1e-9
+    # 无 capability 信息时不过滤（向后兼容）
+    snaps_all = build_snapshots(histories)
+    assert len(snaps_all[0]["cc"]) == 2
+
+
+def test_strategy_filter_pure_only_ignores_cc():
+    """默认 strategies={'pure'} 不应开 cc 仓位。"""
+    histories = {("binance", "BTC"): _hist(T0, 8.0, [0.30] * 5)}
+    snaps = build_snapshots(histories)
+    result = run_backtest(
+        snaps, min_spread_pct=0.0, min_edge_pct=0.0, exit_edge_pct=-999.0
+    )
+    assert result.trade_count == 0
+
+
+def test_combined_picks_higher_edge():
+    """pure 与 cc 同台竞争：按 net_edge 排序，价差大的 pure 配对优先。"""
+    n = 6
+    histories = {
+        # binance 0.40 / okx 0.05 → pure spread 0.35 (edge 0.25)；
+        # cc_forward binance edge = 0.40 − 0.15 = 0.25 vs pure 0.25 平手，
+        # 把 okx 调成 -0.05 → pure spread 0.45 edge 0.35 胜出
+        ("binance", "BTC"): _hist(T0, 8.0, [0.40] * n),
+        ("okx", "BTC"): _hist(T0, 8.0, [-0.05] * n),
+    }
+    snaps = build_snapshots(histories)
+    result = run_backtest(
+        snaps,
+        min_spread_pct=0.0,
+        min_edge_pct=0.0,
+        exit_edge_pct=-999.0,
+        max_holding_hours=9999.0,
+        strategies={"pure", "cc"},
+        max_concurrent_pairs=1,
+    )
+    assert result.trade_count == 1
+    # 同 base 只开一仓，pure 配对（edge 0.35）胜过 cc（0.25）
+    assert result.trades[0]["direction"] == "forward"
+
+
 def test_leg_history_exhaustion_closes_pair():
     """一腿历史提前结束 → 配对行消失，持仓应被平掉而非悬挂。"""
     histories = {

@@ -76,6 +76,7 @@
 - [x] `backtest_pure_futures_spread.py` 历史回测框架
   - [x] JSONL 快照加载
   - [x] 历史 funding API 回测（`--history-bases`，无需采集，4 所公开端点 + 6h 缓存）
+  - [x] cash-and-carry 组合回测（`--strategies pure,cc`，含借币成本与现货/可借能力探测 `--cc-check-caps`）
   - [x] 回放模拟（开仓/平仓/持仓）
   - [x] 统计指标（总收益/年化/回撤/Sharpe/胜率）
   - [x] Equity 曲线
