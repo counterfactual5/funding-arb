@@ -164,6 +164,7 @@ def run_once(cfg: dict[str, Any], *, verbose: bool = False) -> dict[str, Any]:
             direction=str(row.get("direction", "forward")),
             max_mark_spread_pct=max_mark_spread,
             config=cfg,
+            capital_buffer_pct=float(row.get("capital_buffer_pct", 0) or 0),
         )
         actions.append({"action": "open", "candidate": row, "result": res.to_dict()})
         if verbose:

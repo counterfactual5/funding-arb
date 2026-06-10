@@ -103,17 +103,38 @@ def _venue(venue_id: str, injected: Any = None):
     return injected or get_venue({"venue": {"type": venue_id}})
 
 
-def _ensure_futures_margin(
+def _check_futures_margin(
     venue: Any, venue_id: str, quote: str, required_usd: float, logs: list[str]
-) -> None:
-    """Best-effort spot→futures transfer when venue reports insufficient futures USDT."""
+) -> bool:
+    """校验 futures USDT ≥ required；不足时尝试 spot→futures 划转差额。
+
+    返回 False 表示保证金确认不足（应放弃开仓）。
+    余额 API 异常时跳过校验放行（不让偶发接口故障阻塞交易）。
+    """
     try:
         balances = venue.fetch_usdt_account_balances()
-        if float(balances.get("futures", 0) or 0) < required_usd:
-            if venue.transfer_asset(quote, required_usd, "spot", "futures"):
-                logs.append(f"{venue_id}: spot→futures 划转 {required_usd:.2f} {quote}")
     except Exception as e:
-        logs.append(f"{venue_id}: 保证金检查/划转跳过 ({e})")
+        logs.append(f"{venue_id}: 保证金查询失败，跳过校验 ({e})")
+        return True
+    futures_avail = float(balances.get("futures", 0) or 0)
+    if futures_avail >= required_usd:
+        return True
+    shortfall = required_usd - futures_avail
+    spot_avail = float(balances.get("spot", 0) or 0)
+    if spot_avail >= shortfall:
+        try:
+            if venue.transfer_asset(quote, shortfall, "spot", "futures"):
+                logs.append(
+                    f"{venue_id}: spot→futures 划转 {shortfall:.2f} {quote}"
+                )
+                return True
+        except Exception as e:
+            logs.append(f"{venue_id}: 划转失败 ({e})")
+    logs.append(
+        f"{venue_id}: 保证金不足 futures={futures_avail:.2f} "
+        f"spot={spot_avail:.2f} 需 {required_usd:.2f}"
+    )
+    return False
 
 
 def _make_futures_trade(
@@ -143,8 +164,13 @@ def open_pure_futures_pair(
     long_venue: Any = None,
     short_venue: Any = None,
     positions_path: Path = POSITIONS_PATH,
+    capital_buffer_pct: float = 0.0,
 ) -> CrossVenueResult:
-    """Open a pure futures funding-spread pair: long perp on one venue, short perp on another."""
+    """Open a pure futures funding-spread pair: long perp on one venue, short perp on another.
+
+    capital_buffer_pct: settle-mismatch planner 建议的额外保证金预留
+    （名义价值百分比），计入开仓前的余额校验。
+    """
     logs: list[str] = []
     executed: list[dict[str, Any]] = []
     lv = _venue(long_venue_id, long_venue)
@@ -230,9 +256,12 @@ def open_pure_futures_pair(
         )
         return CrossVenueResult(True, "simulated", position_id, executed, logs)
 
-    margin_usd = trade_usd * MARGIN_BUFFER
-    _ensure_futures_margin(lv, long_venue_id, quote, margin_usd, logs)
-    _ensure_futures_margin(sv, short_venue_id, quote, margin_usd, logs)
+    margin_usd = trade_usd * MARGIN_BUFFER + trade_usd * max(capital_buffer_pct, 0.0) / 100.0
+    ok_long = _check_futures_margin(lv, long_venue_id, quote, margin_usd, logs)
+    ok_short = _check_futures_margin(sv, short_venue_id, quote, margin_usd, logs)
+    if not (ok_long and ok_short):
+        # 在下首单前放弃，避免单腿成交后再回滚
+        return CrossVenueResult(False, "aborted", "", executed, logs)
     for venue, mkt in ((lv, long_mkt), (sv, short_mkt)):
         try:
             venue.initialize_futures_symbol(mkt["pair"])

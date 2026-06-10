@@ -21,7 +21,11 @@ TMP = Path("/tmp/funding-arb-test-pure-futures")
 
 class FakeFuturesVenue:
     def __init__(
-        self, venue_id: str, price: float = 100.0, fail_types: set[str] | None = None
+        self,
+        venue_id: str,
+        price: float = 100.0,
+        fail_types: set[str] | None = None,
+        balances: dict[str, float] | None = None,
     ):
         self.venue_id = venue_id
         self.price = price
@@ -29,6 +33,10 @@ class FakeFuturesVenue:
         self.trades: list[dict] = []
         self.initialized: list[str] = []
         self.transfers: list[tuple] = []
+        self.balances = balances if balances is not None else {
+            "spot": 100000.0,
+            "futures": 100000.0,
+        }
 
     def fetch_futures_symbol_rules(self, pair: str, cache_sec: int = 3600):
         return {
@@ -49,12 +57,16 @@ class FakeFuturesVenue:
         self.initialized.append(pair)
 
     def fetch_usdt_account_balances(self):
-        return {"spot": 100000.0, "futures": 100000.0}
+        return dict(self.balances)
 
     def transfer_asset(
         self, asset: str, amount: float, from_account: str, to_account: str
     ):
         self.transfers.append((asset, amount, from_account, to_account))
+        if self.balances.get(from_account, 0.0) < amount:
+            return False
+        self.balances[from_account] -= amount
+        self.balances[to_account] = self.balances.get(to_account, 0.0) + amount
         return True
 
     def execute_trades(self, trades, market, dry_run=True):
@@ -334,6 +346,104 @@ def test_rebalance_leg_gone_aborts():
         short_qty=0.0,
     )
     assert not res.ok and res.state == "aborted"
+
+
+def test_open_aborts_when_margin_insufficient():
+    """两所余额都不足 → 不下任何单直接放弃。"""
+    path = _path("margin_insufficient")
+    lv = FakeFuturesVenue("okx", balances={"spot": 0.0, "futures": 100.0})
+    sv = FakeFuturesVenue("bybit", balances={"spot": 0.0, "futures": 100.0})
+    res = open_pure_futures_pair(
+        "BTC",
+        "okx",
+        "bybit",
+        500,  # 需要 ≥ 525 (1.05x)
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
+    )
+    assert not res.ok and res.state == "aborted"
+    assert lv.trades == [] and sv.trades == []
+    assert any("保证金不足" in log for log in res.logs)
+
+
+def test_open_transfers_shortfall_from_spot():
+    """futures 不足但 spot 可补 → 划转差额后正常开仓。"""
+    path = _path("margin_transfer")
+    lv = FakeFuturesVenue("okx", balances={"spot": 1000.0, "futures": 100.0})
+    sv = FakeFuturesVenue("bybit", balances={"spot": 1000.0, "futures": 600.0})
+    res = open_pure_futures_pair(
+        "BTC",
+        "okx",
+        "bybit",
+        500,
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
+    )
+    assert res.ok and res.state == "filled"
+    # okx 划转差额 525 - 100 = 425；bybit 600 ≥ 525 无需划转
+    assert len(lv.transfers) == 1
+    assert abs(lv.transfers[0][1] - 425.0) < 1e-9
+    assert sv.transfers == []
+
+
+def test_open_margin_includes_capital_buffer():
+    """capital_buffer_pct 计入保证金要求。"""
+    path = _path("margin_buffer")
+    # 余额刚好满足 1.05x 但不够 1.05x + 10% buffer
+    lv = FakeFuturesVenue("okx", balances={"spot": 0.0, "futures": 530.0})
+    sv = FakeFuturesVenue("bybit", balances={"spot": 0.0, "futures": 530.0})
+    res = open_pure_futures_pair(
+        "BTC",
+        "okx",
+        "bybit",
+        500,  # 1.05x = 525 ≤ 530，但 + 10% buffer = 575 > 530
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
+        capital_buffer_pct=10.0,
+    )
+    assert not res.ok and res.state == "aborted"
+    # 不带 buffer 则可开
+    res2 = open_pure_futures_pair(
+        "BTC",
+        "okx",
+        "bybit",
+        500,
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
+    )
+    assert res2.ok
+
+
+def test_open_margin_check_skipped_when_api_fails():
+    """余额接口异常 → 跳过校验放行（不阻塞交易）。"""
+    path = _path("margin_api_fail")
+    lv = FakeFuturesVenue("okx")
+    sv = FakeFuturesVenue("bybit")
+
+    def _boom():
+        raise RuntimeError("api down")
+
+    lv.fetch_usdt_account_balances = _boom
+    res = open_pure_futures_pair(
+        "BTC",
+        "okx",
+        "bybit",
+        500,
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
+    )
+    assert res.ok and res.state == "filled"
+    assert any("跳过校验" in log for log in res.logs)
 
 
 def test_rebalance_dry_run_no_record_change():

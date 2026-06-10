@@ -491,6 +491,7 @@ def _run_pure_futures_mode(args: argparse.Namespace) -> None:
                 direction=str(row.get("direction", "forward")),
                 max_mark_spread_pct=max_mark_spread,
                 config=cfg,
+                capital_buffer_pct=float(row.get("capital_buffer_pct", 0) or 0),
             )
             status = "OK" if res.ok else f"FAIL({res.state})"
             edge = float(

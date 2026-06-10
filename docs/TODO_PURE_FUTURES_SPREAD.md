@@ -47,6 +47,8 @@
 ### Phase 2 完成标准
 
 - [x] `pure_futures_executor.py` 支持纯永续双腿（开仓/平仓/回滚）
+  - [x] 开仓前保证金硬校验：futures 余额不足时自动从 spot 划转差额，
+        仍不足则在下首单前放弃（含 capital_buffer_pct 预留）
 - [x] `run_pure_futures_spread.py` Runner 可用（scan→decide→execute）
 - [x] `pure_futures_trade.py` 手动 CLI 可用
 - [x] 位置追踪系统 (`data/pure-futures/positions.json`)
@@ -66,6 +68,7 @@
   - [x] 调整后净边际 (adjusted net edge)
   - [x] 资金预留建议 (capital buffer)
   - [x] Runner 集成过滤
+  - [x] capital_buffer 落地：缩小开仓名义本金 + 计入开仓前保证金校验
 - [x] `orchestrate_funding.py --pure-futures` 编排器集成
   - [x] 扫描展示
   - [x] `--run-executor` 自动开仓
