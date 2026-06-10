@@ -112,11 +112,20 @@ def _leg_market(venue: Any, base: str, quote: str, *, futures: bool) -> dict[str
         except Exception:
             price = 0.0
     else:
-        # 现货腿用 fetch_asset_market，自动处理 OKX 的 ETH-USDT 等格式差异
-        am = venue.fetch_asset_market(base, quote)
-        pair = str(am.get("pair") or make_pair(base, quote))
-        rules = am.get("symbol_rules") or venue.fetch_symbol_rules(pair) or default_rules
-        price = float(am.get("price") or 0.0)
+        # 现货腿优先用 fetch_asset_market，自动处理 OKX 的 ETH-USDT 等格式差异；
+        # 测试 fake / 旧 venue 适配器没有该方法时，回落到通用 pair 查询。
+        if hasattr(venue, "fetch_asset_market"):
+            am = venue.fetch_asset_market(base, quote)
+            pair = str(am.get("pair") or make_pair(base, quote))
+            rules = am.get("symbol_rules") or venue.fetch_symbol_rules(pair) or default_rules
+            price = float(am.get("price") or 0.0)
+        else:
+            pair = make_pair(base, quote)
+            rules = venue.fetch_symbol_rules(pair) or default_rules
+            try:
+                price = float(venue.get_ticker(pair) or 0.0)
+            except Exception:
+                price = 0.0
     return {
         "pair": pair,
         "price": price,

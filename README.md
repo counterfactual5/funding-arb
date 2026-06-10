@@ -40,12 +40,21 @@ python3 scripts/execution/run_cash_and_carry.py \
 python3 scripts/cli/orchestrate_funding.py --venues bitget,bybit
 ```
 
-### 回测验证
+### 验证
 
 ```bash
-python3 scripts/backtest/walk_forward.py \
-  --config templates/config.cash_and_carry.btc.json --days 730
+python3 -m pytest scripts/tests/test_funding_arbitrage.py scripts/tests/test_reverse_margin.py scripts/tests/test_transfer_chain.py -q
+python3 scripts/cli/scan_funding_arbitrage.py --venues bitget,bybit,okx
 ```
+
+### Pure Futures Spread 规划
+
+纯永续资金费差套利（perp long + perp short，无现货/借贷）仍处于设计阶段，文档见：
+
+- [docs/TODO_PURE_FUTURES_SPREAD.md](docs/TODO_PURE_FUTURES_SPREAD.md) — 待做与分阶段计划
+- [docs/PURE_FUTURES_SPREAD_ANALYSIS.md](docs/PURE_FUTURES_SPREAD_ANALYSIS.md) — 深度架构分析
+- [docs/PURE_FUTURES_IMPLEMENTATION_GUIDE.md](docs/PURE_FUTURES_IMPLEMENTATION_GUIDE.md) — 快速实现指南
+
 
 ## 配置
 
