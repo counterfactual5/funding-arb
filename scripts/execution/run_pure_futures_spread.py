@@ -100,7 +100,11 @@ def run_once(cfg: dict[str, Any], *, verbose: bool = False) -> dict[str, Any]:
 
     # 用宽松阈值扫描，保证 held position 即使跌破入场阈值也能被看见并用于退出判断。
     scan = scan_pure_futures_spreads(
-        venues=venues, min_spread=0.0, min_edge=-999.0, workers=workers
+        venues=venues,
+        min_spread=0.0,
+        min_edge=-999.0,
+        max_mark_spread_pct=max_mark_spread,
+        workers=workers,
     )
     all_rows = list(scan.get("forward", [])) + list(scan.get("reverse", []))
     row_by_key = {_candidate_key(r): r for r in all_rows}
@@ -151,7 +155,11 @@ def run_once(cfg: dict[str, Any], *, verbose: bool = False) -> dict[str, Any]:
         min_adjusted_edge_pct=min_edge,
     )
 
-    candidates.sort(key=lambda x: -float(x.get("adjusted_net_edge_pct", 0.0) or x.get("net_edge_pct", 0.0)))
+    candidates.sort(
+        key=lambda x: (
+            -float(x.get("adjusted_net_edge_pct", 0.0) or x.get("net_edge_pct", 0.0))
+        )
+    )
 
     for row in candidates[:slots]:
         row_trade_usd = effective_trade_usd(trade_usd, row)

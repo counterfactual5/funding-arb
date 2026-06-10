@@ -23,6 +23,7 @@
     "rebalanceSkewPct": 1.0,
     "autoRebalance": false,
     "marginAlertDistancePct": 20.0,
+    "maxLossVsFundingMult": 3.0,
 
     "depthCheckEnabled": true,
     "depthMaxDevPct": 0.3,

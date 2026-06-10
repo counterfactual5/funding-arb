@@ -165,6 +165,7 @@ def _scan_spreads(
     min_spread: float,
     min_edge: float,
     fee_cache: dict[tuple[str, str], dict[str, float]] | None = None,
+    max_mark_spread_pct: float = 1.0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Compute pairwise perp-perp spreads across venues, return (forward, reverse)."""
     forward: list[dict[str, Any]] = []
@@ -225,6 +226,19 @@ def _scan_spreads(
                     > 0.5
                 )
 
+                # 计算标记价差百分比
+                long_mark = float(long_info.get("mark_price", 0.0) or 0.0)
+                short_mark = float(short_info.get("mark_price", 0.0) or 0.0)
+                mark_spread_pct = (
+                    abs(long_mark - short_mark) / max(long_mark, short_mark) * 100.0
+                    if max(long_mark, short_mark) > 0
+                    else 0.0
+                )
+
+                # 标记价差过大则跳过（mark 为 0 时保守放行）
+                if mark_spread_pct > 0 and mark_spread_pct > max_mark_spread_pct:
+                    continue
+
                 entry: dict[str, Any] = {
                     "base": base,
                     "direction": direction,
@@ -244,8 +258,9 @@ def _scan_spreads(
                     "long_interval_h": float(long_info.get("interval_h", 8.0) or 8.0),
                     "short_interval_h": float(short_info.get("interval_h", 8.0) or 8.0),
                     "settle_mismatch": settle_mismatch,
-                    "long_mark": float(long_info.get("mark_price", 0.0) or 0.0),
-                    "short_mark": float(short_info.get("mark_price", 0.0) or 0.0),
+                    "long_mark": long_mark,
+                    "short_mark": short_mark,
+                    "mark_spread_pct": round(mark_spread_pct, 6),
                 }
 
                 if direction == "forward":
@@ -262,6 +277,7 @@ def scan_pure_futures_spreads(
     venues: list[str] | None = None,
     min_spread: float = DEFAULT_MIN_SPREAD,
     min_edge: float = DEFAULT_MIN_EDGE,
+    max_mark_spread_pct: float = 1.0,
     workers: int = DEFAULT_IO_WORKERS,
 ) -> dict[str, Any]:
     """Main entry point — scan and return structured results."""
@@ -272,7 +288,9 @@ def scan_pure_futures_spreads(
     _backfill_missing_settle_times(by_base, venues, workers)
     fee_cache = build_fee_cache_from_by_base(by_base, workers=workers)
 
-    forward, reverse = _scan_spreads(by_base, min_spread, min_edge, fee_cache)
+    forward, reverse = _scan_spreads(
+        by_base, min_spread, min_edge, fee_cache, max_mark_spread_pct
+    )
 
     # Compute venue-level stats
     venue_pairs: dict[str, int] = {}
@@ -314,10 +332,10 @@ def _print_human(result: dict[str, Any], verbose: bool = False) -> None:
         print(
             f"  {'asset':<10s} {'long@':>8s} {'short@':>8s} "
             f"{'long_rate':>10s} {'short_rate':>10s} {'spread':>8s} "
-            f"{'fee':>6s} {'net_edge':>9s} {'APY':>7s} {'settle':>18s}"
+            f"{'fee':>6s} {'net_edge':>9s} {'APY':>7s} {'mark_diff':>10s} {'settle':>18s}"
         )
         print(
-            f"  {'-' * 10} {'-' * 8} {'-' * 8} {'-' * 10} {'-' * 10} {'-' * 8} {'-' * 6} {'-' * 9} {'-' * 7} {'-' * 18}"
+            f"  {'-' * 10} {'-' * 8} {'-' * 8} {'-' * 10} {'-' * 10} {'-' * 8} {'-' * 6} {'-' * 9} {'-' * 7} {'-' * 10} {'-' * 18}"
         )
         for x in fwd[: verbose and 50 or 20]:
             settle = (
@@ -326,20 +344,14 @@ def _print_human(result: dict[str, Any], verbose: bool = False) -> None:
             )
             if x.get("settle_mismatch"):
                 settle += " ⚠️"
-            mark_str = ""
-            if verbose and x.get("long_mark") and x.get("short_mark"):
-                mark_diff = (
-                    abs(x["long_mark"] - x["short_mark"])
-                    / max(x["long_mark"], x["short_mark"])
-                    * 100
-                )
-                mark_str = f"  mark_diff={mark_diff:.2f}%"
+            mark_spread = x.get("mark_spread_pct", 0.0)
+            mark_str = f"{mark_spread:9.4f}%" if mark_spread > 0 else "      N/A"
             print(
                 f"  {x['base']:<10s} {x['long_venue']:>8s} {x['short_venue']:>8s} "
                 f"{x['long_rate_pct']:+9.4f}% {x['short_rate_pct']:+9.4f}% "
                 f"{x['spread_pct']:7.4f}% {x['fee_pct']:5.3f}% "
                 f"{x['net_edge_pct']:+8.4f}% {x['annual_apy_pct']:6.0f}% "
-                f"{settle}{mark_str}"
+                f"{mark_str} {settle}"
             )
         if len(fwd) > 20 and not verbose:
             print(f"  ... ({len(fwd) - 20} more, use --verbose to see all)")
@@ -351,10 +363,10 @@ def _print_human(result: dict[str, Any], verbose: bool = False) -> None:
         print(
             f"  {'asset':<10s} {'long@':>8s} {'short@':>8s} "
             f"{'long_rate':>10s} {'short_rate':>10s} {'spread':>8s} "
-            f"{'fee':>6s} {'net_edge':>9s} {'APY':>7s} {'settle':>18s}"
+            f"{'fee':>6s} {'net_edge':>9s} {'APY':>7s} {'mark_diff':>10s} {'settle':>18s}"
         )
         print(
-            f"  {'-' * 10} {'-' * 8} {'-' * 8} {'-' * 10} {'-' * 10} {'-' * 8} {'-' * 6} {'-' * 9} {'-' * 7} {'-' * 18}"
+            f"  {'-' * 10} {'-' * 8} {'-' * 8} {'-' * 10} {'-' * 10} {'-' * 8} {'-' * 6} {'-' * 9} {'-' * 7} {'-' * 10} {'-' * 18}"
         )
         for x in rev[: verbose and 50 or 20]:
             settle = (
@@ -363,12 +375,14 @@ def _print_human(result: dict[str, Any], verbose: bool = False) -> None:
             )
             if x.get("settle_mismatch"):
                 settle += " ⚠️"
+            mark_spread = x.get("mark_spread_pct", 0.0)
+            mark_str = f"{mark_spread:9.4f}%" if mark_spread > 0 else "      N/A"
             print(
                 f"  {x['base']:<10s} {x['long_venue']:>8s} {x['short_venue']:>8s} "
                 f"{x['long_rate_pct']:+9.4f}% {x['short_rate_pct']:+9.4f}% "
                 f"{x['spread_pct']:7.4f}% {x['fee_pct']:5.3f}% "
                 f"{x['net_edge_pct']:+8.4f}% {x['annual_apy_pct']:6.0f}% "
-                f"{settle}"
+                f"{mark_str} {settle}"
             )
         if len(rev) > 20 and not verbose:
             print(f"  ... ({len(rev) - 20} more, use --verbose to see all)")
@@ -429,6 +443,12 @@ def main() -> None:
         default=DEFAULT_IO_WORKERS,
         help="Parallel I/O workers",
     )
+    parser.add_argument(
+        "--max-mark-spread",
+        type=float,
+        default=1.0,
+        help="Max mark price spread %% between venues (default 1.0%%)",
+    )
     parser.add_argument("--verbose", "-V", action="store_true", help="Show all results")
     parser.add_argument("--json", action="store_true", help="JSON output (single scan)")
     parser.add_argument(
@@ -462,6 +482,7 @@ def main() -> None:
                     venues=venues,
                     min_spread=args.min_spread,
                     min_edge=args.min_edge,
+                    max_mark_spread_pct=args.max_mark_spread,
                     workers=args.workers,
                 )
                 result["min_spread"] = args.min_spread
@@ -493,6 +514,7 @@ def main() -> None:
         venues=venues,
         min_spread=args.min_spread,
         min_edge=args.min_edge,
+        max_mark_spread_pct=args.max_mark_spread,
         workers=args.workers,
     )
     elapsed = time.time() - t0

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """多交易所资金费公开数据提供者（Bitget / OKX / Bybit / Binance）。"""
+
 from __future__ import annotations
 
 import time
@@ -18,7 +19,7 @@ def _http_get_with_retry(url: str, max_retries: int = 5) -> Any:
         except Exception as e:
             last_err = e
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
     raise last_err if last_err else RuntimeError("funding http failed")
 
 
@@ -31,7 +32,9 @@ class FundingProvider:
     def fetch_current(self, symbol: str) -> dict[str, Any]:
         raise NotImplementedError
 
-    def fetch_since(self, symbol: str, start_ms: int, max_pages: int = 10) -> list[dict[str, Any]]:
+    def fetch_since(
+        self, symbol: str, start_ms: int, max_pages: int = 10
+    ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     def fetch_interval_map(self, quote: str = "USDT") -> dict[str, float]:
@@ -48,12 +51,14 @@ class BinanceFundingProvider(FundingProvider):
             sym = str(row.get("symbol", ""))
             if not sym.endswith(quote.upper()):
                 continue
-            out.append({
-                "symbol": sym,
-                "rate_pct": float(row.get("lastFundingRate", 0.0) or 0.0) * 100,
-                "next_funding_ts": int(row.get("nextFundingTime", 0) or 0),
-                "mark_price": float(row.get("markPrice", 0.0) or 0.0),
-            })
+            out.append(
+                {
+                    "symbol": sym,
+                    "rate_pct": float(row.get("lastFundingRate", 0.0) or 0.0) * 100,
+                    "next_funding_ts": int(row.get("nextFundingTime", 0) or 0),
+                    "mark_price": float(row.get("markPrice", 0.0) or 0.0),
+                }
+            )
         return out
 
     def fetch_current(self, symbol: str) -> dict[str, Any]:
@@ -81,7 +86,9 @@ class BinanceFundingProvider(FundingProvider):
             "mark_price": float(data.get("markPrice", 0.0) or 0.0),
         }
 
-    def fetch_since(self, symbol: str, start_ms: int, max_pages: int = 10) -> list[dict[str, Any]]:
+    def fetch_since(
+        self, symbol: str, start_ms: int, max_pages: int = 10
+    ) -> list[dict[str, Any]]:
         if start_ms <= 0:
             return []
         out: list[dict[str, Any]] = []
@@ -93,10 +100,12 @@ class BinanceFundingProvider(FundingProvider):
             if not chunk:
                 break
             for row in chunk:
-                out.append({
-                    "ts": int(row["fundingTime"]),
-                    "rate_pct": float(row["fundingRate"]) * 100,
-                })
+                out.append(
+                    {
+                        "ts": int(row["fundingTime"]),
+                        "rate_pct": float(row["fundingRate"]) * 100,
+                    }
+                )
             if len(chunk) < 1000:
                 break
             cursor = int(chunk[-1]["fundingTime"]) + 1
@@ -111,7 +120,9 @@ class BinanceFundingProvider(FundingProvider):
         if not isinstance(info, list):
             return {}
         return {
-            str(row.get("symbol", "")).upper(): float(row.get("fundingIntervalHours", 8) or 8)
+            str(row.get("symbol", "")).upper(): float(
+                row.get("fundingIntervalHours", 8) or 8
+            )
             for row in info
         }
 
@@ -131,18 +142,23 @@ class BitgetFundingProvider(FundingProvider):
             if not sym.endswith(quote_u):
                 continue
             rate = float(row.get("fundingRate", 0) or 0) * 100
-            out.append({
-                "symbol": sym,
-                "rate_pct": rate,
-                "next_funding_ts": 0,
-                "mark_price": float(row.get("markPrice", row.get("lastPr", 0)) or 0),
-            })
+            out.append(
+                {
+                    "symbol": sym,
+                    "rate_pct": rate,
+                    "next_funding_ts": 0,
+                    "mark_price": float(
+                        row.get("markPrice", row.get("lastPr", 0)) or 0
+                    ),
+                }
+            )
         return out
 
     def fetch_current(self, symbol: str) -> dict[str, Any]:
         sym = symbol.upper()
         # URL-encode to handle non-ASCII symbols (e.g. meme coins with CJK names)
         import urllib.parse
+
         encoded_sym = urllib.parse.quote(sym, safe="")
         rate_url = (
             f"{self.BASE}/api/v2/mix/market/current-fund-rate"
@@ -162,7 +178,11 @@ class BitgetFundingProvider(FundingProvider):
                 f"?symbol={encoded_sym}&productType=USDT-FUTURES"
             )
             ft_payload = _http_get_with_retry(ft_url)
-            ft_row = (ft_payload.get("data") or [{}])[0] if isinstance(ft_payload, dict) else {}
+            ft_row = (
+                (ft_payload.get("data") or [{}])[0]
+                if isinstance(ft_payload, dict)
+                else {}
+            )
             next_ts = int(ft_row.get("nextFundingTime", 0) or 0)
         except Exception:
             pass
@@ -175,7 +195,9 @@ class BitgetFundingProvider(FundingProvider):
             "mark_price": float(row.get("markPrice", 0) or 0),
         }
 
-    def fetch_since(self, symbol: str, start_ms: int, max_pages: int = 10) -> list[dict[str, Any]]:
+    def fetch_since(
+        self, symbol: str, start_ms: int, max_pages: int = 10
+    ) -> list[dict[str, Any]]:
         if start_ms <= 0:
             return []
         sym = symbol.upper()
@@ -194,10 +216,12 @@ class BitgetFundingProvider(FundingProvider):
                 ts = int(row.get("fundingTime", 0) or 0)
                 if ts <= start_ms:
                     continue
-                out.append({
-                    "ts": ts,
-                    "rate_pct": float(row.get("fundingRate", 0) or 0) * 100,
-                })
+                out.append(
+                    {
+                        "ts": ts,
+                        "rate_pct": float(row.get("fundingRate", 0) or 0) * 100,
+                    }
+                )
             if len(rows) < 100:
                 break
             page_no += 1
@@ -213,7 +237,11 @@ class BybitFundingProvider(FundingProvider):
     def fetch_all(self, quote: str = "USDT") -> list[dict[str, Any]]:
         url = f"{self.BASE}/v5/market/tickers?category=linear"
         payload = _http_get_with_retry(url)
-        rows = payload.get("result", {}).get("list", []) if isinstance(payload, dict) else []
+        rows = (
+            payload.get("result", {}).get("list", [])
+            if isinstance(payload, dict)
+            else []
+        )
         out: list[dict[str, Any]] = []
         quote_u = quote.upper()
         for row in rows:
@@ -222,12 +250,16 @@ class BybitFundingProvider(FundingProvider):
                 continue
             rate = float(row.get("fundingRate", 0) or 0) * 100
             next_ts = int(row.get("nextFundingTime", 0) or 0)
-            out.append({
-                "symbol": sym,
-                "rate_pct": rate,
-                "next_funding_ts": next_ts,
-                "mark_price": float(row.get("markPrice", row.get("lastPrice", 0)) or 0),
-            })
+            out.append(
+                {
+                    "symbol": sym,
+                    "rate_pct": rate,
+                    "next_funding_ts": next_ts,
+                    "mark_price": float(
+                        row.get("markPrice", row.get("lastPrice", 0)) or 0
+                    ),
+                }
+            )
         return out
 
     def fetch_current(self, symbol: str) -> dict[str, Any]:
@@ -247,7 +279,9 @@ class BybitFundingProvider(FundingProvider):
             "mark_price": float(row.get("markPrice", row.get("lastPrice", 0)) or 0),
         }
 
-    def fetch_since(self, symbol: str, start_ms: int, max_pages: int = 10) -> list[dict[str, Any]]:
+    def fetch_since(
+        self, symbol: str, start_ms: int, max_pages: int = 10
+    ) -> list[dict[str, Any]]:
         if start_ms <= 0:
             return []
         sym = symbol.upper()
@@ -269,10 +303,12 @@ class BybitFundingProvider(FundingProvider):
                 ts = int(row.get("fundingRateTimestamp", 0) or 0)
                 if ts <= start_ms:
                     continue
-                out.append({
-                    "ts": ts,
-                    "rate_pct": float(row.get("fundingRate", 0) or 0) * 100,
-                })
+                out.append(
+                    {
+                        "ts": ts,
+                        "rate_pct": float(row.get("fundingRate", 0) or 0) * 100,
+                    }
+                )
             cursor = result.get("nextPageCursor")
             if not cursor:
                 break
@@ -288,6 +324,7 @@ class OkxFundingProvider(FundingProvider):
 
     def __init__(self) -> None:
         self._any_cache: tuple[float, list[dict[str, Any]]] | None = None
+        self._mark_cache: tuple[float, dict[str, float]] | None = None
 
     def _inst_id(self, symbol: str) -> str:
         sym = symbol.upper()
@@ -307,22 +344,46 @@ class OkxFundingProvider(FundingProvider):
         self._any_cache = (now, rows)
         return rows
 
+    def _fetch_mark_prices(self) -> dict[str, float]:
+        """批量获取 OKX SWAP 标记价格（60s 缓存，与 _any_cache 同步）。"""
+        now = time.time()
+        if self._mark_cache and now - self._mark_cache[0] < 60.0:
+            return self._mark_cache[1]
+        try:
+            payload = _http_get_with_retry(
+                "https://www.okx.com/api/v5/public/mark-price?instType=SWAP"
+            )
+            mp: dict[str, float] = {}
+            for row in payload.get("data", []) if isinstance(payload, dict) else []:
+                inst = str(row.get("instId", ""))
+                px = float(row.get("markPx", 0) or 0)
+                if inst and px > 0:
+                    mp[inst] = px
+            self._mark_cache = (now, mp)
+            return mp
+        except Exception:
+            return {}
+
     def fetch_all(self, quote: str = "USDT") -> list[dict[str, Any]]:
         """批量端点 instId=ANY：1 次请求替代逐币并行（~400 合约 <1s）。"""
         quote_u = quote.upper()
+        mp_map = self._fetch_mark_prices()
         out: list[dict[str, Any]] = []
         for row in self._fetch_any():
             inst = str(row.get("instId", ""))
             if not inst.endswith(f"-{quote_u}-SWAP"):
                 continue
             base = inst.split("-")[0]
-            out.append({
-                "symbol": f"{base}{quote_u}",
-                # fundingRate = 当期费率，将于 fundingTime 结算
-                "rate_pct": float(row.get("fundingRate", 0) or 0) * 100,
-                "next_funding_ts": int(row.get("fundingTime", 0) or 0),
-                "mark_price": 0.0,
-            })
+            swap_inst = f"{base}-USDT-SWAP"
+            out.append(
+                {
+                    "symbol": f"{base}{quote_u}",
+                    # fundingRate = 当期费率，将于 fundingTime 结算
+                    "rate_pct": float(row.get("fundingRate", 0) or 0) * 100,
+                    "next_funding_ts": int(row.get("fundingTime", 0) or 0),
+                    "mark_price": float(mp_map.get(swap_inst, 0.0)),
+                }
+            )
         return out
 
     def fetch_interval_map(self, quote: str = "USDT") -> dict[str, float]:
@@ -359,7 +420,9 @@ class OkxFundingProvider(FundingProvider):
             "mark_price": 0.0,
         }
 
-    def fetch_since(self, symbol: str, start_ms: int, max_pages: int = 10) -> list[dict[str, Any]]:
+    def fetch_since(
+        self, symbol: str, start_ms: int, max_pages: int = 10
+    ) -> list[dict[str, Any]]:
         if start_ms <= 0:
             return []
         inst = self._inst_id(symbol)
@@ -377,10 +440,15 @@ class OkxFundingProvider(FundingProvider):
                 ts = int(row.get("fundingTime", 0) or 0)
                 if ts <= start_ms:
                     continue
-                out.append({
-                    "ts": ts,
-                    "rate_pct": float(row.get("realizedRate", row.get("fundingRate", 0)) or 0) * 100,
-                })
+                out.append(
+                    {
+                        "ts": ts,
+                        "rate_pct": float(
+                            row.get("realizedRate", row.get("fundingRate", 0)) or 0
+                        )
+                        * 100,
+                    }
+                )
             if len(rows) < 100:
                 break
             after = str(rows[-1].get("fundingTime", ""))
@@ -401,5 +469,7 @@ def get_funding_provider(venue: str) -> FundingProvider:
     v = str(venue or "binance").strip().lower()
     provider = _PROVIDERS.get(v)
     if provider is None:
-        raise ValueError(f"不支持的 funding venue={v!r}，可选: {', '.join(sorted(_PROVIDERS))}")
+        raise ValueError(
+            f"不支持的 funding venue={v!r}，可选: {', '.join(sorted(_PROVIDERS))}"
+        )
     return provider

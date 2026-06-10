@@ -28,6 +28,7 @@ def decide_pure_futures_spread(
     funding_rates: dict[str, dict[str, float]],
     current_time_ms: int = 0,
     fee_cache: dict[tuple[str, str], dict[str, float]] | None = None,
+    mark_prices: dict[str, dict[str, float]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """纯永续资金费差套利决策。
 
@@ -39,6 +40,7 @@ def decide_pure_futures_spread(
             e.g. {"binance": {"BTCUSDT": 0.05, "ETHUSDT": 0.02},
                   "okx":     {"BTCUSDT": -0.10}}
         current_time_ms: 当前时间戳
+        mark_prices: 可选，{venue: {symbol: mark_price}}，用于过滤标记价差过大的候选
 
     Returns:
         (trades, meta) tuple:
@@ -66,6 +68,7 @@ def decide_pure_futures_spread(
     max_spread = float(cfg_pfs.get("maxSpreadPct", 0.50))
     exit_edge = float(cfg_pfs.get("exitThresholdPct", 0.01))
     fee_rates = cfg_pfs.get("feeRates") or {}  # {venue: pct}
+    max_mark_spread = float(cfg_pfs.get("maxMarkSpreadPct", 1.0))
 
     # 1) Build funding rate matrix
     #    For each asset, find all venue pairs with their spreads
@@ -87,33 +90,41 @@ def decide_pure_futures_spread(
         long_rate = all_assets.get(asset, {}).get(long_venue)
         short_rate = all_assets.get(asset, {}).get(short_venue)
         if long_rate is None or short_rate is None:
-            meta["skipped_reasons"].append(f"{pair_id}: rate unavailable for exit check")
+            meta["skipped_reasons"].append(
+                f"{pair_id}: rate unavailable for exit check"
+            )
             continue
 
         current_spread = short_rate - long_rate
         if current_spread <= exit_edge:
             # Close both legs
-            trades.append({
-                "symbol": f"{asset}USDT",
-                "type": "close_long",
-                "venue": long_venue,
-                "amount_base": pair_info["amount"],
-                "pair_id": pair_id,
-                "reason": f"spread_collapse: {current_spread:.4f}% ≤ {exit_edge}%",
-            })
-            trades.append({
-                "symbol": f"{asset}USDT",
-                "type": "close_short",
-                "venue": short_venue,
-                "amount_base": pair_info["amount"],
-                "pair_id": pair_id,
-                "reason": f"spread_collapse: {current_spread:.4f}% ≤ {exit_edge}%",
-            })
-            meta["pairs_closed"].append({
-                "pair_id": pair_id,
-                "reason": "spread_collapse",
-                "current_spread": round(current_spread, 6),
-            })
+            trades.append(
+                {
+                    "symbol": f"{asset}USDT",
+                    "type": "close_long",
+                    "venue": long_venue,
+                    "amount_base": pair_info["amount"],
+                    "pair_id": pair_id,
+                    "reason": f"spread_collapse: {current_spread:.4f}% ≤ {exit_edge}%",
+                }
+            )
+            trades.append(
+                {
+                    "symbol": f"{asset}USDT",
+                    "type": "close_short",
+                    "venue": short_venue,
+                    "amount_base": pair_info["amount"],
+                    "pair_id": pair_id,
+                    "reason": f"spread_collapse: {current_spread:.4f}% ≤ {exit_edge}%",
+                }
+            )
+            meta["pairs_closed"].append(
+                {
+                    "pair_id": pair_id,
+                    "reason": "spread_collapse",
+                    "current_spread": round(current_spread, 6),
+                }
+            )
 
     # 3) Build spread matrix and find candidates
     active_pair_keys = {p["base"] for p in existing_pairs.values()}
@@ -125,7 +136,7 @@ def decide_pure_futures_spread(
 
         venues = sorted(venue_rates.keys())
         for i, va in enumerate(venues):
-            for vb in venues[i + 1:]:
+            for vb in venues[i + 1 :]:
                 rate_a = venue_rates[va]
                 rate_b = venue_rates[vb]
 
@@ -157,17 +168,34 @@ def decide_pure_futures_spread(
                     continue
 
                 annual = _annual_pct(net_edge, 8.0)
-                candidates.append({
-                    "base": asset,
-                    "long_venue": long_venue,
-                    "short_venue": short_venue,
-                    "long_rate_pct": long_rate,
-                    "short_rate_pct": short_rate,
-                    "spread_pct": round(spread, 6),
-                    "total_fee_pct": round(total_fee, 4),
-                    "net_edge_pct": round(net_edge, 6),
-                    "annual_pct": round(annual, 1),
-                })
+
+                # 标记价差过滤：如果提供了 mark_prices，计算并过滤
+                mark_spread_pct = 0.0
+                if mark_prices is not None:
+                    long_sym = f"{asset}USDT"
+                    long_mp = mark_prices.get(long_venue, {}).get(long_sym, 0.0)
+                    short_mp = mark_prices.get(short_venue, {}).get(long_sym, 0.0)
+                    if long_mp > 0 and short_mp > 0:
+                        mark_spread_pct = (
+                            abs(long_mp - short_mp) / max(long_mp, short_mp) * 100.0
+                        )
+                        if mark_spread_pct > max_mark_spread:
+                            continue
+
+                candidates.append(
+                    {
+                        "base": asset,
+                        "long_venue": long_venue,
+                        "short_venue": short_venue,
+                        "long_rate_pct": long_rate,
+                        "short_rate_pct": short_rate,
+                        "spread_pct": round(spread, 6),
+                        "total_fee_pct": round(total_fee, 4),
+                        "net_edge_pct": round(net_edge, 6),
+                        "annual_pct": round(annual, 1),
+                        "mark_spread_pct": round(mark_spread_pct, 6),
+                    }
+                )
 
     candidates.sort(key=lambda x: -x["net_edge_pct"])
     meta["spread_matrix"] = candidates[:20]
@@ -184,34 +212,38 @@ def decide_pure_futures_spread(
         amount_base = round(trade_usd / price, 6)
         pair_id = f"{asset}:{pair['long_venue']}:{pair['short_venue']}"
 
-        trades.append({
-            "symbol": f"{asset}USDT",
-            "type": "open_long",
-            "venue": pair["long_venue"],
-            "amount_base": amount_base,
-            "amount_usdt": round(trade_usd, 2),
-            "pair_id": pair_id,
-            "funding_rate_pct": pair["long_rate_pct"],
-            "meta": {
-                "spread_pct": pair["spread_pct"],
-                "net_edge_pct": pair["net_edge_pct"],
-                "annual_pct": pair["annual_pct"],
-            },
-        })
-        trades.append({
-            "symbol": f"{asset}USDT",
-            "type": "open_short",
-            "venue": pair["short_venue"],
-            "amount_base": amount_base,
-            "amount_usdt": round(trade_usd, 2),
-            "pair_id": pair_id,
-            "funding_rate_pct": pair["short_rate_pct"],
-            "meta": {
-                "spread_pct": pair["spread_pct"],
-                "net_edge_pct": pair["net_edge_pct"],
-                "annual_pct": pair["annual_pct"],
-            },
-        })
+        trades.append(
+            {
+                "symbol": f"{asset}USDT",
+                "type": "open_long",
+                "venue": pair["long_venue"],
+                "amount_base": amount_base,
+                "amount_usdt": round(trade_usd, 2),
+                "pair_id": pair_id,
+                "funding_rate_pct": pair["long_rate_pct"],
+                "meta": {
+                    "spread_pct": pair["spread_pct"],
+                    "net_edge_pct": pair["net_edge_pct"],
+                    "annual_pct": pair["annual_pct"],
+                },
+            }
+        )
+        trades.append(
+            {
+                "symbol": f"{asset}USDT",
+                "type": "open_short",
+                "venue": pair["short_venue"],
+                "amount_base": amount_base,
+                "amount_usdt": round(trade_usd, 2),
+                "pair_id": pair_id,
+                "funding_rate_pct": pair["short_rate_pct"],
+                "meta": {
+                    "spread_pct": pair["spread_pct"],
+                    "net_edge_pct": pair["net_edge_pct"],
+                    "annual_pct": pair["annual_pct"],
+                },
+            }
+        )
 
         meta["pairs_opened"].append(pair)
 
@@ -263,10 +295,12 @@ def _extract_existing_pairs(
     for symbol, pos in positions.items():
         pair_id = pos.get("pair_id")
         if pair_id:
-            pair_positions.setdefault(pair_id, []).append({
-                "symbol": symbol,
-                **pos,
-            })
+            pair_positions.setdefault(pair_id, []).append(
+                {
+                    "symbol": symbol,
+                    **pos,
+                }
+            )
 
     for pair_id, legs in pair_positions.items():
         if len(legs) < 2:
@@ -277,7 +311,9 @@ def _extract_existing_pairs(
             continue
 
         base = _base_from_symbol(long_leg["symbol"])
-        amount = min(float(long_leg.get("amount", 0)), float(short_leg.get("amount", 0)))
+        amount = min(
+            float(long_leg.get("amount", 0)), float(short_leg.get("amount", 0))
+        )
         existing[pair_id] = {
             "base": base,
             "long_venue": long_leg.get("venue", ""),

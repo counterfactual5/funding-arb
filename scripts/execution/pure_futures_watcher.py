@@ -122,9 +122,7 @@ def check_exit(
     short_venue = str(pos.get("short_venue", ""))
     direction = str(pos.get("direction", "forward"))
 
-    current_spread = _get_current_spread(
-        base, long_venue, short_venue, scan_rates
-    )
+    current_spread = _get_current_spread(base, long_venue, short_venue, scan_rates)
     if current_spread is None:
         # 无法获取当前 rate → 不主动退出（保守策略）
         return False, "rate_unavailable"
@@ -136,6 +134,33 @@ def check_exit(
         return True, f"spread_collapse: {current_spread:.4f}% ≤ {exit_edge}%"
 
     return False, ""
+
+
+def estimate_spread_pnl(
+    pos: dict[str, Any],
+    current_long_px: float,
+    current_short_px: float,
+) -> dict[str, Any]:
+    """估算持仓的价差损益。
+
+    价格盈亏 = 开仓时两所价差 - 当前两所价差（按数量折算）
+    """
+    long_price = float(pos.get("long_price", 0))
+    short_price = float(pos.get("short_price", 0))
+    qty = float(pos.get("qty", 0))
+    trade_usd = float(pos.get("trade_usd", 0))
+
+    open_spread = abs(long_price - short_price)
+    close_spread = abs(current_long_px - current_short_px)
+    spread_pnl = (open_spread - close_spread) * qty
+    spread_pnl_pct = (spread_pnl / trade_usd * 100) if trade_usd > 0 else 0.0
+
+    return {
+        "open_spread": open_spread,
+        "close_spread": close_spread,
+        "spread_pnl": spread_pnl,
+        "spread_pnl_pct": spread_pnl_pct,
+    }
 
 
 def _leg_qty_from_snapshot(
@@ -188,7 +213,9 @@ def check_rebalance(
 
     long_notional = long_qty * long_px
     short_notional = short_qty * short_px
-    skew = abs(long_notional - short_notional) / max(long_notional, short_notional) * 100.0
+    skew = (
+        abs(long_notional - short_notional) / max(long_notional, short_notional) * 100.0
+    )
 
     if skew > max_skew_pct:
         qty_part = (
@@ -282,13 +309,15 @@ def check_margin_distance(
                 break
             distance_pct = abs(mark - liq_px) / mark * 100.0
             if distance_pct < alert_distance_pct:
-                alerts.append({
-                    "leg": leg,
-                    "venue": venue_id,
-                    "mark_price": mark,
-                    "liq_price": liq_px,
-                    "distance_pct": round(distance_pct, 2),
-                })
+                alerts.append(
+                    {
+                        "leg": leg,
+                        "venue": venue_id,
+                        "mark_price": mark,
+                        "liq_price": liq_px,
+                        "distance_pct": round(distance_pct, 2),
+                    }
+                )
             break
     return alerts
 
@@ -302,7 +331,9 @@ def watch_cycle(
 ) -> dict[str, Any]:
     """单次 watch 循环：检查所有 open 持仓，决定退出/告警。"""
     pfa = cfg.get("pureFuturesArbitrage") or {}
-    venues = [str(v).lower() for v in pfa.get("venues", ["binance", "bitget", "bybit", "okx"])]
+    venues = [
+        str(v).lower() for v in pfa.get("venues", ["binance", "bitget", "bybit", "okx"])
+    ]
     exit_edge = float(pfa.get("exitThresholdPct", 0.01))
     max_skew_pct = float(pfa.get("rebalanceSkewPct", 1.0))
     check_legs = bool(pfa.get("watcherCheckLegs", True))
@@ -318,7 +349,9 @@ def watch_cycle(
         "checked": 0,
     }
 
-    open_positions = [p for p in load_pure_futures_positions() if p.get("status") == "open"]
+    open_positions = [
+        p for p in load_pure_futures_positions() if p.get("status") == "open"
+    ]
     if not open_positions:
         if verbose:
             print(f"[{_ts_str()}] no open positions", file=sys.stderr)
@@ -387,6 +420,50 @@ def watch_cycle(
             cycle_result["actions"].append(action)
             continue
 
+        # 1b. PnL-based stop loss
+        if not pos_dry_run:
+            long_px = _get_mark_price(pos_long_v, base)
+            short_px = _get_mark_price(pos_short_v, base)
+            if long_px > 0 and short_px > 0:
+                pnl_info = estimate_spread_pnl(pos, long_px, short_px)
+                spread_loss_pct = -pnl_info.get("spread_pnl_pct", 0)  # 正值=亏损
+
+                # 估算累计资金费收益
+                opened_at = int(pos.get("opened_at", 0) or 0)
+                held_hours = (_now_ms() - opened_at) / 3600000.0 if opened_at > 0 else 0
+                interval_h = 8.0
+                periods = max(0, held_hours / interval_h)
+                current_spread = _get_current_spread(
+                    base, pos_long_v, pos_short_v, scan_rates
+                )
+                est_funding_pct = (
+                    (current_spread or 0) * periods if current_spread else 0
+                )
+
+                max_loss_mult = float(pfa.get("maxLossVsFundingMult", 3.0))
+                if (
+                    spread_loss_pct > 0
+                    and est_funding_pct > 0
+                    and spread_loss_pct > est_funding_pct * max_loss_mult
+                ):
+                    action = {
+                        "action": "close",
+                        "position_id": pos_id,
+                        "base": base,
+                        "reason": f"pnl_stop_loss: spread_loss={spread_loss_pct:.4f}% > {max_loss_mult}x est_funding={est_funding_pct:.4f}%",
+                        "pnl_info": pnl_info,
+                    }
+                    send_notification(
+                        "PNL STOP LOSS",
+                        f"Position {pos_id} {base}: "
+                        f"spread_loss={spread_loss_pct:.4f}% > {max_loss_mult}x est_funding={est_funding_pct:.4f}%",
+                        cfg,
+                    )
+                    res = close_pure_futures_pair(pos_id, dry_run=False, config=cfg)
+                    action["result"] = res.to_dict()
+                    cycle_result["actions"].append(action)
+                    continue
+
         # 2. Check leg alive (only for live positions, and only when
         #    both venues' position snapshots fetched successfully)
         pos_long_v = str(pos.get("long_venue", ""))
@@ -428,7 +505,9 @@ def watch_cycle(
                         cfg,
                     )
                     res = close_pure_futures_leg(
-                        pos_id, alive_leg, config=cfg,
+                        pos_id,
+                        alive_leg,
+                        config=cfg,
                         close_reason=f"emergency: {leg_reason}",
                     )
                     action["result"] = res.to_dict()

@@ -6,6 +6,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -16,6 +18,7 @@ from execution.pure_futures_watcher import (
     check_leg_alive,
     check_margin_distance,
     check_rebalance,
+    estimate_spread_pnl,
 )
 
 
@@ -157,6 +160,51 @@ def test_leg_qty_from_snapshot():
     assert _leg_qty_from_snapshot(venue_positions, "okx", "ETH", "long") == 0.0
 
 
+def test_estimate_spread_pnl_profit():
+    """开仓价差大、当前价差小 → 正收益。"""
+    pos = {
+        "long_price": 100.0,
+        "short_price": 101.0,
+        "qty": 2.0,
+        "trade_usd": 2000.0,
+    }
+    result = estimate_spread_pnl(pos, current_long_px=100.5, current_short_px=100.6)
+    assert result["open_spread"] == 1.0
+    assert result["close_spread"] == pytest.approx(0.1)
+    assert result["spread_pnl"] == pytest.approx(1.8)
+    assert result["spread_pnl_pct"] == pytest.approx(0.09)
+
+
+def test_estimate_spread_pnl_loss():
+    """开仓价差小、当前价差大 → 负收益。"""
+    pos = {
+        "long_price": 100.0,
+        "short_price": 101.0,
+        "qty": 2.0,
+        "trade_usd": 2000.0,
+    }
+    result = estimate_spread_pnl(pos, current_long_px=100.0, current_short_px=103.0)
+    assert result["open_spread"] == 1.0
+    assert result["close_spread"] == pytest.approx(3.0)
+    assert result["spread_pnl"] == pytest.approx(-4.0)
+    assert result["spread_pnl_pct"] == pytest.approx(-0.2)
+
+
+def test_estimate_spread_pnl_zero():
+    """价格相同 → 零收益。"""
+    pos = {
+        "long_price": 100.0,
+        "short_price": 101.0,
+        "qty": 1.0,
+        "trade_usd": 1000.0,
+    }
+    result = estimate_spread_pnl(pos, current_long_px=100.0, current_short_px=101.0)
+    assert result["open_spread"] == 1.0
+    assert result["close_spread"] == pytest.approx(1.0)
+    assert result["spread_pnl"] == pytest.approx(0.0)
+    assert result["spread_pnl_pct"] == pytest.approx(0.0)
+
+
 def test_check_rebalance_qty_mismatch(monkeypatch):
     """部分强平导致 short 腿数量缩水 → 触发重平衡。"""
     monkeypatch.setattr(watcher_mod, "_get_mark_price", lambda v, b, q="USDT": 100.0)
@@ -196,7 +244,9 @@ def test_check_margin_distance_alerts_when_close(monkeypatch):
         # long 腿强平价 90 → 距离 10% < 20% 阈值 → 告警
         "okx": [{"symbol": "BTCUSDT", "side": "long", "qty": 1.0, "liq_price": 90.0}],
         # short 腿强平价 150 → 距离 50% → 安全
-        "bybit": [{"symbol": "BTCUSDT", "side": "short", "qty": 1.0, "liq_price": 150.0}],
+        "bybit": [
+            {"symbol": "BTCUSDT", "side": "short", "qty": 1.0, "liq_price": 150.0}
+        ],
     }
     alerts = check_margin_distance(pos, venue_positions, alert_distance_pct=20.0)
     assert len(alerts) == 1
@@ -221,7 +271,9 @@ def test_check_margin_distance_skips_unfetched_venue(monkeypatch):
     monkeypatch.setattr(watcher_mod, "_get_mark_price", lambda v, b, q="USDT": 100.0)
     pos = _pos(qty=1.0)
     venue_positions = {
-        "bybit": [{"symbol": "BTCUSDT", "side": "short", "qty": 1.0, "liq_price": 105.0}],
+        "bybit": [
+            {"symbol": "BTCUSDT", "side": "short", "qty": 1.0, "liq_price": 105.0}
+        ],
     }
     alerts = check_margin_distance(pos, venue_positions, alert_distance_pct=20.0)
     assert len(alerts) == 1 and alerts[0]["leg"] == "short"

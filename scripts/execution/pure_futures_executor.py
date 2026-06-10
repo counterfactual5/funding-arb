@@ -129,6 +129,7 @@ def _check_futures_margin(
         earn_redeemed = _redeem_bitget_earn(quote, earn_shortfall, logs)
         if earn_redeemed > 0:
             import time as _t
+
             _t.sleep(1.0)
             spot_avail += earn_redeemed
 
@@ -136,9 +137,7 @@ def _check_futures_margin(
     if spot_avail >= shortfall:
         try:
             if venue.transfer_asset(quote, shortfall, "spot", "futures"):
-                logs.append(
-                    f"{venue_id}: spot→futures 划转 {shortfall:.2f} {quote}"
-                )
+                logs.append(f"{venue_id}: spot→futures 划转 {shortfall:.2f} {quote}")
                 return True
         except Exception as e:
             logs.append(f"{venue_id}: 划转失败 ({e})")
@@ -153,9 +152,7 @@ _EARN_PRODUCTS = {"USDT": "964334561256718336"}
 _MIN_REDEEM_USDT = 1.0
 
 
-def _redeem_bitget_earn(
-    coin: str, amount: float, logs: list[str]
-) -> float:
+def _redeem_bitget_earn(coin: str, amount: float, logs: list[str]) -> float:
     """从 Bitget 活期理财赎回。成功返回赎回金额，失败返回 0。"""
     pid = _EARN_PRODUCTS.get(coin)
     if not pid:
@@ -164,6 +161,7 @@ def _redeem_bitget_earn(
         return 0.0
     try:
         from venues.bitget import _api_call as _bitget_api
+
         # 查询理财余额
         data = _bitget_api("GET", "/api/v2/earn/account/assets")
         earn_bal = 0.0
@@ -176,11 +174,15 @@ def _redeem_bitget_earn(
             return 0.0
         redeem_amt = min(amount, earn_bal)
         # 赎回
-        result = _bitget_api("POST", "/api/v2/earn/savings/redeem", body={
-            "productId": pid,
-            "periodType": "flexible",
-            "amount": f"{redeem_amt:.2f}",
-        })
+        result = _bitget_api(
+            "POST",
+            "/api/v2/earn/savings/redeem",
+            body={
+                "productId": pid,
+                "periodType": "flexible",
+                "amount": f"{redeem_amt:.2f}",
+            },
+        )
         if result.get("code") == "00000":
             logs.append(f"bitget earn: 赎回 {redeem_amt:.2f} {coin} 到 spot")
             return redeem_amt
@@ -330,7 +332,9 @@ def open_pure_futures_pair(
         if not depth_ok:
             return CrossVenueResult(False, "aborted", logs=logs)
 
-    margin_usd = trade_usd * MARGIN_BUFFER + trade_usd * max(capital_buffer_pct, 0.0) / 100.0
+    margin_usd = (
+        trade_usd * MARGIN_BUFFER + trade_usd * max(capital_buffer_pct, 0.0) / 100.0
+    )
     ok_long = _check_futures_margin(lv, long_venue_id, quote, margin_usd, logs)
     ok_short = _check_futures_margin(sv, short_venue_id, quote, margin_usd, logs)
     if not (ok_long and ok_short):
@@ -424,6 +428,7 @@ def close_pure_futures_pair(
     long_venue: Any = None,
     short_venue: Any = None,
     positions_path: Path = POSITIONS_PATH,
+    warn_spread_widen_pct: float = 0.5,
 ) -> CrossVenueResult:
     """Close an open pure futures pair. Short leg first; rollback by reopening short if long close fails."""
     pos = _get_open_position(position_id, positions_path)
@@ -454,6 +459,21 @@ def close_pure_futures_pair(
     if qty <= 0:
         return CrossVenueResult(False, "aborted", position_id, logs=["持仓数量无效"])
 
+    # ---------- 平仓前价差验证（仅告警，不阻止平仓） ----------
+    open_mark_spread = float(pos.get("mark_spread_pct", 0.0))
+    close_mark_spread = round(
+        abs(long_px - short_px) / max(long_px, short_px) * 100.0, 6
+    )
+    logs: list[str] = []
+    if open_mark_spread > 0 and warn_spread_widen_pct > 0:
+        spread_widen = round(close_mark_spread - open_mark_spread, 4)
+        if spread_widen > warn_spread_widen_pct:
+            logs.append(
+                f"WARN 价差扩大: 开仓 {open_mark_spread:.2f}% → 平仓 {close_mark_spread:.2f}% "
+                f"(扩大 {spread_widen:.2f}%, 阈值 {warn_spread_widen_pct}%)",
+            )
+    # ---------- 价差验证结束 ----------
+
     reason = f"Pure-futures spread close {position_id}"
     short_close = _make_futures_trade(
         base, "close_short", qty, short_px, qty_prec, reason
@@ -461,13 +481,20 @@ def close_pure_futures_pair(
     long_close = _make_futures_trade(base, "close_long", qty, long_px, qty_prec, reason)
     short_market = {base: short_mkt}
     long_market = {base: long_mkt}
-    logs: list[str] = []
     executed: list[dict[str, Any]] = []
 
     if dry_run:
         executed.extend(sv.execute_trades([short_close], short_market, dry_run=True))
         executed.extend(lv.execute_trades([long_close], long_market, dry_run=True))
-        _mark_closed(position_id, {"dry_run": True}, positions_path)
+        _mark_closed(
+            position_id,
+            {
+                "dry_run": True,
+                "open_mark_spread": open_mark_spread,
+                "close_mark_spread": close_mark_spread,
+            },
+            positions_path,
+        )
         logs.append(f"[DRY-RUN] close pure-futures {base} qty={qty}")
         return CrossVenueResult(True, "simulated", position_id, executed, logs)
 
@@ -493,6 +520,8 @@ def close_pure_futures_pair(
             {
                 "short_price": res_short[0].get("exec_price"),
                 "long_price": res_long[0].get("exec_price"),
+                "open_mark_spread": open_mark_spread,
+                "close_mark_spread": close_mark_spread,
             },
             positions_path,
         )
@@ -582,8 +611,11 @@ def close_pure_futures_leg(
     logs.append(f"{venue_id} close_{leg} {qty} {base} 已平（另一腿已消失）")
     _mark_closed(
         position_id,
-        {"single_leg": leg, "reason": close_reason,
-         f"{leg}_price": res[0].get("exec_price")},
+        {
+            "single_leg": leg,
+            "reason": close_reason,
+            f"{leg}_price": res[0].get("exec_price"),
+        },
         positions_path,
     )
     return CrossVenueResult(True, "filled", position_id, res, logs)
@@ -703,9 +735,7 @@ def rebalance_pure_futures_pair(
     res = trim_venue.execute_trades([trade], market, dry_run=False)
     executed.extend(res)
     if not _filled(res):
-        logs.append(
-            f"重平衡失败: {res[0].get('error') if res else 'no result'}"
-        )
+        logs.append(f"重平衡失败: {res[0].get('error') if res else 'no result'}")
         send_notification(
             "Pure Futures Rebalance Failed",
             f"Position {position_id} {base}: {trim_id} {trade_type} {trim_qty} failed; "

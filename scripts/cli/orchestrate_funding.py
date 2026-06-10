@@ -18,6 +18,7 @@
   python3 scripts/cli/orchestrate_funding.py --pure-futures --run-executor --live-trades  # 实盘
   python3 scripts/cli/orchestrate_funding.py --pure-futures --auto-spread-watch # + 后台监听
 """
+
 from __future__ import annotations
 
 import argparse
@@ -46,7 +47,10 @@ from backtest.unified_funding_pool import (  # noqa: E402
 )
 from execution.cross_venue_executor import open_cross_venue_position  # noqa: E402
 from transfer.cross_venue_router import build_plan, execute_plan  # noqa: E402
-from transfer.transfer_providers import get_transfer_provider, poll_deposit_until  # noqa: E402
+from transfer.transfer_providers import (  # noqa: E402
+    get_transfer_provider,
+    poll_deposit_until,
+)
 
 TZ = timezone(timedelta(hours=8))
 Direction = Literal["forward", "reverse", "auto"]
@@ -332,14 +336,18 @@ def _print_pure_futures_plan(
 ) -> None:
     """打印纯永续扫描结果。"""
     now = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
-    all_rows = list(scan_result.get("forward", [])) + list(scan_result.get("reverse", []))
+    all_rows = list(scan_result.get("forward", [])) + list(
+        scan_result.get("reverse", [])
+    )
     all_rows.sort(key=lambda x: -float(x.get("net_edge_pct", 0)))
 
     print(f"\n{'=' * 96}")
     print(f"PURE-FUTURES ORCHESTRATION  —  {now}")
     print(f"{'=' * 96}")
-    print(f"  venues={scan_result.get('venues')}  assets={scan_result.get('total_assets_scanned')}  "
-          f"spreads={scan_result.get('total_spreads_found')}")
+    print(
+        f"  venues={scan_result.get('venues')}  assets={scan_result.get('total_assets_scanned')}  "
+        f"spreads={scan_result.get('total_spreads_found')}"
+    )
 
     if not all_rows:
         print("\n  No profitable spreads found.")
@@ -452,6 +460,7 @@ def _run_pure_futures_mode(args: argparse.Namespace) -> None:
         venues=venues,
         min_spread=min_spread,
         min_edge=min_edge,
+        max_mark_spread_pct=max_mark_spread,
         workers=args.workers,
     )
     elapsed = time.time() - t0
@@ -473,8 +482,8 @@ def _run_pure_futures_mode(args: argparse.Namespace) -> None:
             min_adjusted_edge_pct=min_edge,
         )
         candidates.sort(
-            key=lambda x: -float(
-                x.get("adjusted_net_edge_pct", 0) or x.get("net_edge_pct", 0)
+            key=lambda x: (
+                -float(x.get("adjusted_net_edge_pct", 0) or x.get("net_edge_pct", 0))
             )
         )
 
@@ -516,8 +525,10 @@ def _run_pure_futures_mode(args: argparse.Namespace) -> None:
         # Rebuild argv for watcher
         watcher_cfg = args.config or str(ROOT.parent / PURE_FUTURES_CONFIG)
         watcher_argv = [
-            "--config", watcher_cfg,
-            "--interval", str(getattr(args, "watch_interval", 60)),
+            "--config",
+            watcher_cfg,
+            "--interval",
+            str(getattr(args, "watch_interval", 60)),
         ]
         if not args.live_trades:
             watcher_argv.append("--dry-run")
@@ -530,12 +541,16 @@ def _run_pure_futures_mode(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="资金费率套利编排 scan→transfer→execute")
+    parser = argparse.ArgumentParser(
+        description="资金费率套利编排 scan→transfer→execute"
+    )
     parser.add_argument("--venues", default=",".join(DEFAULT_VENUES))
     parser.add_argument("--entry", "-e", type=float, default=0.05)
     parser.add_argument("--universe-min", "-u", type=float, default=0.03)
     parser.add_argument("--trade-usd", type=float, default=DEFAULT_REFERENCE_TRADE_USD)
-    parser.add_argument("--min-all-in", type=float, default=0.0, help="最低 all-in 净边际 (%%)")
+    parser.add_argument(
+        "--min-all-in", type=float, default=0.0, help="最低 all-in 净边际 (%%)"
+    )
     parser.add_argument("--base", default="", help="指定标的，默认自动选最优")
     parser.add_argument(
         "--direction",
@@ -549,7 +564,9 @@ def main() -> None:
         action="store_true",
         help="真实发起链上提现（默认仅展示计划）",
     )
-    parser.add_argument("--poll-deposit", action="store_true", help="提现后轮询充值到账")
+    parser.add_argument(
+        "--poll-deposit", action="store_true", help="提现后轮询充值到账"
+    )
     parser.add_argument("--poll-timeout", type=int, default=600)
     parser.add_argument(
         "--run-executor",
@@ -572,14 +589,29 @@ def main() -> None:
         action="store_true",
         help="仅扫描纯永续资金费差机会（无现货/借贷/转账），配合 --run-executor 开仓",
     )
-    pf.add_argument("--pf-min-spread", type=float, default=0.05, help="最小 spread %% (default 0.05)")
-    pf.add_argument("--pf-min-edge", type=float, default=0.01, help="最小 net edge %% (default 0.01)")
+    pf.add_argument(
+        "--pf-min-spread",
+        type=float,
+        default=0.05,
+        help="最小 spread %% (default 0.05)",
+    )
+    pf.add_argument(
+        "--pf-min-edge",
+        type=float,
+        default=0.01,
+        help="最小 net edge %% (default 0.01)",
+    )
     pf.add_argument(
         "--auto-spread-watch",
         action="store_true",
         help="--pure-futures 模式下启动后台监听（watcher 进程）",
     )
-    pf.add_argument("--watch-interval", type=float, default=60, help="watcher 检查间隔秒数 (default 60)")
+    pf.add_argument(
+        "--watch-interval",
+        type=float,
+        default=60,
+        help="watcher 检查间隔秒数 (default 60)",
+    )
 
     args = parser.parse_args()
 
@@ -670,7 +702,9 @@ def main() -> None:
         for line in result.logs:
             print(f"    · {line}")
         if result.position_id:
-            print(f"    position_id={result.position_id}  (平仓: cross_venue_trade.py close {result.position_id})")
+            print(
+                f"    position_id={result.position_id}  (平仓: cross_venue_trade.py close {result.position_id})"
+            )
         sys.exit(0 if result.ok else 1)
 
 

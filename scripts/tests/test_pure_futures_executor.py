@@ -34,10 +34,14 @@ class FakeFuturesVenue:
         self.trades: list[dict] = []
         self.initialized: list[str] = []
         self.transfers: list[tuple] = []
-        self.balances = balances if balances is not None else {
-            "spot": 100000.0,
-            "futures": 100000.0,
-        }
+        self.balances = (
+            balances
+            if balances is not None
+            else {
+                "spot": 100000.0,
+                "futures": 100000.0,
+            }
+        )
 
     def fetch_futures_symbol_rules(self, pair: str, cache_sec: int = 3600):
         return {
@@ -162,8 +166,14 @@ def test_close_single_leg_only_touches_that_venue():
     path = _path("single_leg")
     lv, sv = FakeFuturesVenue("okx"), FakeFuturesVenue("bybit")
     res = open_pure_futures_pair(
-        "BTC", "okx", "bybit", 500,
-        dry_run=False, long_venue=lv, short_venue=sv, positions_path=path,
+        "BTC",
+        "okx",
+        "bybit",
+        500,
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
     )
     assert res.ok
     lv.trades.clear()
@@ -171,8 +181,11 @@ def test_close_single_leg_only_touches_that_venue():
 
     # long 腿被强平 → 只平 short 腿
     res2 = close_pure_futures_leg(
-        res.position_id, "short",
-        long_venue=lv, short_venue=sv, positions_path=path,
+        res.position_id,
+        "short",
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
         close_reason="emergency: long_leg_gone@okx",
     )
     assert res2.ok and res2.state == "filled"
@@ -188,12 +201,21 @@ def test_close_single_leg_failure_keeps_position_open():
     lv = FakeFuturesVenue("okx")
     sv = FakeFuturesVenue("bybit", fail_types={"close_short"})
     res = open_pure_futures_pair(
-        "BTC", "okx", "bybit", 500,
-        dry_run=False, long_venue=lv, short_venue=sv, positions_path=path,
+        "BTC",
+        "okx",
+        "bybit",
+        500,
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
     )
     res2 = close_pure_futures_leg(
-        res.position_id, "short",
-        long_venue=lv, short_venue=sv, positions_path=path,
+        res.position_id,
+        "short",
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
     )
     assert not res2.ok and res2.state == "naked"
     rows = load_pure_futures_positions(path)
@@ -488,6 +510,116 @@ def test_open_margin_check_skipped_when_api_fails():
     )
     assert res.ok and res.state == "filled"
     assert any("跳过校验" in log for log in res.logs)
+
+
+def test_close_spread_normal_no_warning():
+    """平仓时价差正常（未明显扩大）→ 无 WARN 日志，正常平仓。"""
+    path = _path("close_spread_ok")
+    lv = FakeFuturesVenue("okx", price=100.0)
+    sv = FakeFuturesVenue("bybit", price=101.0)  # 开仓价差 ~1%
+    res = open_pure_futures_pair(
+        "BTC",
+        "okx",
+        "bybit",
+        500,
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
+    )
+    assert res.ok
+
+    # 平仓时价差未扩大（仍约 1%）
+    res2 = close_pure_futures_pair(
+        res.position_id,
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
+        warn_spread_widen_pct=0.5,
+    )
+    assert res2.ok and res2.state == "filled"
+    assert not any("WARN 价差扩大" in log for log in res2.logs)
+    # 验证 close_info 包含 spread 数据
+    pos = load_pure_futures_positions(path)[0]
+    assert pos["status"] == "closed"
+    assert "open_mark_spread" in pos["close_info"]
+    assert "close_mark_spread" in pos["close_info"]
+
+
+def test_close_spread_widened_warns():
+    """价差扩大超过阈值 → 仍正常平仓，但 logs 中有 WARN。"""
+    path = _path("close_spread_warn")
+    lv = FakeFuturesVenue("okx", price=100.0)
+    sv = FakeFuturesVenue("bybit", price=100.5)  # 开仓价差 ~0.5%
+    res = open_pure_futures_pair(
+        "BTC",
+        "okx",
+        "bybit",
+        500,
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
+    )
+    assert res.ok
+
+    # 模拟持仓期间价差扩大：bybit 价格跳涨
+    sv.price = 103.0  # 平仓价差 ~3%
+
+    res2 = close_pure_futures_pair(
+        res.position_id,
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
+        warn_spread_widen_pct=0.5,
+    )
+    assert res2.ok and res2.state == "filled"
+    assert any("WARN 价差扩大" in log for log in res2.logs)
+    pos = load_pure_futures_positions(path)[0]
+    assert pos["close_info"]["open_mark_spread"] > 0
+    assert (
+        pos["close_info"]["close_mark_spread"] > pos["close_info"]["open_mark_spread"]
+    )
+
+
+def test_close_no_mark_spread_field_graceful():
+    """position 记录中没有 mark_spread_pct → 不报错，优雅降级。"""
+    path = _path("close_no_spread")
+    lv = FakeFuturesVenue("okx", price=100.0)
+    sv = FakeFuturesVenue("bybit", price=100.5)
+    res = open_pure_futures_pair(
+        "BTC",
+        "okx",
+        "bybit",
+        500,
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
+    )
+    assert res.ok
+
+    # 手动删除 mark_spread_pct 模拟旧数据
+    import json
+
+    rows = json.loads(path.read_text())
+    del rows[0]["mark_spread_pct"]
+    path.write_text(json.dumps(rows))
+
+    # 价差再扩大，但不应报错
+    sv.price = 105.0
+    res2 = close_pure_futures_pair(
+        res.position_id,
+        dry_run=False,
+        long_venue=lv,
+        short_venue=sv,
+        positions_path=path,
+        warn_spread_widen_pct=0.5,
+    )
+    assert res2.ok and res2.state == "filled"
+    assert not any("WARN 价差扩大" in log for log in res2.logs)
 
 
 def test_rebalance_dry_run_no_record_change():
