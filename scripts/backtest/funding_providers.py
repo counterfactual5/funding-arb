@@ -412,12 +412,21 @@ class OkxFundingProvider(FundingProvider):
         if interval_ms <= 0:
             interval_ms = _DEFAULT_INTERVAL_MS
         last_settle_ts = next_ts - interval_ms if next_ts else 0
+        mark_price = 0.0
+        try:
+            mp_url = f"{self.BASE}/api/v5/public/mark-price?instId={inst}&instType=SWAP"
+            mp_payload = _http_get_with_retry(mp_url)
+            mp_rows = mp_payload.get("data", [])
+            if mp_rows:
+                mark_price = float(mp_rows[0].get("markPx", 0) or 0)
+        except Exception:
+            pass
         return {
             "rate_pct": rate,
             "last_settle_ts": last_settle_ts,
             "next_funding_ts": next_ts,
             "interval_ms": interval_ms,
-            "mark_price": 0.0,
+            "mark_price": mark_price,
         }
 
     def fetch_since(

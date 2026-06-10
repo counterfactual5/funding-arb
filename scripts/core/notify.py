@@ -88,8 +88,7 @@ def send_notification(
         payload = json.dumps(
             {
                 "chat_id": chat_id,
-                "text": f"🚨 *{title}*\n\n{message}",
-                "parse_mode": "Markdown",
+                "text": f"🚨 {title}\n\n{message}",
             }
         ).encode("utf-8")
 

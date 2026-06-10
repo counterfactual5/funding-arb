@@ -48,6 +48,14 @@ from venues.base import make_pair  # noqa: E402
 TZ = timezone(timedelta(hours=8))
 WATCHER_LOG = SCRIPTS_DIR / "data" / "pure-futures" / "watcher.jsonl"
 
+_venue_cache: dict[str, Any] = {}
+
+
+def _get_venue_cached(venue_id: str):
+    if venue_id not in _venue_cache:
+        _venue_cache[venue_id] = get_venue({"venue": {"type": venue_id}})
+    return _venue_cache[venue_id]
+
 
 def _append_log(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,7 +97,7 @@ def _fetch_positions_from_venue(
     否则查询故障会被误判为「腿消失」触发误平仓。
     """
     try:
-        v = get_venue({"venue": {"type": venue_id}})
+        v = _get_venue_cached(venue_id)
         return v.fetch_futures_positions(quote)
     except Exception as e:
         print(f"[{_ts_str()}] {venue_id} fetch positions error: {e}", file=sys.stderr)
@@ -99,7 +107,7 @@ def _fetch_positions_from_venue(
 def _get_mark_price(venue_id: str, base: str, quote: str = "USDT") -> float:
     """获取单所永续标记价。"""
     try:
-        v = get_venue({"venue": {"type": venue_id}})
+        v = _get_venue_cached(venue_id)
         pair = make_pair(base, quote)
         if getattr(v, "venue_id", "") == "okx" or venue_id == "okx":
             pair = f"{base.upper()}-{quote.upper()}-SWAP"
@@ -143,15 +151,20 @@ def estimate_spread_pnl(
     """估算持仓的价差损益。
 
     价格盈亏 = 开仓时两所价差 - 当前两所价差（按数量折算）
+    forward: spread 收窄 → 盈利; reverse: spread 收窄 → 亏损
     """
     long_price = float(pos.get("long_price", 0))
     short_price = float(pos.get("short_price", 0))
     qty = float(pos.get("qty", 0))
     trade_usd = float(pos.get("trade_usd", 0))
+    direction = str(pos.get("direction", "forward")).lower()
 
+    # Forward: long on cheaper venue, short on expensive → profit when spread narrows
+    # Reverse: positions flipped → loss when spread narrows
+    sign = 1.0 if direction == "forward" else -1.0
     open_spread = abs(long_price - short_price)
     close_spread = abs(current_long_px - current_short_px)
-    spread_pnl = (open_spread - close_spread) * qty
+    spread_pnl = sign * (open_spread - close_spread) * qty
     spread_pnl_pct = (spread_pnl / trade_usd * 100) if trade_usd > 0 else 0.0
 
     return {

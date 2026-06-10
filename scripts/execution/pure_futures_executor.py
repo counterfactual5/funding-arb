@@ -13,8 +13,11 @@ MVP 范围：
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -52,30 +55,63 @@ def load_pure_futures_positions(path: Path = POSITIONS_PATH) -> list[dict[str, A
 def _save_positions(
     positions: list[dict[str, Any]], path: Path = POSITIONS_PATH
 ) -> None:
+    """Atomic write: write to temp file then rename (crash-safe)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(positions, ensure_ascii=False, indent=2), encoding="utf-8"
+    content = json.dumps(positions, ensure_ascii=False, indent=2)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(path.parent), prefix=".positions-", suffix=".tmp"
     )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _with_position_lock(path: Path):
+    """Acquire exclusive lock on position file for safe concurrent access."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(".lock")
+    lock_fd = open(lock_path, "w")
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    return lock_fd
 
 
 def _record_position(record: dict[str, Any], path: Path = POSITIONS_PATH) -> None:
-    positions = load_pure_futures_positions(path)
-    positions.append(record)
-    _save_positions(positions, path)
+    lock_fd = _with_position_lock(path)
+    try:
+        positions = load_pure_futures_positions(path)
+        positions.append(record)
+        _save_positions(positions, path)
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 def _mark_closed(
     position_id: str, close_info: dict[str, Any], path: Path = POSITIONS_PATH
 ) -> bool:
-    positions = load_pure_futures_positions(path)
-    for p in positions:
-        if p.get("id") == position_id and p.get("status") == "open":
-            p["status"] = "closed"
-            p["closed_at"] = int(time.time() * 1000)
-            p["close_info"] = close_info
-            _save_positions(positions, path)
-            return True
-    return False
+    lock_fd = _with_position_lock(path)
+    try:
+        positions = load_pure_futures_positions(path)
+        for p in positions:
+            if p.get("id") == position_id and p.get("status") == "open":
+                p["status"] = "closed"
+                p["closed_at"] = int(time.time() * 1000)
+                p["close_info"] = close_info
+                _save_positions(positions, path)
+                return True
+        return False
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 def _get_open_position(
@@ -90,13 +126,18 @@ def _get_open_position(
 def _update_position(
     position_id: str, updates: dict[str, Any], path: Path = POSITIONS_PATH
 ) -> bool:
-    positions = load_pure_futures_positions(path)
-    for p in positions:
-        if p.get("id") == position_id and p.get("status") == "open":
-            p.update(updates)
-            _save_positions(positions, path)
-            return True
-    return False
+    lock_fd = _with_position_lock(path)
+    try:
+        positions = load_pure_futures_positions(path)
+        for p in positions:
+            if p.get("id") == position_id and p.get("status") == "open":
+                p.update(updates)
+                _save_positions(positions, path)
+                return True
+        return False
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 def _venue(venue_id: str, injected: Any = None):
@@ -624,7 +665,7 @@ def close_pure_futures_leg(
 def _leg_qty_from_venue(
     venue: Any, base: str, side: str, quote: str = "USDT"
 ) -> float | None:
-    """从交易所 API 读取某条腿的实际持仓数量；失败返回 None。"""
+    """从交易所 API 读取某条腿的实际持仓数量；失败/未找到返回 None。"""
     try:
         positions = venue.fetch_futures_positions(quote)
     except Exception:
@@ -635,7 +676,7 @@ def _leg_qty_from_venue(
         p_side = str(p.get("side", "")).lower()
         if sym.startswith(base_u) and p_side == side:
             return abs(float(p.get("qty", 0) or p.get("amount", 0)))
-    return 0.0
+    return None
 
 
 def rebalance_pure_futures_pair(

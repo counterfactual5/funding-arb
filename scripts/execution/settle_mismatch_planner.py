@@ -90,8 +90,12 @@ def analyze_settle_mismatch(
     is_mismatch = abs(long_interval_h - short_interval_h) > 0.5
 
     # 标准化到 8h 窗口
-    long_rate_per_8h = long_rate_pct * (8.0 / long_interval_h) if long_interval_h > 0 else 0.0
-    short_rate_per_8h = short_rate_pct * (8.0 / short_interval_h) if short_interval_h > 0 else 0.0
+    long_rate_per_8h = (
+        long_rate_pct * (8.0 / long_interval_h) if long_interval_h > 0 else 0.0
+    )
+    short_rate_per_8h = (
+        short_rate_pct * (8.0 / short_interval_h) if short_interval_h > 0 else 0.0
+    )
     spread_per_8h = abs(short_rate_per_8h - long_rate_per_8h)
 
     if not is_mismatch:
@@ -118,6 +122,26 @@ def analyze_settle_mismatch(
     # 有错配: 分析现金流
     shorter_interval = min(long_interval_h, short_interval_h)
     longer_interval = max(long_interval_h, short_interval_h)
+
+    if shorter_interval <= 0 or longer_interval <= 0:
+        return MismatchAnalysis(
+            base=base,
+            long_venue=long_venue,
+            short_venue=short_venue,
+            long_rate_pct=long_rate_pct,
+            short_rate_pct=short_rate_pct,
+            long_interval_h=long_interval_h,
+            short_interval_h=short_interval_h,
+            is_mismatch=False,
+            long_rate_per_8h_pct=0.0,
+            short_rate_per_8h_pct=0.0,
+            spread_per_8h_pct=0.0,
+            max_cumulative_outflow_pct=0.0,
+            adjusted_net_edge_pct=0.0,
+            capital_buffer_pct=0.0,
+            viable=False,
+            note="invalid interval (<=0)",
+        )
 
     # 在一个长周期内，短周期腿结算次数
     settlements_in_longer = max(1, round(longer_interval / shorter_interval))
@@ -155,7 +179,11 @@ def analyze_settle_mismatch(
         notes.append(f"high cumulative outflow {max_cumulative:.3f}%")
         # Not auto-reject, but warn
 
-    note = "; ".join(notes) if notes else f"mismatch but viable ({settlements_in_longer}x per cycle)"
+    note = (
+        "; ".join(notes)
+        if notes
+        else f"mismatch but viable ({settlements_in_longer}x per cycle)"
+    )
 
     return MismatchAnalysis(
         base=base,
