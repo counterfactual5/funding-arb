@@ -420,6 +420,11 @@ def watch_cycle(
             cycle_result["actions"].append(action)
             continue
 
+        # 2. Check leg alive (only for live positions, and only when
+        #    both venues' position snapshots fetched successfully)
+        pos_long_v = str(pos.get("long_venue", ""))
+        pos_short_v = str(pos.get("short_venue", ""))
+
         # 1b. PnL-based stop loss
         if not pos_dry_run:
             long_px = _get_mark_price(pos_long_v, base)

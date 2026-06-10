@@ -305,8 +305,8 @@ def _extract_existing_pairs(
     for pair_id, legs in pair_positions.items():
         if len(legs) < 2:
             continue
-        long_leg = next((l for l in legs if l.get("side") == "long"), None)
-        short_leg = next((l for l in legs if l.get("side") == "short"), None)
+        long_leg = next((leg for leg in legs if leg.get("side") == "long"), None)
+        short_leg = next((leg for leg in legs if leg.get("side") == "short"), None)
         if not long_leg or not short_leg:
             continue
 

@@ -51,7 +51,6 @@ DEFAULT_JSONL_FILE = "data/pure_futures_spreads.jsonl"
 HOURS_PER_YEAR = 365.0 * 24.0
 
 from core.fee_providers import (
-    FUTURES_TAKER_FEE_PCT,
     build_fee_cache_from_by_base,
     pair_open_taker_fee_pct,
 )
@@ -394,7 +393,7 @@ def _print_human(result: dict[str, Any], verbose: bool = False) -> None:
     else:
         pairs = result.get("venue_pair_stats", [])
         if pairs and verbose:
-            print(f"\n  VENUE PAIR FREQUENCY (top 10):")
+            print("\n  VENUE PAIR FREQUENCY (top 10):")
             for p in pairs[:10]:
                 print(f"    {p['pair']:<16s} {p['count']} pairs")
 
