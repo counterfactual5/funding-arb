@@ -1,0 +1,18 @@
+name: funding-arb CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - run: python3 -m pytest scripts/tests/test_funding_arbitrage.py scripts/tests/test_reverse_margin.py scripts/tests/test_transfer_chain.py -q

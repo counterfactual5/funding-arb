@@ -1,0 +1,26 @@
+{
+  "strategyId": "cash-and-carry-reverse",
+  "strategy": "cash_and_carry",
+  "assets": ["ETH", "SOL", "AVAX"],
+  "cash": "USDT",
+  "dry_run": true,
+  "enableReverseArbitrage": true,
+  "initialCapitalUsd": 10000.0,
+  "borrowAnnualRatePct": 8.0,
+  "takerFeeRate": 0.0005,
+  "runIntervalMinutes": 30,
+  "maxDrawdownKillSwitchPct": 0.15,
+  "venue": { "type": "binance", "quote": "USDT", "market": "spot" },
+  "cashAndCarry": {
+    "tradeUsd": 1000.0,
+    "entryFundingRatePct": 0.05,
+    "exitFundingRatePct": 0.01,
+    "reverseEntryFundingRatePct": -0.05,
+    "reverseExitFundingRatePct": -0.01,
+    "minNetEdgePct": 0.02,
+    "minReverseSpreadPct": 0.02,
+    "maxMinutesToSettlement": 60,
+    "forwardRequiredCashMult": 2.1,
+    "reverseRequiredCashMult": 1.5
+  }
+}

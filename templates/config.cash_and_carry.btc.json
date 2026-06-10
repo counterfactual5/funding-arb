@@ -1,0 +1,25 @@
+{
+  "strategyId": "cash-and-carry-btc",
+  "strategy": "cash_and_carry",
+  "assets": ["BTC"],
+  "cash": "USDT",
+  "dry_run": true,
+  "enableReverseArbitrage": false,
+  "initialCapitalUsd": 10000.0,
+  "borrowAnnualRatePct": 8.0,
+  "takerFeeRate": 0.0005,
+  "runIntervalMinutes": 30,
+  "maxDrawdownKillSwitchPct": 0.15,
+  "venue": { "type": "binance", "quote": "USDT", "market": "spot" },
+  "cashAndCarry": {
+    "tradeUsd": 1000.0,
+    "entryFundingRatePct": 0.05,
+    "exitFundingRatePct": 0.01,
+    "reverseEntryFundingRatePct": -999.0,
+    "reverseExitFundingRatePct": -0.01,
+    "minNetEdgePct": 0.02,
+    "minReverseSpreadPct": 0.02,
+    "forwardRequiredCashMult": 2.1,
+    "reverseRequiredCashMult": 1.5
+  }
+}

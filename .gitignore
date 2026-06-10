@@ -1,0 +1,40 @@
+# Runtime data (paper/live state, journals, backtest output)
+data/
+runs/
+strategy-runs/
+*.jsonl
+
+# Secrets
+.env
+.env.local
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Funding-Arb cron manifest (machine-local job IDs)
+funding-arb-cron-manifest.json
+
+# Kline cache (re-fetchable)
+cache/
+*.log
+
+# Scratchpad tests
+sandbox_tests/
+infinite_opt.log
+
+# Config Backups
+*.tmp
+*.bak
+
+# Scratchpad tests
+scratch/

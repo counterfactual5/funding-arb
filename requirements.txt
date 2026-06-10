@@ -1,0 +1,4 @@
+# CEX Adaptive DCA - Dependencies
+# Core runtime: zero external dependencies (pure stdlib)
+# Dev/testing dependencies below:
+pytest>=7.0

@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""扫描多交易所资金费率套利机会。
+
+正向套利（正资金费率）：买现货 + 开空合约 → 需要现货市场
+反向套利（负资金费率）：借币卖出 + 开多合约 → 需要可借币，不是仅有现货
+
+用法:
+  python3 scripts/cli/scan_funding_arbitrage.py                 # 全部交易所
+  python3 scripts/cli/scan_funding_arbitrage.py --venue bitget  # 指定交易所
+  python3 scripts/cli/scan_funding_arbitrage.py --entry 0.03    # 自定义入场线
+  python3 scripts/cli/scan_funding_arbitrage.py --json           # JSON 输出
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from backtest.borrow_providers import borrow_cost_per_period, get_borrow_provider
+from backtest.funding_providers import get_funding_provider
+from market.parallel_fetch import run_io_parallel
+
+TZ = timezone(timedelta(hours=8))
+
+# 默认阈值
+DEFAULT_ENTRY = 0.05
+DEFAULT_EXIT = 0.01
+DEFAULT_UNIVERSE_MIN = 0.03
+DEFAULT_BORROW_ANNUAL_PCT = 8.0
+DEFAULT_IO_WORKERS = 8
+HOURS_PER_YEAR = 365.0 * 24.0
+# taker 费率分现货/合约两套：现货腿普遍 0.1%，远高于合约腿
+SPOT_TAKER_FEE = {
+    "bitget": 0.001,
+    "binance": 0.001,
+    "okx": 0.001,
+    "bybit": 0.001,
+}
+FUTURES_TAKER_FEE = {
+    "bitget": 0.0006,
+    "binance": 0.0005,
+    "okx": 0.0005,
+    "bybit": 0.00055,
+}
+BLACKLIST = {"USDC", "FDUSD", "TUSD", "BTCDOM", "BUSD"}
+
+VENUE_CLASSES = {
+    "bitget": "venues.bitget.BitgetSpotVenue",
+    "bybit": "venues.bybit.BybitSpotVenue",
+    "okx": "venues.okx.OkxSpotVenue",
+    "binance": "venues.binance.BinanceSpotVenue",
+}
+
+
+def _get_venue(venue: str):
+    """动态导入并实例化 venue."""
+    parts = VENUE_CLASSES[venue].rsplit(".", 1)
+    mod = __import__(parts[0], fromlist=[parts[1]])
+    return getattr(mod, parts[1])()
+
+
+def _ts_to_ymd(ts_ms: int) -> str:
+    if ts_ms <= 0:
+        return "N/A"
+    return datetime.fromtimestamp(ts_ms / 1000, TZ).strftime("%m-%d %H:%M")
+
+
+def _mins_to_settle(ts_ms: int) -> str:
+    if ts_ms <= 0:
+        return "?"
+    mins = (ts_ms - time.time() * 1000) / 60000
+    if mins < 0:
+        return "settling"
+    if mins < 60:
+        return f"{mins:.0f}m"
+    return f"{mins / 60:.1f}h"
+
+
+def _borrow_pct_per_interval(annual_pct: float, interval_h: float) -> float:
+    """借币年化利率归一到与资金费相同的结算周期（百分比 / 每 interval）。"""
+    if annual_pct <= 0 or interval_h <= 0:
+        return 0.0
+    return (annual_pct / HOURS_PER_YEAR) * interval_h
+
+
+def scan_venue(
+    venue: str,
+    entry: float,
+    exit_rate: float,
+    universe_min: float,
+    borrow_fallback_annual_pct: float = DEFAULT_BORROW_ANNUAL_PCT,
+    max_workers: int = DEFAULT_IO_WORKERS,
+) -> dict[str, Any]:
+    """扫描单个交易所，返回结构化结果。"""
+    fp = get_funding_provider(venue)
+    rows = fp.fetch_all("USDT")
+    imap = fp.fetch_interval_map("USDT")
+    spot_fee = SPOT_TAKER_FEE.get(venue, 0.001)
+    futures_fee = FUTURES_TAKER_FEE.get(venue, 0.0006)
+    two_leg_fee = (spot_fee + futures_fee) * 100  # 现货腿 + 合约腿，百分比
+
+    positive: list[dict[str, Any]] = []
+    negative: list[dict[str, Any]] = []
+
+    for r in rows:
+        sym = r["symbol"].upper()
+        if not sym.endswith("USDT"):
+            continue
+        base = sym[:-4]
+        if not base or base in BLACKLIST:
+            continue
+
+        rate = r["rate_pct"]
+        next_ts = r.get("next_funding_ts", 0) or 0
+        interval_h = imap.get(sym, 8.0)
+        annual = abs(rate) * (24 / interval_h) * 365
+        mark = r.get("mark_price", 0) or 0
+
+        entry_obj: dict[str, Any] = {
+            "base": base,
+            "symbol": sym,
+            "rate_pct": rate,
+            "next_ts": next_ts,
+            "interval_h": interval_h,
+            "annual_pct": round(annual, 1),
+            "mark_price": mark,
+            "fee_pct": round(two_leg_fee, 4),
+        }
+
+        if rate > 0:
+            entry_obj["has_spot"] = False
+            entry_obj["spot_price"] = 0.0
+            entry_obj["net_edge_pct"] = round(rate - two_leg_fee, 4)
+            positive.append(entry_obj)
+        else:
+            entry_obj["borrowable"] = False
+            entry_obj["borrow_daily_pct"] = 0.0
+            entry_obj["borrow_annual_pct"] = 0.0
+            entry_obj["borrow_per_period_pct"] = 0.0
+            entry_obj["net_edge_pct"] = round(abs(rate) - two_leg_fee, 4)
+            negative.append(entry_obj)
+
+    positive.sort(key=lambda x: -x["rate_pct"])
+    negative.sort(key=lambda x: x["rate_pct"])
+
+    # 正向：检查现货（仅阈值以上；优先 bulk tickers）
+    pos_bases = [x["base"] for x in positive if x["rate_pct"] >= universe_min]
+    bulk_tickers: dict[str, float] = {}
+    if pos_bases:
+        try:
+            v = _get_venue(venue)
+            if hasattr(v, "get_all_spot_tickers"):
+                try:
+                    bulk_tickers = v.get_all_spot_tickers()
+                except Exception:
+                    pass
+            for x in positive:
+                if x["base"] not in pos_bases:
+                    continue
+                if bulk_tickers:
+                    px = float(bulk_tickers.get(x["symbol"], 0) or 0)
+                    x["spot_price"] = px
+                    x["has_spot"] = px > 0
+                else:
+                    try:
+                        px = v.get_ticker(x["symbol"])
+                        x["spot_price"] = px
+                        x["has_spot"] = px > 0
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # 反向：检查可借性 + 借币利率（并行 per-coin）
+    neg_bases = [x["base"] for x in negative if x["rate_pct"] <= -universe_min]
+    borrow_map: dict[str, dict[str, Any]] = {}
+    if neg_bases:
+        try:
+            bp = get_borrow_provider(venue)
+            borrow_map = bp.fetch_borrow_info(neg_bases, max_workers=max_workers)
+        except Exception as e:
+            print(
+                f"[{venue}] borrow info fetch failed ({e}); "
+                f"reverse candidates will all show not-borrowable",
+                file=sys.stderr,
+            )
+        for x in negative:
+            if x["base"] not in neg_bases:
+                continue
+            info = borrow_map.get(x["base"], {})
+            borrowable = bool(info.get("borrowable"))
+            daily = float(info.get("daily_rate_pct", 0) or 0)
+            annual_borrow = float(info.get("annual_rate_pct", 0) or 0)
+            if borrowable and annual_borrow <= 0 and daily <= 0:
+                annual_borrow = borrow_fallback_annual_pct
+                daily = annual_borrow / 365.0
+            elif borrowable and annual_borrow <= 0 and daily > 0:
+                annual_borrow = daily * 365.0
+            borrow_period = (
+                borrow_cost_per_period(daily, x["interval_h"])
+                if daily > 0
+                else _borrow_pct_per_interval(annual_borrow, x["interval_h"])
+            )
+            net = abs(x["rate_pct"]) - borrow_period - two_leg_fee
+            x["borrowable"] = borrowable
+            x["borrow_daily_pct"] = round(daily, 4)
+            x["borrow_annual_pct"] = round(annual_borrow, 2)
+            x["borrow_per_period_pct"] = round(borrow_period, 4)
+            x["net_edge_pct"] = round(net, 4)
+            if info.get("max_borrow"):
+                x["max_borrow"] = info.get("max_borrow")
+
+    # 回填缺失的下次结算时间（如 Bitget 批量接口不带），仅限阈值内候选
+    missing_ts = [
+        x for x in (positive + negative)
+        if not x["next_ts"] and abs(x["rate_pct"]) >= universe_min
+    ][:30]
+    if missing_ts:
+        def _fill_ts(x: dict[str, Any]) -> tuple[str, int]:
+            snap = fp.fetch_current(x["symbol"])
+            return x["symbol"], int(snap.get("next_funding_ts", 0) or 0)
+
+        ts_map = run_io_parallel(
+            missing_ts, lambda x: _fill_ts(x), max_workers=max_workers, swallow_errors=True
+        )
+        for x in missing_ts:
+            x["next_ts"] = ts_map.get(x["symbol"], 0) or 0
+
+    return {
+        "venue": venue,
+        "total_pairs": len(positive) + len(negative),
+        "spot_fee_pct": round(spot_fee * 100, 4),
+        "futures_fee_pct": round(futures_fee * 100, 4),
+        "two_leg_fee_pct": round(two_leg_fee, 4),
+        "borrow_fallback_annual_pct": borrow_fallback_annual_pct,
+        "entry_threshold": entry,
+        "forward_candidates": [x for x in positive if x["rate_pct"] >= entry and x.get("has_spot")],
+        "forward_no_spot": [x for x in positive if x["rate_pct"] >= entry and not x.get("has_spot")],
+        "reverse_candidates": [x for x in negative if x["rate_pct"] <= -entry and x.get("borrowable")],
+        "reverse_not_borrowable": [
+            x for x in negative if x["rate_pct"] <= -entry and not x.get("borrowable")
+        ],
+        "near_forward": [
+            x for x in positive
+            if entry > x["rate_pct"] >= universe_min and x.get("has_spot")
+        ],
+        "near_reverse": [
+            x for x in negative
+            if -entry < x["rate_pct"] <= -universe_min and x.get("borrowable")
+        ],
+        "positive_all": positive,
+        "negative_all": negative,
+    }
+
+
+def print_report(result: dict[str, Any], verbose: bool = False):
+    """打印人类可读报告。"""
+    v = result["venue"].upper()
+    fee = result["two_leg_fee_pct"]
+    fwd = result["forward_candidates"]
+    fwd_ns = result["forward_no_spot"]
+    rev = result["reverse_candidates"]
+    rev_nb = result["reverse_not_borrowable"]
+    near_fwd = result["near_forward"]
+    near_rev = result["near_reverse"]
+
+    print(f"\n{'='*70}")
+    print(
+        f"{v}  pairs={result['total_pairs']}  "
+        f"spot_fee={result['spot_fee_pct']}%  futures_fee={result['futures_fee_pct']}%  two_leg={fee}%"
+    )
+    print(f"{'='*70}")
+
+    if fwd:
+        print(f"\n  FORWARD (买现货+开空) — {len(fwd)} tradeable:")
+        for x in fwd:
+            net = x["net_edge_pct"]
+            flag = "PROFIT" if net > 0 else "LOSS-after-fee"
+            print(
+                f"    {x['base']:10s} rate={x['rate_pct']:+.4f}%  APR~{x['annual_pct']:>6.0f}%  "
+                f"net={net:+.4f}% [{flag}]  px={x['spot_price']:.6f}  settle={_mins_to_settle(x['next_ts'])}"
+            )
+    if fwd_ns and verbose:
+        print(f"\n  FORWARD no-spot ({len(fwd_ns)}):")
+        for x in fwd_ns[:8]:
+            print(f"    {x['base']:10s} rate={x['rate_pct']:+.4f}%  APR~{x['annual_pct']:>6.0f}%")
+
+    if rev:
+        print(f"\n  REVERSE (借币卖出+开多) — {len(rev)} borrowable:")
+        for x in rev:
+            net = x["net_edge_pct"]
+            flag = "PROFIT" if net > 0 else "LOSS-after-cost"
+            borrow = x.get("borrow_per_period_pct", 0)
+            print(
+                f"    {x['base']:10s} rate={x['rate_pct']:+.4f}%  borrow={borrow:.4f}%/period  "
+                f"APR~{x['annual_pct']:>6.0f}%  net={net:+.4f}% [{flag}]  "
+                f"borrow_y={x.get('borrow_annual_pct', 0):.0f}%  settle={_mins_to_settle(x['next_ts'])}"
+            )
+    if rev_nb and verbose:
+        print(f"\n  REVERSE not-borrowable ({len(rev_nb)}) — 有负费率但无法借币做空:")
+        for x in rev_nb[:8]:
+            print(
+                f"    {x['base']:10s} rate={x['rate_pct']:+.4f}%  APR~{x['annual_pct']:>6.0f}%  "
+                f"(spot may exist but margin borrow unavailable)"
+            )
+
+    if near_fwd:
+        print(f"\n  NEAR FORWARD (fee-adj break-even):")
+        for x in near_fwd[:5]:
+            print(
+                f"    {x['base']:10s} rate={x['rate_pct']:+.4f}%  net={x['net_edge_pct']:+.4f}%  "
+                f"px={x['spot_price']:.6f}"
+            )
+    if near_rev:
+        print(f"\n  NEAR REVERSE (borrowable, below entry):")
+        for x in near_rev[:5]:
+            print(
+                f"    {x['base']:10s} rate={x['rate_pct']:+.4f}%  borrow={x.get('borrow_per_period_pct', 0):.4f}%  "
+                f"net={x['net_edge_pct']:+.4f}%"
+            )
+
+    total_fwd = len(fwd)
+    total_rev = len(rev)
+    profit_fwd = len([x for x in fwd if x["net_edge_pct"] > 0])
+    profit_rev = len([x for x in rev if x["net_edge_pct"] > 0])
+    print(
+        f"\n  SUMMARY: forward={total_fwd}({profit_fwd} profitable)  "
+        f"reverse={total_rev}({profit_rev} profitable after borrow cost)"
+    )
+    if not fwd and not rev:
+        print(f"  No actionable opportunities at entry={result['entry_threshold']}%.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="扫描多交易所资金费率套利机会")
+    parser.add_argument("--venue", "-v", help="指定交易所 (bitget/bybit/okx/binance)，默认全部")
+    parser.add_argument("--entry", "-e", type=float, default=DEFAULT_ENTRY, help=f"入场费率阈值 (默认 {DEFAULT_ENTRY}%%)")
+    parser.add_argument("--exit", "-x", type=float, default=DEFAULT_EXIT, help="退出费率阈值")
+    parser.add_argument("--universe-min", "-u", type=float, default=DEFAULT_UNIVERSE_MIN, help="入池最低费率")
+    parser.add_argument(
+        "--borrow-fallback",
+        type=float,
+        default=DEFAULT_BORROW_ANNUAL_PCT,
+        help=f"Reverse 借币年化利率 fallback（%%/年，无 live 借率时用，默认 {DEFAULT_BORROW_ANNUAL_PCT}）",
+    )
+    parser.add_argument("--verbose", "-V", action="store_true", help="显示不可执行的候选（无现货/不可借）")
+    parser.add_argument("--workers", "-w", type=int, default=DEFAULT_IO_WORKERS, help="并行 I/O 线程数")
+    parser.add_argument("--json", action="store_true", help="JSON 输出")
+    args = parser.parse_args()
+
+    venues = [args.venue] if args.venue else ["binance", "bitget", "bybit", "okx"]
+
+    def _scan_one(v: str) -> tuple[str, dict[str, Any]]:
+        return v, scan_venue(
+            v, args.entry, args.exit, args.universe_min, args.borrow_fallback, args.workers
+        )
+
+    scanned = run_io_parallel(
+        venues, _scan_one, max_workers=len(venues), swallow_errors=True
+    )
+    results = [scanned[v] for v in venues if v in scanned]
+    for v in venues:
+        if v not in scanned:
+            print(f"{v.upper()} error: scan failed", file=sys.stderr)
+
+    if args.json:
+        out = []
+        for r in results:
+            out.append({
+                "venue": r["venue"],
+                "two_leg_fee_pct": r["two_leg_fee_pct"],
+                "forward": r["forward_candidates"],
+                "reverse": r["reverse_candidates"],
+                "reverse_not_borrowable": r["reverse_not_borrowable"],
+            })
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        now = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
+        print(f"\nFunding Rate Arbitrage Scanner — {now}")
+        print(f"Entry: >= {args.entry}% | Exit: <= {args.exit}% | Universe min: {args.universe_min}%")
+        print(f"Reverse borrow fallback: {args.borrow_fallback}%/yr (live 借率优先)")
+        print("Forward = spot required | Reverse = margin borrow required (not just spot listing)")
+        for r in results:
+            print_report(r, verbose=args.verbose)
+
+
+if __name__ == "__main__":
+    main()

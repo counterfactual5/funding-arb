@@ -1,0 +1,33 @@
+{
+  "strategyId": "cash-and-carry-screener",
+  "strategy": "cash_and_carry",
+  "cash": "USDT",
+  "dry_run": true,
+  "enableReverseArbitrage": false,
+  "initialCapitalUsd": 30000.0,
+  "borrowAnnualRatePct": { "default": 12.0, "BTC": 6.0, "ETH": 6.0 },
+  "takerFeeRate": 0.0005,
+  "runIntervalMinutes": 30,
+  "maxDrawdownKillSwitchPct": 0.15,
+  "venue": { "type": "binance", "quote": "USDT", "market": "spot" },
+
+  "autoUniverse": true,
+  "universeTopN": 12,
+  "universeMinFundingPct": 0.03,
+  "universeBlacklist": ["USDC", "FDUSD", "TUSD"],
+
+  "crossAssetArbitrage": {
+    "maxConcurrentPairs": 3,
+    "tradeUsdPerSlot": 3000.0,
+    "entryFundingRatePct": 0.05,
+    "exitFundingRatePct": 0.01,
+    "reverseEntryFundingRatePct": -999.0,
+    "reverseExitFundingRatePct": -0.01,
+    "minReverseSpreadPct": 0.03,
+    "minNetEdgePct": 0.02,
+    "preemptionFrictionBufferPct": 0.40,
+    "maxMinutesToSettlement": 30,
+    "forwardRequiredCashMult": 2.1,
+    "reverseRequiredCashMult": 1.5
+  }
+}
