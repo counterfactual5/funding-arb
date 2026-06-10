@@ -150,7 +150,7 @@ def _backfill_missing_settle_times(
         snap = fp.fetch_current(symbol)
         return f"{venue}:{base}", int(snap.get("next_funding_ts", 0) or 0)
 
-    ts_map = run_io_parallel(
+    ts_map = run_io_parallel(  # type: ignore[arg-type]
         missing, _fetch_one, max_workers=workers, swallow_errors=True
     )
     for venue, symbol, base in missing:

@@ -14,11 +14,10 @@
     from venues.price_oracle import fetch_price_with_fallback
     px, meta = fetch_price_with_fallback("BTC", "USDT", primary="bitget")
 """
+
 from __future__ import annotations
 
-import json
 import time
-import urllib.request
 from typing import Any
 
 from venues.http_util import http_get_json
@@ -99,12 +98,21 @@ def fetch_price_with_fallback(
         try:
             px, _ = fn(asset, quote)
         except Exception as e:
-            attempts.append({"source": src_name, "ok": False, "error": str(e)[:80], "ms": int((time.time() - t0) * 1000)})
+            attempts.append(
+                {
+                    "source": src_name,
+                    "ok": False,
+                    "error": str(e)[:80],
+                    "ms": int((time.time() - t0) * 1000),
+                }
+            )
             continue
         ms = int((time.time() - t0) * 1000)
         if px > 0:
             got_prices.append((px, src_name))
-            attempts.append({"source": src_name, "ok": True, "price": round(px, 6), "ms": ms})
+            attempts.append(
+                {"source": src_name, "ok": True, "price": round(px, 6), "ms": ms}
+            )
             # 首个成功源即可返回（主源已优先）
             break
         attempts.append({"source": src_name, "ok": False, "error": "price=0", "ms": ms})
