@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """CEX venue factory."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -8,7 +9,6 @@ from venues.base import CexVenue, resolve_venue_config
 from venues.binance import BinanceSpotVenue
 from venues.bitget import BitgetSpotVenue
 from venues.bybit import BybitSpotVenue
-from venues.hyperliquid import HyperliquidVenue
 from venues.okx import OkxSpotVenue
 
 _REGISTRY: dict[str, type] = {
@@ -16,7 +16,6 @@ _REGISTRY: dict[str, type] = {
     "binance": BinanceSpotVenue,
     "bybit": BybitSpotVenue,
     "okx": OkxSpotVenue,
-    "hyperliquid": HyperliquidVenue,
 }
 
 
@@ -27,9 +26,16 @@ def supported_venues() -> list[str]:
 def get_venue(cfg: dict[str, Any]) -> CexVenue:
     venue_cfg = resolve_venue_config(cfg)
     vtype = str(venue_cfg.get("type", "bitget")).strip().lower()
+    # Lazy-load Hyperliquid (requires local skill module)
+    if vtype == "hyperliquid" and "hyperliquid" not in _REGISTRY:
+        from venues.hyperliquid import HyperliquidVenue
+
+        _REGISTRY["hyperliquid"] = HyperliquidVenue
     cls = _REGISTRY.get(vtype)
     if cls is None:
-        raise ValueError(f"不支持的交易所 venue.type={vtype!r}，可选: {', '.join(supported_venues())}")
+        raise ValueError(
+            f"不支持的交易所 venue.type={vtype!r}，可选: {', '.join(supported_venues())}"
+        )
     return cls()
 
 
