@@ -80,7 +80,11 @@ def _with_position_lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(".lock")
     lock_fd = open(lock_path, "w")
-    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    except BaseException:
+        lock_fd.close()
+        raise
     return lock_fd
 
 
