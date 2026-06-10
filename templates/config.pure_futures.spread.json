@@ -1,0 +1,31 @@
+{
+  "strategy": "pure_futures_spread",
+  "strategyId": "pure-futures-spread",
+  "dry_run": true,
+  "cash": "USDT",
+  "venue": { "type": "binance" },
+  "pureFuturesArbitrage": {
+    "venues": ["binance", "bitget", "bybit", "okx"],
+    "maxConcurrentPairs": 3,
+    "tradeUsdPerPair": 500.0,
+    "minSpreadPct": 0.05,
+    "minNetEdgePct": 0.01,
+    "exitThresholdPct": 0.01,
+    "maxMarkSpreadPct": 1.0,
+    "allowSettleMismatch": false,
+    "scanIntervalMinutes": 5,
+    "jsonlFile": "data/pure_futures_spreads.jsonl",
+
+    "feeRates": {
+      "bitget": 0.06,
+      "binance": 0.05,
+      "okx": 0.05,
+      "bybit": 0.055
+    },
+
+    "watcherCheckLegs": true,
+    "rebalanceSkewPct": 1.0,
+    "autoRebalance": false,
+    "workers": 4
+  }
+}

@@ -6,17 +6,24 @@
   2. 检查各所 USDT 余额，不足则规划最低费链划转
   3. 同所路由：调用 run_cash_and_carry（paper/live）
   4. 跨所路由：--run-executor 调 cross_venue_executor 自动双腿（--live-trades 实盘）
+  5. --pure-futures: 纯永续资金费差扫描+执行（无现货/借贷/转账）
 
 用法:
   python3 scripts/cli/orchestrate_funding.py --venues bitget,bybit
   python3 scripts/cli/orchestrate_funding.py --base BTC --trade-usd 500 --direction forward
   python3 scripts/cli/orchestrate_funding.py --execute-transfer --poll-deposit   # 真实提现+轮询
   python3 scripts/cli/orchestrate_funding.py --run-executor --config templates/config.cash_and_carry.bitget.json
+  python3 scripts/cli/orchestrate_funding.py --pure-futures                     # 纯永续扫描
+  python3 scripts/cli/orchestrate_funding.py --pure-futures --run-executor      # + 自动开仓
+  python3 scripts/cli/orchestrate_funding.py --pure-futures --run-executor --live-trades  # 实盘
+  python3 scripts/cli/orchestrate_funding.py --pure-futures --auto-spread-watch # + 后台监听
 """
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
 import subprocess
 import sys
 import time
@@ -49,6 +56,7 @@ VENUE_TEMPLATES = {
     "okx": "templates/config.cash_and_carry.okx.json",
     "binance": "templates/config.cash_and_carry.binance.reverse.json",
 }
+PURE_FUTURES_CONFIG = "templates/config.pure_futures.spread.json"
 
 
 @dataclass
@@ -318,6 +326,42 @@ def _print_plan(plan: OrchestrationPlan) -> None:
         print("\n  [DRY-RUN] 未发起划转或下单")
 
 
+def _print_pure_futures_plan(
+    scan_result: dict[str, Any],
+    top: int = 10,
+) -> None:
+    """打印纯永续扫描结果。"""
+    now = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
+    all_rows = list(scan_result.get("forward", [])) + list(scan_result.get("reverse", []))
+    all_rows.sort(key=lambda x: -float(x.get("net_edge_pct", 0)))
+
+    print(f"\n{'=' * 96}")
+    print(f"PURE-FUTURES ORCHESTRATION  —  {now}")
+    print(f"{'=' * 96}")
+    print(f"  venues={scan_result.get('venues')}  assets={scan_result.get('total_assets_scanned')}  "
+          f"spreads={scan_result.get('total_spreads_found')}")
+
+    if not all_rows:
+        print("\n  No profitable spreads found.")
+        return
+
+    print(f"\n  Top {top} candidates:")
+    print(
+        f"  {'#':>3s}  {'asset':<8s} {'dir':<8s} {'long@':>8s} {'short@':>8s} "
+        f"{'spread':>8s} {'fee':>6s} {'net_edge':>9s} {'APY':>7s} {'mismatch':>8s}"
+    )
+    print("  " + "-" * 90)
+    for i, x in enumerate(all_rows[:top], 1):
+        mismatch_str = "YES" if x.get("settle_mismatch") else ""
+        print(
+            f"  {i:>3d}  {x['base']:<8s} {x.get('direction', ''):<8s} "
+            f"{x.get('long_venue', ''):>8s} {x.get('short_venue', ''):>8s} "
+            f"{x.get('spread_pct', 0):7.4f}% {x.get('fee_pct', 0):5.3f}% "
+            f"{x.get('net_edge_pct', 0):+8.4f}% {x.get('annual_apy_pct', 0):6.0f}% "
+            f"{mismatch_str:>8s}"
+        )
+
+
 def _run_transfers(
     plan: OrchestrationPlan,
     *,
@@ -367,6 +411,123 @@ def _run_executor(config_path: Path, verbose: bool) -> int:
     return subprocess.call(cmd)
 
 
+def _run_pure_futures_mode(args: argparse.Namespace) -> None:
+    """--pure-futures 模式：扫描永续价差 → 可选开仓 → 可选启动 watcher。"""
+    from cli.scan_pure_futures_spreads import scan_pure_futures_spreads  # noqa: E402
+    from execution.pure_futures_executor import open_pure_futures_pair  # noqa: E402
+    from execution.settle_mismatch_planner import (  # noqa: E402
+        effective_trade_usd,
+        filter_candidates_with_mismatch,
+    )
+
+    venues = [v.strip().lower() for v in args.venues.split(",") if v.strip()]
+    min_spread = float(getattr(args, "pf_min_spread", 0.05))
+    min_edge = float(getattr(args, "pf_min_edge", 0.01))
+
+    # Load config for pure-futures if available
+    cfg: dict[str, Any] = {}
+    cfg_path = Path(args.config) if args.config else None
+    if cfg_path and cfg_path.exists():
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    else:
+        default_cfg = ROOT.parent / PURE_FUTURES_CONFIG
+        if default_cfg.exists():
+            cfg = json.loads(default_cfg.read_text(encoding="utf-8"))
+
+    pfa = cfg.get("pureFuturesArbitrage") or {}
+    if not args.config:
+        # Allow CLI flags to override config
+        pfa.setdefault("venues", venues)
+        pfa.setdefault("tradeUsdPerPair", args.trade_usd)
+
+    trade_usd = float(pfa.get("tradeUsdPerPair", args.trade_usd))
+    max_pairs = int(pfa.get("maxConcurrentPairs", 3))
+    exit_edge = float(pfa.get("exitThresholdPct", 0.01))
+    max_mark_spread = float(pfa.get("maxMarkSpreadPct", 1.0))
+    allow_mismatch = bool(pfa.get("allowSettleMismatch", False))
+
+    t0 = time.time()
+    print(f"Scanning {len(venues)} venues for pure-futures spreads...", file=sys.stderr)
+    scan = scan_pure_futures_spreads(
+        venues=venues,
+        min_spread=min_spread,
+        min_edge=min_edge,
+        workers=args.workers,
+    )
+    elapsed = time.time() - t0
+    print(f"Scan done in {elapsed:.1f}s", file=sys.stderr)
+
+    if args.json:
+        # JSON output
+        print(json.dumps(scan, ensure_ascii=False, indent=2))
+    else:
+        _print_pure_futures_plan(scan)
+
+    # Run executor: open top-N pairs
+    if args.run_executor:
+        all_rows = list(scan.get("forward", [])) + list(scan.get("reverse", []))
+        candidates = filter_candidates_with_mismatch(
+            all_rows,
+            allow_mismatch=allow_mismatch,
+            max_cumulative_outflow_pct=0.5,
+            min_adjusted_edge_pct=min_edge,
+        )
+        candidates.sort(
+            key=lambda x: -float(
+                x.get("adjusted_net_edge_pct", 0) or x.get("net_edge_pct", 0)
+            )
+        )
+
+        opened = 0
+        for row in candidates[:max_pairs]:
+            dry_run = not args.live_trades
+            row_trade_usd = effective_trade_usd(trade_usd, row)
+            res = open_pure_futures_pair(
+                str(row["base"]),
+                str(row["long_venue"]),
+                str(row["short_venue"]),
+                row_trade_usd,
+                dry_run=dry_run,
+                direction=str(row.get("direction", "forward")),
+                max_mark_spread_pct=max_mark_spread,
+                config=cfg,
+            )
+            status = "OK" if res.ok else f"FAIL({res.state})"
+            edge = float(
+                row.get("adjusted_net_edge_pct", 0) or row.get("net_edge_pct", 0)
+            )
+            print(
+                f"  OPEN {row['base']} long@{row['long_venue']} short@{row['short_venue']} "
+                f"edge={edge:+.4f}% usd={row_trade_usd:.0f} → {status} {res.position_id}"
+            )
+            if res.ok:
+                opened += 1
+            for log in res.logs:
+                print(f"    · {log}")
+
+        if not args.live_trades:
+            print(f"\n  [DRY-RUN] {opened} pairs simulated")
+
+    # Start watcher if requested
+    if getattr(args, "auto_spread_watch", False):
+        from execution.pure_futures_watcher import main as watcher_main  # noqa: E402
+
+        # Rebuild argv for watcher
+        watcher_cfg = args.config or str(ROOT.parent / PURE_FUTURES_CONFIG)
+        watcher_argv = [
+            "--config", watcher_cfg,
+            "--interval", str(getattr(args, "watch_interval", 60)),
+        ]
+        if not args.live_trades:
+            watcher_argv.append("--dry-run")
+        if args.verbose:
+            watcher_argv.append("--verbose")
+
+        print(f"\n  Starting watcher (config={watcher_cfg})...", file=sys.stderr)
+        sys.argv = ["pure_futures_watcher"] + watcher_argv
+        raise SystemExit(watcher_main())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="资金费率套利编排 scan→transfer→execute")
     parser.add_argument("--venues", default=",".join(DEFAULT_VENUES))
@@ -392,17 +553,41 @@ def main() -> None:
     parser.add_argument(
         "--run-executor",
         action="store_true",
-        help="同所路由运行 run_cash_and_carry；跨所路由运行 cross_venue_executor",
+        help="同所路由运行 run_cash_and_carry；跨所路由运行 cross_venue_executor；"
+        " --pure-futures 时自动开仓 top-N 对",
     )
     parser.add_argument(
         "--live-trades",
         action="store_true",
         help="跨所执行真实下单（默认双腿 dry-run 模拟）",
     )
-    parser.add_argument("--config", default="", help="run_cash_and_carry 配置路径")
+    parser.add_argument("--config", default="", help="配置文件路径")
     parser.add_argument("--verbose", "-V", action="store_true")
+
+    # ── Pure Futures 选项 ────────────────────────────────────────────────
+    pf = parser.add_argument_group("pure-futures", "纯永续资金费差套利选项")
+    pf.add_argument(
+        "--pure-futures",
+        action="store_true",
+        help="仅扫描纯永续资金费差机会（无现货/借贷/转账），配合 --run-executor 开仓",
+    )
+    pf.add_argument("--pf-min-spread", type=float, default=0.05, help="最小 spread %% (default 0.05)")
+    pf.add_argument("--pf-min-edge", type=float, default=0.01, help="最小 net edge %% (default 0.01)")
+    pf.add_argument(
+        "--auto-spread-watch",
+        action="store_true",
+        help="--pure-futures 模式下启动后台监听（watcher 进程）",
+    )
+    pf.add_argument("--watch-interval", type=float, default=60, help="watcher 检查间隔秒数 (default 60)")
+
     args = parser.parse_args()
 
+    # ── Pure Futures 快速路径 ────────────────────────────────────────────
+    if args.pure_futures:
+        _run_pure_futures_mode(args)
+        return
+
+    # ── 以下为原有 cash-and-carry 逻辑 ──────────────────────────────────
     venues = tuple(v.strip().lower() for v in args.venues.split(",") if v.strip())
     dry_run = not args.execute_transfer
     base = args.base.strip().upper() or None

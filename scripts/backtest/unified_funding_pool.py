@@ -5,6 +5,7 @@
   - 正向：在 funding 最高的 venue 开空合约，在现货可用且成本最低的 venue 买现货
   - 反向：在 funding 最低（最负）的 venue 开多合约，在可借且借率最低的 venue 借币卖出
   - 三所（bitget/okx/bybit）抽象为一个整体路由表，不必同一所完成两腿
+  - 纯永续：perp long + perp short，利用两所 funding rate 差异，无现货/借贷
 """
 from __future__ import annotations
 
@@ -432,6 +433,127 @@ class UnifiedFundingPool:
                 })
         out.sort(key=lambda x: -x["spread_pct"])
         return out
+
+    # ── Pure Futures Spread ────────────────────────────────────────────
+
+    def best_pure_futures_spread(
+        self,
+        base: str,
+        min_spread_pct: float = 0.10,
+    ) -> dict[str, Any] | None:
+        """同资产跨所最优纯永续资金费差（perp long + perp short）。
+
+        在 rate 高的交易所做多（收到 funding），rate 低的交易所做空（少付 funding）。
+        双腿都是 perp，无现货/借贷/转账，完全 delta-neutral。
+
+        Returns dict with spread details, or None if no profitable pair exists.
+        """
+        legs = self.legs_by_base.get(base, [])
+        if len(legs) < 2:
+            return None
+
+        best: dict[str, Any] | None = None
+        for i, long_leg in enumerate(legs):
+            for short_leg in legs[i + 1:]:
+                # Convention: spread = higher_rate - lower_rate
+                # long at lower rate (pays less), short at higher rate (receives more)
+                if long_leg.rate_pct >= short_leg.rate_pct:
+                    long_l, short_l = short_leg, long_leg
+                else:
+                    long_l, short_l = long_leg, short_leg
+
+                spread = short_l.rate_pct - long_l.rate_pct
+                if spread <= min_spread_pct:
+                    continue
+
+                fee = _futures_fee_pct(long_l.venue) + _futures_fee_pct(short_l.venue)
+                net_edge = spread - fee
+                if net_edge <= 0:
+                    continue
+
+                interval_h = max(long_l.interval_h, short_l.interval_h)
+                annual = (net_edge / 100.0) * (24.0 / interval_h) * 365.0 * 100.0
+
+                if best is None or net_edge > best["net_edge_pct"]:
+                    best = {
+                        "base": base,
+                        "long_venue": long_l.venue,
+                        "short_venue": short_l.venue,
+                        "long_rate_pct": long_l.rate_pct,
+                        "short_rate_pct": short_l.rate_pct,
+                        "spread_pct": round(spread, 4),
+                        "total_fee_pct": round(fee, 4),
+                        "net_edge_pct": round(net_edge, 4),
+                        "annual_pct": round(annual, 1),
+                        "long_interval_h": long_l.interval_h,
+                        "short_interval_h": short_l.interval_h,
+                        "long_mark_price": long_l.mark_price,
+                        "short_mark_price": short_l.mark_price,
+                        "next_funding_ts": max(long_l.next_funding_ts, short_l.next_funding_ts),
+                    }
+        return best
+
+    def funding_spread_matrix_pure(self, base: str) -> list[dict[str, Any]]:
+        """构建纯永续资金费差矩阵（所有交易所对，含净边际）。
+
+        Returns list sorted by net_edge descending. Each item has the same
+        shape as best_pure_futures_spread().
+        """
+        legs = self.legs_by_base.get(base, [])
+        if len(legs) < 2:
+            return []
+
+        pairs: list[dict[str, Any]] = []
+        for i, long_leg in enumerate(legs):
+            for short_leg in legs[i + 1:]:
+                if long_leg.rate_pct >= short_leg.rate_pct:
+                    long_l, short_l = short_leg, long_leg
+                else:
+                    long_l, short_l = long_leg, short_leg
+
+                spread = short_l.rate_pct - long_l.rate_pct
+                fee = _futures_fee_pct(long_l.venue) + _futures_fee_pct(short_l.venue)
+                net_edge = spread - fee
+
+                if net_edge <= 0:
+                    continue
+
+                interval_h = max(long_l.interval_h, short_l.interval_h)
+                annual = (net_edge / 100.0) * (24.0 / interval_h) * 365.0 * 100.0
+
+                pairs.append({
+                    "base": base,
+                    "long_venue": long_l.venue,
+                    "short_venue": short_l.venue,
+                    "long_rate_pct": long_l.rate_pct,
+                    "short_rate_pct": short_l.rate_pct,
+                    "spread_pct": round(spread, 4),
+                    "total_fee_pct": round(fee, 4),
+                    "net_edge_pct": round(net_edge, 4),
+                    "annual_pct": round(annual, 1),
+                    "long_interval_h": long_l.interval_h,
+                    "short_interval_h": short_l.interval_h,
+                    "long_mark_price": long_l.mark_price,
+                    "short_mark_price": short_l.mark_price,
+                    "next_funding_ts": max(long_leg.next_funding_ts, short_leg.next_funding_ts),
+                })
+
+        return sorted(pairs, key=lambda x: -x["net_edge_pct"])
+
+    def scan_pure_futures_routes(
+        self,
+        min_spread_pct: float = 0.05,
+    ) -> list[dict[str, Any]]:
+        """扫描所有资产的纯永续最优配对。"""
+        if not self.legs_by_base:
+            self.refresh()
+        results: list[dict[str, Any]] = []
+        for base in self.legs_by_base:
+            best = self.best_pure_futures_spread(base, min_spread_pct=min_spread_pct)
+            if best:
+                results.append(best)
+        results.sort(key=lambda x: -x["net_edge_pct"])
+        return results
 
     def _best_single_net(
         self, legs: list[VenueLeg], direction: Direction, entry: float
