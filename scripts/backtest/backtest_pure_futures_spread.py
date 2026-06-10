@@ -338,7 +338,8 @@ def run_backtest(
                 total_fee = pair.open_fee_pct * 2  # open + close
                 net_pnl = pair.accumulated_funding_pct - total_fee
                 pnl_usd = pair.amount_usd * net_pnl / 100.0
-                capital += pnl_usd
+                # 归还开仓时锁定的保证金 + 结算盈亏
+                capital += pair.amount_usd + pnl_usd
 
                 closed_trades.append(ClosedTrade(
                     pair_id=pair_id,

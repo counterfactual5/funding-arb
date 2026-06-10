@@ -11,6 +11,8 @@
     跨过结算边界时应用最近快照费率——如此组合，资金费累计与真实
     已结算序列完全一致。
   - 快照网格 = 所有腿结算时间的并集（取整到分钟去重）。
+  - 上市前空窗 / 数据洞（相邻结算间隔 > 8h×1.5）期间该腿视为不可交易，
+    避免把首笔结算费率向前桥接产生幻影资金费累计。
   - 已知局限：价差正负反转时 long/short 腿排序翻转，原配对 key 消失，
     回测会以 spread_disappeared 平仓（结果等价于价差崩塌退出）。
 """
@@ -85,18 +87,32 @@ def fetch_leg_history(
     return rows
 
 
+# 主流所最大结算周期 8h；超出（含宽限）视为上市前空窗或数据洞
+MAX_SETTLE_INTERVAL_H = 8.0
+GAP_GRACE = 1.5
+
+
+def _snap_interval(gap_h: float) -> float:
+    """把结算间隔吸附到常见档位 (1/2/4/8h)，吸收毫秒级抖动。"""
+    for cand in (1.0, 2.0, 4.0, 8.0):
+        if abs(gap_h - cand) < 0.25 * cand:
+            return cand
+    return max(1.0, float(round(gap_h)))
+
+
 def infer_interval_h(rows: list[dict[str, Any]]) -> float:
-    """从相邻结算时间差推断结算周期，吸附到常见档位 (1/2/4/8h)。"""
+    """从相邻结算时间差推断结算周期（全局中位数，仅作首点 fallback）。
+
+    注意：币种可能中途切换周期（如 ID 8h→4h→1h），全局中位数会失真，
+    build_snapshots 内按相邻结算的局部间隔逐点推断，只有序列首点无前驱
+    时才回退到这里。
+    """
     if len(rows) < 3:
         return 8.0
     diffs = sorted(
         (rows[i + 1]["ts"] - rows[i]["ts"]) / 3600000.0 for i in range(len(rows) - 1)
     )
-    med = diffs[len(diffs) // 2]
-    for cand in (1.0, 2.0, 4.0, 8.0):
-        if abs(med - cand) < 0.25 * cand:
-            return cand
-    return max(1.0, float(round(med)))
+    return _snap_interval(diffs[len(diffs) // 2])
 
 
 def build_snapshots(
@@ -120,10 +136,21 @@ def build_snapshots(
     snapshots: list[dict[str, Any]] = []
     for t in sorted(grid):
         by_base: dict[str, dict[str, dict[str, Any]]] = {}
-        for (venue, base), (ts_list, rates, interval_h) in legs.items():
+        for (venue, base), (ts_list, rates, fallback_interval) in legs.items():
             idx = bisect.bisect_left(ts_list, t)
             if idx >= len(ts_list):
                 continue  # 该腿历史已结束
+            if idx > 0:
+                gap_h = (ts_list[idx] - ts_list[idx - 1]) / 3600000.0
+                if gap_h > MAX_SETTLE_INTERVAL_H * GAP_GRACE:
+                    continue  # 相邻结算间隔异常大 → 数据洞，剔除避免幻影累计
+                # 周期可能中途切换（8h→4h→1h），按局部相邻间隔逐点推断
+                interval_h = _snap_interval(gap_h)
+            else:
+                # t 在首次结算之前：仅当处于首个结算周期内才视为已上市
+                if (ts_list[0] - t) / 3600000.0 > fallback_interval * GAP_GRACE:
+                    continue
+                interval_h = fallback_interval
             by_base.setdefault(base, {})[venue.lower()] = {
                 "symbol": f"{base}USDT",
                 "rate_pct": rates[idx],
