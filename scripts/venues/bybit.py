@@ -311,6 +311,29 @@ class BybitSpotVenue:
             pass
         return {"balances": balances, "futures_positions": positions}
 
+    def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
+        """USDT 永续持仓列表（单端点，失败抛异常）。"""
+        pos_data = _api_call(
+            "GET",
+            "/v5/position/list",
+            params={"category": "linear", "settleCoin": quote.upper()},
+        )
+        out: list[dict[str, Any]] = []
+        for pos in pos_data.get("result", {}).get("list", []) or []:
+            qty = abs(float(pos.get("size", 0) or 0))
+            if qty <= 1e-12:
+                continue
+            out.append({
+                "symbol": str(pos.get("symbol", "")).upper(),
+                "side": "long" if str(pos.get("side", "")).lower() == "buy" else "short",
+                "qty": qty,
+                "entry_price": float(pos.get("avgPrice", 0) or 0),
+                "liq_price": float(pos.get("liqPrice", 0) or 0),
+                "leverage": float(pos.get("leverage", 1) or 1),
+                "unrealized_pnl": float(pos.get("unrealisedPnl", 0) or 0),
+            })
+        return out
+
     def initialize_futures_symbol(self, pair: str) -> None:
         if pair in _initialized_symbols:
             return

@@ -284,6 +284,10 @@ class BybitFundingProvider(FundingProvider):
 class OkxFundingProvider(FundingProvider):
     venue_id = "okx"
     BASE = "https://www.okx.com"
+    _ANY_CACHE_TTL_S = 60.0
+
+    def __init__(self) -> None:
+        self._any_cache: tuple[float, list[dict[str, Any]]] | None = None
 
     def _inst_id(self, symbol: str) -> str:
         sym = symbol.upper()
@@ -292,39 +296,49 @@ class OkxFundingProvider(FundingProvider):
             return f"{base}-USDT-SWAP"
         return sym
 
-    def fetch_all(self, quote: str = "USDT") -> list[dict[str, Any]]:
-        """OKX 不支持 instType=SWAP 批量 funding；先拉 instruments 再并行逐币查询。"""
-        from market.parallel_fetch import run_io_parallel
+    def _fetch_any(self) -> list[dict[str, Any]]:
+        """instId=ANY 一次拉全市场 funding（fetch_all/interval_map 共享 60s 缓存）。"""
+        now = time.time()
+        if self._any_cache and now - self._any_cache[0] < self._ANY_CACHE_TTL_S:
+            return self._any_cache[1]
+        url = f"{self.BASE}/api/v5/public/funding-rate?instId=ANY"
+        payload = _http_get_with_retry(url)
+        rows = payload.get("data", []) if isinstance(payload, dict) else []
+        self._any_cache = (now, rows)
+        return rows
 
+    def fetch_all(self, quote: str = "USDT") -> list[dict[str, Any]]:
+        """批量端点 instId=ANY：1 次请求替代逐币并行（~400 合约 <1s）。"""
         quote_u = quote.upper()
-        inst_url = f"{self.BASE}/api/v5/public/instruments?instType=SWAP"
-        payload = _http_get_with_retry(inst_url)
-        insts: list[str] = []
-        for row in payload.get("data", []) if isinstance(payload, dict) else []:
+        out: list[dict[str, Any]] = []
+        for row in self._fetch_any():
             inst = str(row.get("instId", ""))
             if not inst.endswith(f"-{quote_u}-SWAP"):
                 continue
-            state = str(row.get("state", "live")).lower()
-            if state and state != "live":
-                continue
-            insts.append(inst)
-
-        def _one(inst: str) -> tuple[str, dict[str, Any]]:
             base = inst.split("-")[0]
-            sym = f"{base}{quote_u}"
-            snap = self.fetch_current(sym)
-            return sym, {
-                "symbol": sym,
-                "rate_pct": float(snap.get("rate_pct", 0) or 0),
-                "next_funding_ts": int(snap.get("next_funding_ts", 0) or 0),
-                "mark_price": float(snap.get("mark_price", 0) or 0),
-            }
+            out.append({
+                "symbol": f"{base}{quote_u}",
+                # fundingRate = 当期费率，将于 fundingTime 结算
+                "rate_pct": float(row.get("fundingRate", 0) or 0) * 100,
+                "next_funding_ts": int(row.get("fundingTime", 0) or 0),
+                "mark_price": 0.0,
+            })
+        return out
 
-        if not insts:
-            return []
-        workers = min(8, len(insts))
-        fetched = run_io_parallel(insts, _one, max_workers=workers, swallow_errors=True)
-        return list(fetched.values())
+    def fetch_interval_map(self, quote: str = "USDT") -> dict[str, float]:
+        """从 ANY 响应的 fundingTime/nextFundingTime 差推断各币结算周期。"""
+        quote_u = quote.upper()
+        out: dict[str, float] = {}
+        for row in self._fetch_any():
+            inst = str(row.get("instId", ""))
+            if not inst.endswith(f"-{quote_u}-SWAP"):
+                continue
+            ft = int(row.get("fundingTime", 0) or 0)
+            nft = int(row.get("nextFundingTime", 0) or 0)
+            if ft > 0 and nft > ft:
+                base = inst.split("-")[0]
+                out[f"{base}{quote_u}"] = round((nft - ft) / 3600000.0, 2)
+        return out
 
     def fetch_current(self, symbol: str) -> dict[str, Any]:
         inst = self._inst_id(symbol)

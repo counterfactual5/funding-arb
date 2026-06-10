@@ -14,6 +14,7 @@ from execution.pure_futures_watcher import (
     _leg_qty_from_snapshot,
     check_exit,
     check_leg_alive,
+    check_margin_distance,
     check_rebalance,
 )
 
@@ -185,3 +186,42 @@ def test_check_rebalance_equal_qty_no_skew(monkeypatch):
     )
     assert need is False
     assert long_n == short_n == 100.0
+
+
+def test_check_margin_distance_alerts_when_close(monkeypatch):
+    """标记价距强平价 <阈值 → 告警；远离 → 无告警。"""
+    monkeypatch.setattr(watcher_mod, "_get_mark_price", lambda v, b, q="USDT": 100.0)
+    pos = _pos(qty=1.0)
+    venue_positions = {
+        # long 腿强平价 90 → 距离 10% < 20% 阈值 → 告警
+        "okx": [{"symbol": "BTCUSDT", "side": "long", "qty": 1.0, "liq_price": 90.0}],
+        # short 腿强平价 150 → 距离 50% → 安全
+        "bybit": [{"symbol": "BTCUSDT", "side": "short", "qty": 1.0, "liq_price": 150.0}],
+    }
+    alerts = check_margin_distance(pos, venue_positions, alert_distance_pct=20.0)
+    assert len(alerts) == 1
+    assert alerts[0]["leg"] == "long"
+    assert alerts[0]["venue"] == "okx"
+    assert abs(alerts[0]["distance_pct"] - 10.0) < 1e-9
+
+
+def test_check_margin_distance_no_liq_price(monkeypatch):
+    """交易所未返回强平价（全仓低杠杆常见）→ 不告警不报错。"""
+    monkeypatch.setattr(watcher_mod, "_get_mark_price", lambda v, b, q="USDT": 100.0)
+    pos = _pos(qty=1.0)
+    venue_positions = {
+        "okx": [{"symbol": "BTCUSDT", "side": "long", "qty": 1.0, "liq_price": 0.0}],
+        "bybit": [{"symbol": "BTCUSDT", "side": "short", "qty": 1.0}],
+    }
+    assert check_margin_distance(pos, venue_positions) == []
+
+
+def test_check_margin_distance_skips_unfetched_venue(monkeypatch):
+    """venue 快照缺失（拉取失败）→ 跳过该腿而非误判。"""
+    monkeypatch.setattr(watcher_mod, "_get_mark_price", lambda v, b, q="USDT": 100.0)
+    pos = _pos(qty=1.0)
+    venue_positions = {
+        "bybit": [{"symbol": "BTCUSDT", "side": "short", "qty": 1.0, "liq_price": 105.0}],
+    }
+    alerts = check_margin_distance(pos, venue_positions, alert_distance_pct=20.0)
+    assert len(alerts) == 1 and alerts[0]["leg"] == "short"

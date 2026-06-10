@@ -26,6 +26,12 @@
     "watcherCheckLegs": true,
     "rebalanceSkewPct": 1.0,
     "autoRebalance": false,
+    "marginAlertDistancePct": 20.0,
+
+    "depthCheckEnabled": true,
+    "depthMaxDevPct": 0.3,
+    "depthMinMultiple": 3.0,
+
     "workers": 4
   }
 }

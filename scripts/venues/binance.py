@@ -479,6 +479,25 @@ class BinanceSpotVenue:
             "futures_positions": positions
         }
 
+    def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
+        """USDT 永续持仓列表（单端点，失败抛异常）。"""
+        pos_data = _api_call("GET", "/fapi/v2/positionRisk", signed=True)
+        out: list[dict[str, Any]] = []
+        for pos in pos_data if isinstance(pos_data, list) else []:
+            amt = float(pos.get("positionAmt", "0") or 0)
+            if abs(amt) <= 1e-12:
+                continue
+            out.append({
+                "symbol": str(pos.get("symbol", "")).upper(),
+                "side": "long" if amt > 0 else "short",
+                "qty": abs(amt),
+                "entry_price": float(pos.get("entryPrice", 0) or 0),
+                "liq_price": float(pos.get("liquidationPrice", 0) or 0),
+                "leverage": float(pos.get("leverage", 1) or 1),
+                "unrealized_pnl": float(pos.get("unRealizedProfit", 0) or 0),
+            })
+        return out
+
     def fetch_borrow_rates(self, coins: list[str]) -> dict[str, float]:
         """Fetch annualized borrow rates from Binance cross margin. Returns {coin: rate_decimal}."""
         rates: dict[str, float] = {c: 0.0 for c in coins}

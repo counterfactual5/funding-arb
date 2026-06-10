@@ -68,6 +68,27 @@ class CexVenue(Protocol):
     def fetch_live_state(self, assets: list[str]) -> dict[str, Any]:
         """Fetch unified global state: spot balances, margin debt, futures margin, futures positions."""
         return {}
+
+    def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
+        """USDT 永续持仓列表（watcher/executor 腿校验用）。
+
+        返回 [{symbol, side, qty, entry_price, liq_price, leverage, unrealized_pnl}]。
+        默认实现从 fetch_live_state 提取；各 venue 可覆写为单端点查询。
+        失败时抛异常（调用方据此区分「查询失败」与「确实无持仓」）。
+        """
+        state = self.fetch_live_state(["USDT"]) or {}
+        out: list[dict[str, Any]] = []
+        for base, p in (state.get("futures_positions") or {}).items():
+            out.append({
+                "symbol": f"{base}{quote.upper()}",
+                "side": str(p.get("side", "")).lower(),
+                "qty": abs(float(p.get("amount", 0) or 0)),
+                "entry_price": float(p.get("entry_price", 0) or 0),
+                "liq_price": float(p.get("liq_price", 0) or 0),
+                "leverage": float(p.get("leverage", 1) or 1),
+                "unrealized_pnl": float(p.get("unrealized_pnl", 0) or 0),
+            })
+        return out
         
     def initialize_futures_symbol(self, pair: str) -> None:
         """Initialize futures configuration (marginType, leverage, positionSide) for a specific pair."""

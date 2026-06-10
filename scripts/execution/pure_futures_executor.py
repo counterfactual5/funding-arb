@@ -311,6 +311,25 @@ def open_pure_futures_pair(
         )
         return CrossVenueResult(True, "simulated", position_id, executed, logs)
 
+    # 盘口深度预检：偏离窗口内深度不足时放弃（小币滑点会吃掉数期费差）。
+    # 仅在配置含 pureFuturesArbitrage 时启用（注入 venue 的单测不走网络）。
+    pfa_cfg = (config or {}).get("pureFuturesArbitrage") or {}
+    if pfa_cfg and bool(pfa_cfg.get("depthCheckEnabled", True)):
+        from market.futures_depth import check_pair_depth
+
+        depth_ok, depth_detail = check_pair_depth(
+            long_venue_id,
+            short_venue_id,
+            base,
+            trade_usd,
+            quote=quote,
+            max_dev_pct=float(pfa_cfg.get("depthMaxDevPct", 0.3)),
+            min_multiple=float(pfa_cfg.get("depthMinMultiple", 3.0)),
+        )
+        logs.append(f"depth check: {depth_detail}")
+        if not depth_ok:
+            return CrossVenueResult(False, "aborted", logs=logs)
+
     margin_usd = trade_usd * MARGIN_BUFFER + trade_usd * max(capital_buffer_pct, 0.0) / 100.0
     ok_long = _check_futures_margin(lv, long_venue_id, quote, margin_usd, logs)
     ok_short = _check_futures_margin(sv, short_venue_id, quote, margin_usd, logs)
@@ -507,6 +526,67 @@ def close_pure_futures_pair(
         config,
     )
     return CrossVenueResult(False, "naked", position_id, executed, logs)
+
+
+def close_pure_futures_leg(
+    position_id: str,
+    leg: str,
+    *,
+    quote: str = "USDT",
+    config: dict[str, Any] | None = None,
+    long_venue: Any = None,
+    short_venue: Any = None,
+    positions_path: Path = POSITIONS_PATH,
+    close_reason: str = "single_leg_close",
+) -> CrossVenueResult:
+    """只平指定的一条腿（另一腿已被强平/消失时的应急处理）。
+
+    对已消失的腿下平仓单会反向开出新仓位，所以双腿状态异常时
+    必须只对仍存活的腿下单。leg ∈ {"long", "short"}。
+    """
+    if leg not in ("long", "short"):
+        return CrossVenueResult(False, "aborted", logs=[f"无效 leg={leg!r}"])
+    pos = _get_open_position(position_id, positions_path)
+    if pos is None:
+        return CrossVenueResult(
+            False, "aborted", logs=[f"未找到 open 持仓 {position_id}"]
+        )
+    base = str(pos["base"])
+    venue_id = str(pos[f"{leg}_venue"])
+    v = _venue(venue_id, long_venue if leg == "long" else short_venue)
+    mkt = _leg_market(v, base, quote, futures=True)
+    px = float(mkt.get("price") or pos.get(f"{leg}_price") or 0.0)
+    qty = float(pos.get(f"{leg}_qty", 0) or pos.get("qty", 0))
+    qprec = int(mkt["quantity_precision"])
+    qty = _floor_qty(qty, qprec)
+    if qty <= 0:
+        return CrossVenueResult(False, "aborted", position_id, logs=["腿数量无效"])
+
+    trade = _make_futures_trade(
+        base, f"close_{leg}", qty, px, qprec, f"{close_reason} {position_id}"
+    )
+    res = v.execute_trades([trade], {base: mkt}, dry_run=False)
+    logs: list[str] = []
+    if not _filled(res):
+        logs.append(
+            f"{venue_id} close_{leg} 失败: "
+            f"{res[0].get('error') if res else 'no result'}"
+        )
+        send_notification(
+            "Single Leg Close Failed",
+            f"Position {position_id} {base}: close_{leg}@{venue_id} failed, "
+            f"exposure remains unhedged",
+            config,
+        )
+        return CrossVenueResult(False, "naked", position_id, res, logs)
+    logs.append(f"{venue_id} close_{leg} {qty} {base} 已平（另一腿已消失）")
+    _mark_closed(
+        position_id,
+        {"single_leg": leg, "reason": close_reason,
+         f"{leg}_price": res[0].get("exec_price")},
+        positions_path,
+    )
+    return CrossVenueResult(True, "filled", position_id, res, logs)
 
 
 def _leg_qty_from_venue(

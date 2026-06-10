@@ -40,6 +40,7 @@ from cli.scan_pure_futures_spreads import (  # noqa: E402
 )
 from core.notify import send_notification  # noqa: E402
 from execution.pure_futures_executor import (  # noqa: E402
+    close_pure_futures_leg,
     close_pure_futures_pair,
     load_pure_futures_positions,
     rebalance_pure_futures_pair,
@@ -83,16 +84,19 @@ def _get_current_spread(
 
 
 def _fetch_positions_from_venue(
-    venue_id: str, base: str, quote: str = "USDT"
-) -> list[dict[str, Any]]:
-    """从交易所 API 获取当前永续持仓（仅 futures），返回 [{symbol, side, qty, ...}]。"""
+    venue_id: str, quote: str = "USDT"
+) -> list[dict[str, Any]] | None:
+    """从交易所 API 获取当前全部永续持仓。
+
+    失败返回 None（区别于空列表）：调用方必须跳过腿校验，
+    否则查询故障会被误判为「腿消失」触发误平仓。
+    """
     try:
         v = get_venue({"venue": {"type": venue_id}})
-        positions = v.fetch_futures_positions(quote)
-        return [p for p in positions if p.get("symbol", "").upper().startswith(base.upper())]
+        return v.fetch_futures_positions(quote)
     except Exception as e:
         print(f"[{_ts_str()}] {venue_id} fetch positions error: {e}", file=sys.stderr)
-        return []
+        return None
 
 
 def _get_mark_price(venue_id: str, base: str, quote: str = "USDT") -> float:
@@ -211,7 +215,9 @@ def check_leg_alive(
 ) -> tuple[bool, str]:
     """检查两腿是否仍然存活（没被强平/意外关闭）。
 
-    venue_positions: {venue_id: [{symbol, side, qty, ...}]}
+    venue_positions: {venue_id: [{symbol, side, qty, ...}]}。
+    注意：调用方必须保证两个 venue 的持仓快照都拉取成功
+    （拉取失败 ≠ 无持仓，混淆会触发误平仓）。
     """
     base = str(pos.get("base", "")).upper()
     qty = float(pos.get("qty", 0))
@@ -250,6 +256,46 @@ def check_leg_alive(
     return True, ""
 
 
+def check_margin_distance(
+    pos: dict[str, Any],
+    venue_positions: dict[str, list[dict[str, Any]]],
+    alert_distance_pct: float = 20.0,
+) -> list[dict[str, Any]]:
+    """逐腿检查标记价距强平价的百分比距离，过近则返回告警。
+
+    跨所对冲两腿盈亏不互通：行情单边走时一腿浮亏积累，
+    距离逼近时必须补保证金或主动减仓，等强平就是裸腿事故。
+    """
+    alerts: list[dict[str, Any]] = []
+    base = str(pos.get("base", "")).upper()
+    for leg, side in (("long", "long"), ("short", "short")):
+        venue_id = str(pos.get(f"{leg}_venue", ""))
+        rows = venue_positions.get(venue_id)
+        if rows is None:
+            continue
+        for p in rows:
+            sym = str(p.get("symbol", "")).upper()
+            if not sym.startswith(base) or str(p.get("side", "")).lower() != side:
+                continue
+            liq_px = float(p.get("liq_price", 0) or 0)
+            if liq_px <= 0:
+                break  # 交易所未返回强平价（全仓低杠杆时常见）
+            mark = _get_mark_price(venue_id, base)
+            if mark <= 0:
+                break
+            distance_pct = abs(mark - liq_px) / mark * 100.0
+            if distance_pct < alert_distance_pct:
+                alerts.append({
+                    "leg": leg,
+                    "venue": venue_id,
+                    "mark_price": mark,
+                    "liq_price": liq_px,
+                    "distance_pct": round(distance_pct, 2),
+                })
+            break
+    return alerts
+
+
 def watch_cycle(
     cfg: dict[str, Any],
     *,
@@ -264,6 +310,7 @@ def watch_cycle(
     max_skew_pct = float(pfa.get("rebalanceSkewPct", 1.0))
     check_legs = bool(pfa.get("watcherCheckLegs", True))
     auto_rebalance = bool(pfa.get("autoRebalance", False))
+    margin_alert_pct = float(pfa.get("marginAlertDistancePct", 20.0))
     workers = int(pfa.get("workers", 4))
 
     cycle_result: dict[str, Any] = {
@@ -287,15 +334,25 @@ def watch_cycle(
         cycle_result["alerts"].append(f"rate_fetch_error: {e}")
         return cycle_result
 
-    # Fetch actual positions from venues (for leg check)
+    # Fetch actual positions from venues (for leg/margin check)
+    # 只保留拉取成功的 venue；失败的记入 failed 集合，跳过其腿校验
     venue_positions: dict[str, list[dict[str, Any]]] = {}
+    failed_venues: set[str] = set()
     if check_legs and not dry_run:
+        wanted: set[str] = set()
         for pos in open_positions:
             for vid in (pos.get("long_venue"), pos.get("short_venue")):
-                if vid and vid not in venue_positions:
-                    venue_positions[vid] = _fetch_positions_from_venue(
-                        vid, str(pos.get("base", ""))
-                    )
+                if vid:
+                    wanted.add(str(vid))
+        for vid in sorted(wanted):
+            rows = _fetch_positions_from_venue(vid)
+            if rows is None:
+                failed_venues.add(vid)
+                cycle_result["alerts"].append(
+                    {"alert": "positions_fetch_failed", "venue": vid}
+                )
+            else:
+                venue_positions[vid] = rows
 
     for pos in open_positions:
         pos_id = str(pos.get("id", ""))
@@ -333,8 +390,17 @@ def watch_cycle(
             cycle_result["actions"].append(action)
             continue
 
-        # 2. Check leg alive (only for live positions)
-        if check_legs and not pos_dry_run and venue_positions:
+        # 2. Check leg alive (only for live positions, and only when
+        #    both venues' position snapshots fetched successfully)
+        pos_long_v = str(pos.get("long_venue", ""))
+        pos_short_v = str(pos.get("short_venue", ""))
+        legs_checkable = (
+            check_legs
+            and not pos_dry_run
+            and pos_long_v in venue_positions
+            and pos_short_v in venue_positions
+        )
+        if legs_checkable:
             alive, leg_reason = check_leg_alive(pos, venue_positions)
             if not alive:
                 action = {
@@ -343,15 +409,55 @@ def watch_cycle(
                     "base": base,
                     "reason": leg_reason,
                 }
-                send_notification(
-                    "NAKED LEG DETECTED",
-                    f"Position {pos_id} {base}: {leg_reason}. Attempting emergency close.",
-                    cfg,
-                )
-                res = close_pure_futures_pair(pos_id, dry_run=False, config=cfg)
-                action["result"] = res.to_dict()
+                if leg_reason == "both_legs_gone":
+                    # 对不存在的腿下平仓单会反向开出新仓——绝不能下单。
+                    # 只告警留待人工核对（可能是外部手动平仓或符号匹配问题）。
+                    action["action"] = "manual_review"
+                    action["note"] = "both legs gone; no orders placed"
+                    send_notification(
+                        "BOTH LEGS GONE",
+                        f"Position {pos_id} {base}: both legs missing on "
+                        f"{pos_long_v}/{pos_short_v}. No orders placed — "
+                        f"verify manually and mark position closed.",
+                        cfg,
+                    )
+                else:
+                    # 单腿消失：只平仍存活的那条腿（对消失腿下单 = 开新仓）
+                    alive_leg = "short" if leg_reason.startswith("long_leg") else "long"
+                    send_notification(
+                        "NAKED LEG DETECTED",
+                        f"Position {pos_id} {base}: {leg_reason}. "
+                        f"Closing surviving {alive_leg} leg only.",
+                        cfg,
+                    )
+                    res = close_pure_futures_leg(
+                        pos_id, alive_leg, config=cfg,
+                        close_reason=f"emergency: {leg_reason}",
+                    )
+                    action["result"] = res.to_dict()
                 cycle_result["actions"].append(action)
                 continue
+
+            # 2b. 逐腿强平距离预警（不自动操作，及时通知补保证金/减仓）
+            margin_alerts = check_margin_distance(
+                pos, venue_positions, margin_alert_pct
+            )
+            for ma in margin_alerts:
+                alert = {
+                    "position_id": pos_id,
+                    "base": base,
+                    "alert": "margin_distance_low",
+                    **ma,
+                }
+                cycle_result["alerts"].append(alert)
+                send_notification(
+                    "MARGIN DISTANCE LOW",
+                    f"Position {pos_id} {base} {ma['leg']}@{ma['venue']}: "
+                    f"mark {ma['mark_price']} vs liq {ma['liq_price']} "
+                    f"({ma['distance_pct']}% away, threshold {margin_alert_pct}%). "
+                    f"Add margin or reduce position.",
+                    cfg,
+                )
 
         # 3. Check rebalance
         need_rebalance, rebal_reason, long_n, short_n = check_rebalance(

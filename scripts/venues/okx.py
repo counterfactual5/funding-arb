@@ -337,6 +337,30 @@ class OkxSpotVenue:
 
         return {"balances": balances, "futures_positions": positions}
 
+    def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
+        """USDT 永续持仓列表（单端点，失败抛异常）。"""
+        pos_data = _api_call("GET", "/api/v5/account/positions")
+        quote_u = quote.upper()
+        out: list[dict[str, Any]] = []
+        for pos in pos_data.get("data", []) or []:
+            inst = str(pos.get("instId", ""))
+            if not inst.endswith(f"-{quote_u}-SWAP"):
+                continue
+            amt = float(pos.get("pos", 0) or 0)
+            if abs(amt) <= 1e-12:
+                continue
+            base = inst.split("-")[0]
+            out.append({
+                "symbol": f"{base}{quote_u}",
+                "side": "long" if amt > 0 else "short",
+                "qty": abs(amt),
+                "entry_price": float(pos.get("avgPx", 0) or 0),
+                "liq_price": float(pos.get("liqPx", 0) or 0),
+                "leverage": float(pos.get("lever", 1) or 1),
+                "unrealized_pnl": float(pos.get("upl", 0) or 0),
+            })
+        return out
+
     def initialize_futures_symbol(self, pair: str) -> None:
         if pair in _initialized_symbols:
             return

@@ -413,6 +413,31 @@ class BitgetSpotVenue:
             "futures_positions": positions
         }
         
+    def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
+        """USDT 永续持仓列表（单端点，失败抛异常）。"""
+        pos_data = _api_call(
+            "GET",
+            "/api/v2/mix/position/all-position",
+            params={"productType": "USDT-FUTURES"},
+        )
+        out: list[dict[str, Any]] = []
+        for pos in pos_data.get("data", []) or []:
+            qty = abs(float(pos.get("total", 0) or 0))
+            if qty <= 1e-12:
+                continue
+            out.append({
+                "symbol": str(pos.get("symbol", "")).upper(),
+                "side": str(pos.get("holdSide", "")).lower(),
+                "qty": qty,
+                "entry_price": float(
+                    pos.get("averageOpenPrice", 0) or pos.get("openPriceAvg", 0) or 0
+                ),
+                "liq_price": float(pos.get("liquidationPrice", 0) or 0),
+                "leverage": float(pos.get("leverage", 1) or 1),
+                "unrealized_pnl": float(pos.get("unrealizedPL", 0) or 0),
+            })
+        return out
+
     def initialize_futures_symbol(self, pair: str) -> None:
         """Initialize futures configuration (marginType, leverage, positionSide) for a specific pair on Bitget."""
         if pair in _initialized_symbols:

@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from execution.pure_futures_executor import (  # noqa: E402
+    close_pure_futures_leg,
     close_pure_futures_pair,
     load_pure_futures_positions,
     open_pure_futures_pair,
@@ -154,6 +155,49 @@ def test_live_open_both_legs_filled():
     rows = load_pure_futures_positions(path)
     assert rows[0]["dry_run"] is False
     assert rows[0]["qty"] > 0
+
+
+def test_close_single_leg_only_touches_that_venue():
+    """单腿消失场景：只对存活腿下平仓单（对消失腿下单会反向开新仓）。"""
+    path = _path("single_leg")
+    lv, sv = FakeFuturesVenue("okx"), FakeFuturesVenue("bybit")
+    res = open_pure_futures_pair(
+        "BTC", "okx", "bybit", 500,
+        dry_run=False, long_venue=lv, short_venue=sv, positions_path=path,
+    )
+    assert res.ok
+    lv.trades.clear()
+    sv.trades.clear()
+
+    # long 腿被强平 → 只平 short 腿
+    res2 = close_pure_futures_leg(
+        res.position_id, "short",
+        long_venue=lv, short_venue=sv, positions_path=path,
+        close_reason="emergency: long_leg_gone@okx",
+    )
+    assert res2.ok and res2.state == "filled"
+    assert lv.trades == []  # 消失腿绝不下单
+    assert [t["type"] for t in sv.trades] == ["close_short"]
+    rows = load_pure_futures_positions(path)
+    assert rows[0]["status"] == "closed"
+    assert rows[0]["close_info"]["single_leg"] == "short"
+
+
+def test_close_single_leg_failure_keeps_position_open():
+    path = _path("single_leg_fail")
+    lv = FakeFuturesVenue("okx")
+    sv = FakeFuturesVenue("bybit", fail_types={"close_short"})
+    res = open_pure_futures_pair(
+        "BTC", "okx", "bybit", 500,
+        dry_run=False, long_venue=lv, short_venue=sv, positions_path=path,
+    )
+    res2 = close_pure_futures_leg(
+        res.position_id, "short",
+        long_venue=lv, short_venue=sv, positions_path=path,
+    )
+    assert not res2.ok and res2.state == "naked"
+    rows = load_pure_futures_positions(path)
+    assert rows[0]["status"] == "open"  # 留待人工/下轮处理
 
 
 def test_short_leg_fail_rolls_back_long():
