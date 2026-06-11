@@ -35,9 +35,13 @@ def _lazy_load(vtype: str) -> None:
         from venues.lighter import LighterVenue
 
         _REGISTRY["lighter"] = LighterVenue
+    elif vtype == "edgex":
+        from venues.edgex import EdgexVenue
+
+        _REGISTRY["edgex"] = EdgexVenue
 
 
-_LAZY_VENUES = ("hyperliquid", "aster", "lighter")
+_LAZY_VENUES = ("hyperliquid", "aster", "lighter", "edgex")
 
 
 def supported_venues() -> list[str]:

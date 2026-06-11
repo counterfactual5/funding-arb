@@ -125,6 +125,10 @@ class EdgexFundingProvider:
         """Full cached metadata row (contract_id, interval_h, sizes) for a base asset."""
         return self._contracts().get(base.upper())
 
+    def contract_meta_map(self) -> dict[str, dict[str, Any]]:
+        """Full base -> metadata map (cached); used for contractId reverse lookup."""
+        return self._contracts()
+
     def _ticker_row(self, contract_id: str) -> dict[str, Any]:
         data = self._get(f"/api/v1/public/quote/getTicker?contractId={contract_id}")
         if isinstance(data, list):

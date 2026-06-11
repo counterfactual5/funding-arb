@@ -109,8 +109,11 @@ def venue_trade_capability(venue_id: str) -> tuple[bool, str]:
             return True, ""
         return False, "lighter-sdk not installed (pip install lighter-sdk)"
     if v == "edgex":
-        # Phase 1 is scan-only; the V2 EIP-712 trading adapter ships in Phase 2.
-        return False, "edgex trading not wired yet (scan-only)"
+        from importlib.util import find_spec
+
+        if find_spec("edgex_sdk") is not None:
+            return True, ""
+        return False, "edgex-python-sdk not installed (pip install edgex-python-sdk>=2.0.0)"
     return False, f"unknown venue {v!r}"
 
 

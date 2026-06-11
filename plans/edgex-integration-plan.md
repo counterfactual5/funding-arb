@@ -1,6 +1,6 @@
 # EdgeX 集成计划
 
-> 状态：**Phase 1 已实现（扫描接入）** — 2026-06-12  
+> 状态：**Phase 1 + Phase 2 已实现** — 2026-06-12  
 > 参考：Aster / Lighter / Hyperliquid 现有 Perp DEX 接入模式
 
 ---
@@ -352,15 +352,25 @@ Phase 2：若 EdgeX 提供账户级费率 API，再接入 `fee_providers.resolve
 - [ ] `scripts/backtest/funding_history_source.py`
 - [ ] `server/routes/backtest.py`
 
-### Phase 2
+### Phase 2 ✅ 已完成（2026-06-12）
 
-- [ ] `scripts/venues/edgex.py`（新建）
-- [ ] `scripts/core/credentials.py`
-- [ ] `scripts/cli/setup_credentials.py`
-- [ ] `server/routes/settings.py`（`trade_capable` / `live_ready`）
-- [ ] `requirements.txt`
-- [ ] `scripts/tests/test_edgex_venue.py`（新建）
-- [ ] `templates/config.pure_futures.spread.json`
+- [x] `scripts/venues/edgex.py`（新建，V2 SDK，读路径复用 funding provider，dry-run 完整）
+- [x] `scripts/venues/__init__.py`（`EdgexVenue` 注册进 `get_venue` + `_LAZY_VENUES`）
+- [x] `scripts/core/credentials.py`（`EDGEX_` 前缀 + `EDGEX_ACCOUNT_ID` / `EDGEX_TRADING_PRIVATE_KEY`）
+- [x] `server/routes/settings.py`（`venue_trade_capability` 改 `find_spec("edgex_sdk")`，`live_ready` 复用 trade_keys）
+- [x] `requirements.txt`（`edgex-python-sdk>=2.0.0` 可选）
+- [x] `.env.example`（EdgeX 凭证段）
+- [x] `scripts/tests/test_edgex_venue.py`（新建，dry-run + 桩 SDK live 路径 + 持仓/余额解析）
+
+**已用真实 SDK 接口对齐**（edgex-Tech/edgex-python-sdk main）：
+`from edgex_sdk import Client, OrderSide`；`Client(base_url, asset_base_url, account_id, trading_private_key)`；
+`await create_limit_order(contract_id, size, price, side)` / `get_account_positions()` / `get_account_asset()`。
+EdgeX 无市价单原语 → 开/平用激进限价（穿价 2%）模拟 taker，同 Lighter。
+
+**仍需实盘校验**（SDK 未安装、无账户）：
+- `get_account_positions()` / `get_account_asset()` 的字段层级（当前为防御式解析，失配降级为空，watcher 安全）。
+- live `create_limit_order` 返回体的 `orderId` 字段名。
+- `setup_credentials.py` 交互式录入 EdgeX 两个 key（未改，依赖 env / 凭证后端即可）。
 
 ---
 

@@ -4,5 +4,6 @@ requests>=2.28
 keyring>=23.0  # macOS Keychain / Linux Secret Service (optional, recommended for credential storage)
 # Optional venue SDKs:
 lighter-sdk>=1.0  # Lighter perp-DEX trading (scan works without it)
+edgex-python-sdk>=2.0.0  # EdgeX perp-DEX V2 trading (scan works without it)
 # Dev/testing dependencies below:
 pytest>=7.0
