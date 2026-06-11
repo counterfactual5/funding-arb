@@ -24,6 +24,7 @@ Last updated: 2026-06-12
 | **Hyperliquid** | Done | `venues/hyperliquid.py` — read paths and dry-run work standalone; live order signing lazily imports the sibling `../hyperliquid/scripts` repo (`HYPERLIQUID_API_KEY/SECRET`) |
 | **Aster** | Done | `venues/aster.py` — Binance-fapi-compatible (`fapi.asterdex.com`), HMAC signing via `ASTER_API_KEY/SECRET`; public scan/dry-run need no keys |
 | **Lighter** | Done | `venues/lighter.py` — zk order book via `lighter-sdk` SignerClient (async, wrapped); creds: `LIGHTER_API_PRIVATE_KEY` + `LIGHTER_ACCOUNT_INDEX` (or `LIGHTER_L1_ADDRESS`) + `LIGHTER_API_KEY_INDEX` |
+| **EdgeX** | Scan-only (Phase 1) | `venues/edgex_funding.py` — StarkEx CLOB, V1 public REST. No batch ticker + strict Cloudflare limits → bounded base whitelist (`EDGEX_SCAN_BASES`), low concurrency (`EDGEX_SCAN_WORKERS`), 60s snapshot cache. Trading (V2 EIP-712 SDK) is Phase 2; see `plans/edgex-integration-plan.md` |
 | Depth checks | Done | `market/futures_depth.py` covers all 7 venues; `depthCheckFailOpen=false` blocks opens on DEX order-book fetch failures |
 | Capability API | Done | `GET /api/settings/venues` reports `scan_capable` / `trade_capable` / `live_ready`; `positions/open` rejects scan-only venues; Scanner UI disables Open accordingly |
 

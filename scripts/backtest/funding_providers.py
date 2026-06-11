@@ -510,10 +510,17 @@ def _get_lighter_provider() -> FundingProvider:
     return LighterFundingProvider()
 
 
+def _get_edgex_provider() -> FundingProvider:
+    from venues.edgex_funding import EdgexFundingProvider
+
+    return EdgexFundingProvider()
+
+
 _LAZY_FACTORIES = {
     "hyperliquid": _get_hyperliquid_provider,
     "aster": _get_aster_provider,
     "lighter": _get_lighter_provider,
+    "edgex": _get_edgex_provider,
 }
 
 for _name in _LAZY_FACTORIES:

@@ -74,6 +74,13 @@ VENUES = {
         "required_keys": [],  # scanning uses public REST, no keys needed
         "trade_keys": ["LIGHTER_API_PRIVATE_KEY", "LIGHTER_ACCOUNT_INDEX"],
     },
+    "edgex": {
+        "name": "EdgeX",
+        "type": "dex",
+        "prefix": "EDGEX_",
+        "required_keys": [],  # scanning uses public V1 REST, no keys needed
+        "trade_keys": ["EDGEX_ACCOUNT_ID", "EDGEX_TRADING_PRIVATE_KEY"],
+    },
 }
 
 
@@ -101,6 +108,9 @@ def venue_trade_capability(venue_id: str) -> tuple[bool, str]:
         if find_spec("lighter") is not None:
             return True, ""
         return False, "lighter-sdk not installed (pip install lighter-sdk)"
+    if v == "edgex":
+        # Phase 1 is scan-only; the V2 EIP-712 trading adapter ships in Phase 2.
+        return False, "edgex trading not wired yet (scan-only)"
     return False, f"unknown venue {v!r}"
 
 

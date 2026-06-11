@@ -125,6 +125,8 @@ def fetch_futures_depth(
         return _fetch_hyperliquid_depth(base)
     if v == "lighter":
         return _fetch_lighter_depth(base, limit)
+    if v == "edgex":
+        return _fetch_edgex_depth(base, limit)
     raise ValueError(f"Unsupported venue: {venue!r}")
 
 
@@ -183,6 +185,41 @@ def _fetch_lighter_depth(base: str, limit: int = 50) -> Book:
         return out
 
     return {"bids": _conv(d.get("bids")), "asks": _conv(d.get("asks"))}
+
+
+def _fetch_edgex_depth(base: str, limit: int = 50) -> Book:
+    """EdgeX order book via /quote/getDepth (needs base → contractId map).
+
+    `level` only supports 15 or 200; levels are {"price","size"} objects.
+    """
+    from venues.edgex_funding import EdgexFundingProvider
+
+    contract_id = EdgexFundingProvider().contract_id_for_base(base)
+    if contract_id is None:
+        raise RuntimeError(f"edgex contractId unavailable for {base}")
+    level = 200 if limit > 15 else 15
+    d = http_get_json(
+        f"https://pro.edgex.exchange/api/v1/public/quote/getDepth"
+        f"?contractId={contract_id}&level={level}",
+        timeout=15,
+    )
+    data = d.get("data", {}) if isinstance(d, dict) else {}
+    if isinstance(data, list):
+        data = data[0] if data else {}
+
+    def _conv(rows: Any) -> list[tuple[float, float]]:
+        out: list[tuple[float, float]] = []
+        for r in rows or []:
+            try:
+                px = float(r["price"])
+                qty = float(r["size"])
+            except (TypeError, KeyError, ValueError):
+                continue
+            if px > 0 and qty > 0:
+                out.append((px, qty))
+        return out
+
+    return {"bids": _conv(data.get("bids")), "asks": _conv(data.get("asks"))}
 
 
 def depth_usd_within(book: Book, side: str, max_dev_pct: float) -> float:

@@ -70,7 +70,7 @@ CARRY_VENUES = ["binance", "bitget", "bybit", "okx"]
 # Pure futures: any venue with a funding provider. HL is a first-class citizen;
 # aster / lighter are available but off by default (enable via venue selector).
 PURE_DEFAULT_VENUES = ["binance", "bitget", "bybit", "okx", "hyperliquid"]
-PURE_ALL_VENUES = PURE_DEFAULT_VENUES + ["aster", "lighter"]
+PURE_ALL_VENUES = PURE_DEFAULT_VENUES + ["aster", "lighter", "edgex"]
 
 
 def _strategy_cfg() -> dict[str, Any]:

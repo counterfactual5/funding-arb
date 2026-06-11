@@ -23,6 +23,7 @@ DEFAULT_TAKER_PCT: dict[str, float] = {
     "hyperliquid": 0.035,
     "aster": 0.035,  # Aster perp taker VIP0
     "lighter": 0.0,  # Lighter currently zero-fee (orderBookDetails taker_fee=0)
+    "edgex": 0.038,  # EdgeX defaultTakerFeeRate=0.00038 (getMetaData)
 }
 
 DEFAULT_MAKER_PCT: dict[str, float] = {
@@ -33,6 +34,7 @@ DEFAULT_MAKER_PCT: dict[str, float] = {
     "hyperliquid": 0.01,
     "aster": 0.01,
     "lighter": 0.0,
+    "edgex": 0.0,
 }
 
 # Spot VIP0 defaults (percentage points) — cash-and-carry spot leg
