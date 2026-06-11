@@ -210,15 +210,17 @@ rate_pct = float(funding_rate) * 100.0
 
 ---
 
-### Phase 1.5：历史费率（回测，约 0.5–1 天）
+### Phase 1.5：历史费率（回测）✅ 已处理（2026-06-12）
 
-**目标：** `funding_history_source.py` 支持 EdgeX 历史回测。
+**结论：** EdgeX 无公开历史费率端点（`getFundingRatePage` 匿名返回空），暂不可回测。
 
-**待探：**
+**已落地（优雅降级，非阻塞）：**
 
-- 带 `contractId` + 时间范围的公开 funding 历史端点
-- 或 V2 SDK `funding` 模块是否提供只读历史
-- 若仅私有 API：回测文档标注「需 EdgeX 账户凭证」
+- `funding_history_source.py` 增加 `_NO_PUBLIC_HISTORY = {"edgex"}`，`fetch_leg_history` 对该集合直接返回 `[]` 并打印明确告警（"current-snapshot only — leg excluded"），不再产生误导性的 "0 settlements"。
+- `server/routes/backtest.py` 的 `history_venues` 字段说明标注 edgex 仅当前快照、请求时跳过。
+- 单测 `test_no_public_history_venue_skipped`。
+
+**待 IP 解封后续探**（解除限制时再开放）：V2 SDK 是否提供只读历史 funding 端点；若有则把 edgex 移出 `_NO_PUBLIC_HISTORY` 并在 `fetch_since` 接入。
 
 **改动：**
 

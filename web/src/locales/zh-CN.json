@@ -161,6 +161,7 @@
     "minSpreadAnnual": "最小年化价差",
     "minEdgeAnnual": "最小年化边际",
     "minEdge1h": "最小边际（1h 组）",
+    "minEdgeMismatch": "最小边际（跨周期）",
     "maxMarkSpread": "最大标记价差",
     "tradeSize": "单笔金额",
     "maxPositions": "最大持仓",

@@ -11,7 +11,16 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from backtest.backtest_pure_futures_spread import run_backtest
-from backtest.funding_history_source import build_snapshots, infer_interval_h
+from backtest.funding_history_source import (
+    build_snapshots,
+    fetch_leg_history,
+    infer_interval_h,
+)
+
+
+def test_no_public_history_venue_skipped():
+    """EdgeX has no public funding history → fetch returns [] without network."""
+    assert fetch_leg_history("edgex", "BTC", 30) == []
 
 H = 3600 * 1000
 T0 = int(datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)

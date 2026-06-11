@@ -54,7 +54,9 @@ class BacktestRequest(BaseModel):
         None,
         description=(
             "Venues for history fetch, comma-separated "
-            "(default binance,bitget,bybit,okx; also: hyperliquid, aster, lighter)"
+            "(default binance,bitget,bybit,okx; also: hyperliquid, aster, lighter). "
+            "edgex has no public funding history (current-snapshot only) and is "
+            "skipped if requested."
         ),
     )
     history_days: int = Field(90, description="Backtest period in days")

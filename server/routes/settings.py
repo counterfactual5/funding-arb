@@ -167,6 +167,14 @@ class StrategyParams(BaseModel):
             "hourly (1h group turns capital over faster)"
         ),
     )
+    min_edge_mismatch: float | None = Field(
+        None,
+        description=(
+            "Higher net-edge threshold (%) for cross-interval pairs (legs settle "
+            "on different schedules, e.g. 4h vs 8h) to price in settlement-timing "
+            "risk. Applied when intervals differ; None disables the premium."
+        ),
+    )
     fee_mode: str | None = Field(
         None,
         description="Fee source: auto (API when keys set, else VIP tier), api, vip_tier",
@@ -199,6 +207,7 @@ _DEFAULT_STRATEGY: dict[str, Any] = {
     "scan_interval_sec": 300,
     "scan_venues": ["binance", "bitget", "bybit", "okx", "hyperliquid"],
     "min_edge_1h": 0.01,
+    "min_edge_mismatch": None,
     "fee_mode": "auto",
     "venue_fee_tiers": {},
 }

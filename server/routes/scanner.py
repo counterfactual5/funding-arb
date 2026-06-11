@@ -125,6 +125,21 @@ def _min_edge_1h() -> float | None:
         return None
 
 
+def _min_edge_mismatch() -> float | None:
+    """Optional higher net-edge threshold for cross-interval (settle_mismatch) pairs.
+
+    When two legs settle on different schedules (e.g. EdgeX 4h vs Binance 8h),
+    you carry funding-timing risk between settlements, so demand a larger edge.
+    Returns None when not configured (no premium).
+    """
+    cfg = _strategy_cfg()
+    val = cfg.get("min_edge_mismatch")
+    try:
+        return float(val) if val is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _recalc_pure_fees(result: dict[str, Any]) -> dict[str, Any]:
     """Recompute per-leg fees and net edge from cached spread using current fee policy."""
     from core.fee_providers import resolve_venue_fee  # noqa: E402
@@ -212,24 +227,52 @@ def _recalc_carry_fees(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def _apply_group_thresholds(
-    result: dict[str, Any], min_edge: float, min_edge_1h: float | None
-) -> dict[str, Any]:
-    """Re-filter scan output so 1h-group pairs can use a lower edge threshold.
+def _row_edge_threshold(
+    row: dict[str, Any],
+    min_edge: float,
+    min_edge_1h: float | None,
+    min_edge_mismatch: float | None,
+) -> float:
+    """Per-row net-edge bar by settlement-interval group.
 
-    The scan itself runs with the loosest threshold; this keeps a row if it
-    passes the regular min_edge, or if both legs are 1h and it passes min_edge_1h.
+    Precedence:
+      both legs ≤1h        → min_edge_1h   (fast turnover, lower bar)
+      legs differ (mismatch) → min_edge_mismatch (timing risk, higher bar)
+      same interval, >1h   → min_edge      (baseline)
     """
-    if min_edge_1h is None or min_edge_1h >= min_edge:
+    long_h = float(row.get("long_interval_h", 8) or 8)
+    short_h = float(row.get("short_interval_h", 8) or 8)
+    if min_edge_1h is not None and long_h <= 1.0 and short_h <= 1.0:
+        return min_edge_1h
+    if min_edge_mismatch is not None and (
+        row.get("settle_mismatch") or abs(long_h - short_h) > 0.5
+    ):
+        return min_edge_mismatch
+    return min_edge
+
+
+def _apply_group_thresholds(
+    result: dict[str, Any],
+    min_edge: float,
+    min_edge_1h: float | None,
+    min_edge_mismatch: float | None = None,
+) -> dict[str, Any]:
+    """Re-filter scan output with per-interval-group edge thresholds.
+
+    The scan runs with the loosest threshold; this tightens per row: 1h-group
+    pairs may use the lower min_edge_1h, while cross-interval (settle_mismatch)
+    pairs must clear the higher min_edge_mismatch risk premium.
+    """
+    loosens_1h = min_edge_1h is not None and min_edge_1h < min_edge
+    tightens_mismatch = min_edge_mismatch is not None and min_edge_mismatch > min_edge
+    if not loosens_1h and not tightens_mismatch:
         return result
 
     def _keep(row: dict[str, Any]) -> bool:
         edge = float(row.get("net_edge_pct", 0) or 0)
-        is_1h = (
-            float(row.get("long_interval_h", 8) or 8) <= 1.0
-            and float(row.get("short_interval_h", 8) or 8) <= 1.0
+        return edge >= _row_edge_threshold(
+            row, min_edge, min_edge_1h, min_edge_mismatch
         )
-        return edge >= (min_edge_1h if is_1h else min_edge)
 
     out = dict(result)
     out["forward"] = [r for r in result.get("forward", []) if _keep(r)]
@@ -388,6 +431,7 @@ async def scanner_trigger(
                 if v in PURE_ALL_VENUES
             ] or list(PURE_DEFAULT_VENUES)
             edge_1h = _min_edge_1h()
+            edge_mismatch = _min_edge_mismatch()
             scan_min_edge = (
                 min(min_edge, edge_1h) if edge_1h is not None else min_edge
             )
@@ -400,7 +444,7 @@ async def scanner_trigger(
                     max_mark_spread_pct=max_mark,
                     fee_policy=_fee_policy(),
                 )
-                return _apply_group_thresholds(raw, min_edge, edge_1h)
+                return _apply_group_thresholds(raw, min_edge, edge_1h, edge_mismatch)
 
             result = await loop.run_in_executor(None, _run_pure)
             _pure_results = result
@@ -548,11 +592,14 @@ async def scanner_recalc_fees():
 
     min_spread, min_edge, _ = _scan_thresholds()
     edge_1h = _min_edge_1h()
+    edge_mismatch = _min_edge_mismatch()
     updated: dict[str, Any] = {}
 
     if _pure_results is not None:
         recalc = _recalc_pure_fees(_pure_results)
-        _pure_results = _apply_group_thresholds(recalc, min_edge, edge_1h)
+        _pure_results = _apply_group_thresholds(
+            recalc, min_edge, edge_1h, edge_mismatch
+        )
         updated["pure"] = _pure_results
 
     if _carry_results:

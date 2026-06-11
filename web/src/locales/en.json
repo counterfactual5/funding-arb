@@ -161,6 +161,7 @@
     "minSpreadAnnual": "Min Spread Annual",
     "minEdgeAnnual": "Min Edge Annual",
     "minEdge1h": "Min Edge (1h Group)",
+    "minEdgeMismatch": "Min Edge (Cross-Interval)",
     "maxMarkSpread": "Max Mark Spread",
     "tradeSize": "Trade Size",
     "maxPositions": "Max Positions",

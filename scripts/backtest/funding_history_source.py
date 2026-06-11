@@ -49,6 +49,12 @@ from core.fee_providers import (  # noqa: E402
 
 CACHE_DIR = ROOT / "data" / "cache" / "funding-history"
 CACHE_TTL_SEC = 6 * 3600
+
+# Venues with no public settled-funding history endpoint (anonymous access).
+# EdgeX's getFundingRatePage returns an empty list without an account context,
+# so these legs contribute no history and are skipped (current-snapshot scanning
+# still works). Revisit if the V2 SDK exposes a read-only history path.
+_NO_PUBLIC_HISTORY = frozenset({"edgex"})
 SPOT_TAKER_FEE_PCT = 0.10  # Spot taker fee is typically 0.1% across all four venues
 DEFAULT_BORROW_APR_PCT = (
     15.0  # cc_reverse borrow APR assumption (may be higher for small caps)
@@ -68,6 +74,14 @@ def fetch_leg_history(
 
     Returns [{"ts": ms, "rate_pct": float}, ...] ascending; returns [] on failure/no data.
     """
+    if venue.lower() in _NO_PUBLIC_HISTORY:
+        print(
+            f"[history] {venue} has no public funding history "
+            f"(current-snapshot only) — leg excluded from backtest",
+            file=sys.stderr,
+        )
+        return []
+
     sym = f"{base.upper()}USDT"
     start_ms = int((time.time() - days * 86400) * 1000)
     cache_path = cache_dir / f"{venue.lower()}_{sym}.json"

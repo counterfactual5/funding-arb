@@ -36,6 +36,7 @@ const strategyForm = reactive({
   scan_interval_sec: 0,
   scan_venues: [] as string[],
   min_edge_1h: 0,
+  min_edge_mismatch: 0,
   fee_mode: 'auto' as 'auto' | 'api' | 'vip_tier',
   venue_fee_tiers: {} as Record<string, string>,
 })
@@ -82,6 +83,7 @@ onMounted(async () => {
     strategyForm.scan_interval_sec = s.scan_interval_sec
     if (Array.isArray(s.scan_venues) && s.scan_venues.length > 0) strategyForm.scan_venues = s.scan_venues
     if (typeof s.min_edge_1h === 'number') strategyForm.min_edge_1h = s.min_edge_1h
+    if (typeof s.min_edge_mismatch === 'number') strategyForm.min_edge_mismatch = s.min_edge_mismatch
     if (s.fee_mode) strategyForm.fee_mode = s.fee_mode
     if (s.venue_fee_tiers) strategyForm.venue_fee_tiers = { ...s.venue_fee_tiers }
   }
@@ -156,6 +158,11 @@ async function handleSave() {
             </n-form-item>
             <n-form-item :label="t('settings.minEdge1h')">
               <n-input-number v-model:value="strategyForm.min_edge_1h" :min="0" :max="100" :step="0.005" style="width: 100%">
+                <template #suffix>%</template>
+              </n-input-number>
+            </n-form-item>
+            <n-form-item :label="t('settings.minEdgeMismatch')">
+              <n-input-number v-model:value="strategyForm.min_edge_mismatch" :min="0" :max="100" :step="0.005" style="width: 100%">
                 <template #suffix>%</template>
               </n-input-number>
             </n-form-item>

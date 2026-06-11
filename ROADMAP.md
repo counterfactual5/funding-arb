@@ -12,6 +12,7 @@ Last updated: 2026-06-12
 | Execution + positions | Done | `scripts/execution/pure_futures_executor.py`, `pure_futures_trade.py` |
 | Runner + watcher | Done | `run_pure_futures_spread.py`, `pure_futures_watcher.py` |
 | Settlement mismatch | Done | `settle_mismatch_planner.py` |
+| Interval-group edge thresholds | Done | hourly-normalized spread + per-group net-edge bars: `min_edge_1h` (both-1h, lower) / `min_edge_mismatch` (cross-interval risk premium, higher) in `scanner.py`; Scanner UI same/cross filter |
 | Orchestrator | Done | `orchestrate_funding.py --pure-futures` |
 | Backtest + history | Done | `backtest_pure_futures_spread.py`, `funding_history_source.py` |
 | Cash-and-carry / unified scan | Done | `scan_funding_arbitrage.py`, `scan_unified_funding.py` |

@@ -136,6 +136,7 @@ export interface StrategyParams {
   scan_interval_sec: number;
   scan_venues?: string[];
   min_edge_1h?: number;
+  min_edge_mismatch?: number;
   fee_mode?: 'auto' | 'api' | 'vip_tier';
   venue_fee_tiers?: Record<string, string>;
 }
