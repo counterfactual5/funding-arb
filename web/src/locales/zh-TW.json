@@ -143,7 +143,9 @@
     "shortVenue": "做空交易所",
     "holdDays": "持倉天數",
     "pair": "交易對",
-    "direction": "方向"
+    "direction": "方向",
+    "id": "ID",
+    "pnlUsdt": "盈虧 (USDT)"
   },
   "settings": {
     "venueConfig": "交易所設定",

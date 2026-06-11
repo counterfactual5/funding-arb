@@ -143,6 +143,8 @@
     "shortVenue": "Short Venue",
     "holdDays": "Hold Days",
     "pair": "Pair",
+    "pnlUsdt": "PnL (USDT)",
+    "id": "ID",
     "direction": "Direction"
   },
   "settings": {

@@ -85,8 +85,8 @@ const tableColumns = computed<DataTableColumns<PositionItem>>(() => [
     width: 80,
     render: (row) => h(NTag, { size: 'small', type: row.direction === 'forward' ? 'success' : 'warning', bordered: false }, { default: () => row.direction }),
   },
-  { title: 'Long', key: 'long_venue', width: 80 },
-  { title: 'Short', key: 'short_venue', width: 80 },
+  { title: t('scanner.long'), key: 'long_venue', width: 80 },
+  { title: t('scanner.short'), key: 'short_venue', width: 80 },
   {
     title: t('positions.amount'),
     key: 'trade_usd',

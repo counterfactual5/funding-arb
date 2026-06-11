@@ -25,7 +25,7 @@ import {
   PulseOutline,
 } from '@vicons/ionicons5'
 import { useWebSocket } from '@/composables/useApi'
-import { setLocale, SUPPORTED_LOCALES, type SupportedLocale } from '@/i18n'
+import i18n, { setLocale, SUPPORTED_LOCALES, type SupportedLocale } from '@/i18n'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -58,10 +58,7 @@ const menuOptions = computed<MenuOption[]>(() => [
 ])
 
 const currentLocale = computed({
-  get: () => {
-    const { locale } = useI18n()
-    return locale.value as SupportedLocale
-  },
+  get: () => i18n.global.locale.value as SupportedLocale,
   set: (val: SupportedLocale) => setLocale(val),
 })
 
