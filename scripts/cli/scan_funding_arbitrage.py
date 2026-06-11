@@ -26,6 +26,12 @@ if str(ROOT) not in sys.path:
 
 from backtest.borrow_providers import borrow_cost_per_period, get_borrow_provider
 from backtest.funding_providers import get_funding_provider
+from core.fee_providers import (
+    build_policy_carry_caches,
+    carry_two_leg_fee_pct,
+    parse_fee_policy,
+    resolve_venue_fee,
+)
 from market.parallel_fetch import run_io_parallel
 
 TZ = timezone(timedelta(hours=8))
@@ -37,19 +43,6 @@ DEFAULT_UNIVERSE_MIN = 0.03
 DEFAULT_BORROW_ANNUAL_PCT = 8.0
 DEFAULT_IO_WORKERS = 8
 HOURS_PER_YEAR = 365.0 * 24.0
-# Taker fee rates split into spot/futures: spot leg generally 0.1%, much higher than futures leg
-SPOT_TAKER_FEE = {
-    "bitget": 0.001,
-    "binance": 0.001,
-    "okx": 0.001,
-    "bybit": 0.001,
-}
-FUTURES_TAKER_FEE = {
-    "bitget": 0.0006,
-    "binance": 0.0005,
-    "okx": 0.0005,
-    "bybit": 0.00055,
-}
 BLACKLIST = {"USDC", "FDUSD", "TUSD", "BTCDOM", "BUSD"}
 
 VENUE_CLASSES = {
@@ -98,14 +91,28 @@ def scan_venue(
     universe_min: float,
     borrow_fallback_annual_pct: float = DEFAULT_BORROW_ANNUAL_PCT,
     max_workers: int = DEFAULT_IO_WORKERS,
+    fee_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Scan a single exchange, return structured results."""
     fp = get_funding_provider(venue)
     rows = fp.fetch_all("USDT")
     imap = fp.fetch_interval_map("USDT")
-    spot_fee = SPOT_TAKER_FEE.get(venue, 0.001)
-    futures_fee = FUTURES_TAKER_FEE.get(venue, 0.0006)
-    two_leg_fee = (spot_fee + futures_fee) * 100  # Spot leg + futures leg, percentage
+
+    policy = parse_fee_policy(fee_policy)
+    symbols = [
+        r["symbol"].upper()
+        for r in rows
+        if r["symbol"].upper().endswith("USDT")
+        and r["symbol"].upper()[:-4] not in BLACKLIST
+    ]
+    futures_cache, spot_cache = build_policy_carry_caches(
+        venue, symbols, policy, workers=max_workers
+    )
+    resolved = resolve_venue_fee(venue, leg="spot", policy=policy)
+    resolved_fut = resolve_venue_fee(venue, leg="futures", policy=policy)
+    default_spot_pct = float(resolved["taker_pct"])
+    default_futures_pct = float(resolved_fut["taker_pct"])
+    fee_source = resolved_fut.get("source", "tier")
 
     positive: list[dict[str, Any]] = []
     negative: list[dict[str, Any]] = []
@@ -123,6 +130,12 @@ def scan_venue(
         interval_h = imap.get(sym, 8.0)
         annual = abs(rate) * (24 / interval_h) * 365
         mark = r.get("mark_price", 0) or 0
+        spot_pct, futures_pct, two_leg_fee = carry_two_leg_fee_pct(
+            venue,
+            sym,
+            futures_cache=futures_cache,
+            spot_cache=spot_cache,
+        )
 
         entry_obj: dict[str, Any] = {
             "base": base,
@@ -132,6 +145,8 @@ def scan_venue(
             "interval_h": interval_h,
             "annual_pct": round(annual, 1),
             "mark_price": mark,
+            "spot_fee_pct": round(spot_pct, 4),
+            "futures_fee_pct": round(futures_pct, 4),
             "fee_pct": round(two_leg_fee, 4),
         }
 
@@ -209,7 +224,13 @@ def scan_venue(
                 if daily > 0
                 else _borrow_pct_per_interval(annual_borrow, x["interval_h"])
             )
-            net = abs(x["rate_pct"]) - borrow_period - two_leg_fee
+            _, _, leg_fee = carry_two_leg_fee_pct(
+                venue,
+                x["symbol"],
+                futures_cache=futures_cache,
+                spot_cache=spot_cache,
+            )
+            net = abs(x["rate_pct"]) - borrow_period - leg_fee
             x["borrowable"] = borrowable
             x["borrow_daily_pct"] = round(daily, 4)
             x["borrow_annual_pct"] = round(annual_borrow, 2)
@@ -237,9 +258,11 @@ def scan_venue(
     return {
         "venue": venue,
         "total_pairs": len(positive) + len(negative),
-        "spot_fee_pct": round(spot_fee * 100, 4),
-        "futures_fee_pct": round(futures_fee * 100, 4),
-        "two_leg_fee_pct": round(two_leg_fee, 4),
+        "spot_fee_pct": default_spot_pct,
+        "futures_fee_pct": default_futures_pct,
+        "two_leg_fee_pct": round(default_spot_pct + default_futures_pct, 4),
+        "fee_source": fee_source,
+        "fee_tier": resolved_fut.get("tier"),
         "borrow_fallback_annual_pct": borrow_fallback_annual_pct,
         "entry_threshold": entry,
         "forward_candidates": [x for x in positive if x["rate_pct"] >= entry and x.get("has_spot")],

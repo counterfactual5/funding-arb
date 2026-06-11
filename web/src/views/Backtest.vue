@@ -11,7 +11,7 @@ import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
-import { getBacktestHistory, post, type BacktestResult, type BacktestTrade } from '@/composables/useApi'
+import { getBacktestHistory, post, getVenues, type BacktestResult, type BacktestTrade } from '@/composables/useApi'
 import { useI18n } from 'vue-i18n'
 
 use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
@@ -19,6 +19,11 @@ use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 const { t } = useI18n()
 const message = useMessage()
 const history = getBacktestHistory()
+const venuesAPI = getVenues()
+
+const venueOptions = computed(() =>
+  (venuesAPI.data.value ?? []).map((v) => ({ label: v.name, value: v.id }))
+)
 
 const capital = ref<number>(100000)
 const tradeUsd = ref<number>(5000)
@@ -27,16 +32,8 @@ const exitEdge = ref<number>(0.02)
 const maxPositions = ref<number>(3)
 const historyBases = ref<string>('')
 const historyDays = ref<number>(90)
-const historyVenues = ref<string[]>(['binance', 'bitget', 'bybit', 'okx'])
-const VENUE_OPTIONS = [
-  { label: 'Binance', value: 'binance' },
-  { label: 'Bitget', value: 'bitget' },
-  { label: 'Bybit', value: 'bybit' },
-  { label: 'OKX', value: 'okx' },
-  { label: 'Hyperliquid (1h)', value: 'hyperliquid' },
-  { label: 'Aster (DEX)', value: 'aster' },
-  { label: 'Lighter (1h DEX)', value: 'lighter' },
-]
+const historyVenues = ref<string[]>([])
+const selectedVenues = ref<string[]>([])
 const running = ref(false)
 const latestResult = ref<BacktestResult | null>(null)
 
@@ -129,6 +126,7 @@ const tradeColumns = computed<DataTableColumns<BacktestTrade>>(() => [
 
 onMounted(() => {
   history.refresh()
+  venuesAPI.refresh()
 })
 </script>
 
@@ -145,7 +143,7 @@ onMounted(() => {
               <n-input-number v-model:value="historyDays" :min="1" :max="365" style="width: 100%" />
             </n-form-item>
             <n-form-item :label="t('backtest.venues')">
-              <n-select v-model:value="historyVenues" :options="VENUE_OPTIONS" multiple style="width: 100%" />
+              <n-select v-model:value="historyVenues" :options="venueOptions" multiple style="width: 100%" />
             </n-form-item>
             <n-form-item :label="t('backtest.initialCapital')">
               <n-input-number v-model:value="capital" :min="1000" :step="10000" style="width: 100%" />

@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import os
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -63,7 +62,7 @@ def _read_positions() -> list[dict[str, Any]]:
 def _enrich_positions_with_pnl(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Attach unrealized PnL from live mark prices for open positions."""
     open_pos = [
-        p for p in positions if p.get("status") in ("open", "mock") and p.get("qty")
+        p for p in positions if p.get("status") == "open" and p.get("qty")
     ]
     if not open_pos:
         return positions
@@ -89,7 +88,7 @@ def _enrich_positions_with_pnl(positions: list[dict[str, Any]]) -> list[dict[str
     enriched: list[dict[str, Any]] = []
     for pos in positions:
         p = dict(pos)
-        if p.get("status") not in ("open", "mock"):
+        if p.get("status") != "open":
             enriched.append(p)
             continue
         qty = float(p.get("qty") or 0)
@@ -112,44 +111,6 @@ def _enrich_positions_with_pnl(positions: list[dict[str, Any]]) -> list[dict[str
             )
         enriched.append(p)
     return enriched
-
-
-def _mock_positions() -> list[dict[str, Any]]:
-    now = time.time()
-    return [
-        {
-            "id": "demo-001",
-            "base": "BTC",
-            "direction": "forward",
-            "long_venue": "binance",
-            "short_venue": "bybit",
-            "long_symbol": "BTCUSDT",
-            "short_symbol": "BTCUSDT",
-            "amount_usd": 10000.0,
-            "open_edge_pct": 0.035,
-            "open_spread_pct": 0.0438,
-            "status": "open",
-            "pnl_usd": 42.5,
-            "open_time": time.strftime(
-                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 86400 * 3)
-            ),
-        },
-        {
-            "id": "demo-002",
-            "base": "ETH",
-            "direction": "forward",
-            "long_venue": "okx",
-            "short_venue": "bitget",
-            "long_symbol": "ETHUSDT",
-            "short_symbol": "ETHUSDT",
-            "amount_usd": 5000.0,
-            "open_edge_pct": 0.0312,
-            "open_spread_pct": 0.0390,
-            "status": "open",
-            "pnl_usd": -8.3,
-            "open_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 86400)),
-        },
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -180,8 +141,6 @@ async def list_positions():
     """List all positions (open + closed)."""
     positions = _read_positions()
     live = _load_positions_fn is not None
-    if not positions and not live:
-        return {"success": True, "data": _mock_positions(), "live": False}
     if live and positions:
         positions = _enrich_positions_with_pnl(positions)
     return {"success": True, "data": positions, "live": live}
@@ -192,9 +151,6 @@ async def get_position(position_id: str):
     """Get a single position by ID."""
     positions = _read_positions()
     live = _load_positions_fn is not None
-
-    if not positions and not live:
-        positions = _mock_positions()
 
     for pos in positions:
         if pos.get("id") == position_id:
@@ -253,28 +209,10 @@ async def open_position(req: OpenPositionRequest):
         pass
 
     if _load_positions_fn is None:
-        # Mock mode: just record it
-        pos = {
-            "id": f"mock-{uuid.uuid4().hex[:8]}",
-            "base": req.base,
-            "direction": "forward",
-            "long_venue": req.long_venue,
-            "short_venue": req.short_venue,
-            "long_symbol": f"{req.base}USDT",
-            "short_symbol": f"{req.base}USDT",
-            "amount_usd": req.amount_usd,
-            "open_edge_pct": 0.0,
-            "open_spread_pct": 0.0,
-            "status": "mock",
-            "pnl_usd": 0.0,
-            "dry_run": req.dry_run,
-            "open_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
         return {
-            "success": True,
-            "data": pos,
+            "success": False,
+            "error": "Executor module unavailable",
             "live": False,
-            "message": "Executor module unavailable, simulated position open",
         }
 
     try:

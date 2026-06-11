@@ -102,6 +102,15 @@ def _scan_thresholds() -> tuple[float, float, float]:
     )
 
 
+def _fee_policy() -> dict[str, Any]:
+    try:
+        from core.fee_providers import parse_fee_policy  # noqa: E402
+
+        return parse_fee_policy(_strategy_cfg())
+    except Exception:
+        return {"mode": "auto", "venue_tiers": {}}
+
+
 def _min_edge_1h() -> float | None:
     """Optional lower net-edge threshold for pairs where both legs settle hourly.
 
@@ -114,6 +123,93 @@ def _min_edge_1h() -> float | None:
         return float(val) if val is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _recalc_pure_fees(result: dict[str, Any]) -> dict[str, Any]:
+    """Recompute per-leg fees and net edge from cached spread using current fee policy."""
+    from core.fee_providers import resolve_venue_fee  # noqa: E402
+
+    policy = _fee_policy()
+    out = dict(result)
+    for section in ("forward", "reverse"):
+        updated: list[dict[str, Any]] = []
+        for row in result.get(section, []):
+            base = str(row.get("base", ""))
+            sym = f"{base}USDT"
+            long_fee = float(
+                resolve_venue_fee(
+                    str(row["long_venue"]), leg="futures", symbol=sym, policy=policy
+                )["taker_pct"]
+            )
+            short_fee = float(
+                resolve_venue_fee(
+                    str(row["short_venue"]), leg="futures", symbol=sym, policy=policy
+                )["taker_pct"]
+            )
+            fee_pct = long_fee + short_fee
+            spread = float(row.get("spread_pct", 0) or 0)
+            r = dict(row)
+            r["long_fee_pct"] = round(long_fee, 4)
+            r["short_fee_pct"] = round(short_fee, 4)
+            r["fee_pct"] = round(fee_pct, 4)
+            r["round_trip_fee_pct"] = round(fee_pct * 2, 4)
+            r["net_edge_pct"] = round(spread - fee_pct, 6)
+            updated.append(r)
+        updated.sort(key=lambda x: -float(x.get("net_edge_pct", 0) or 0))
+        out[section] = updated
+    out["total_spreads_found"] = len(out.get("forward", [])) + len(out.get("reverse", []))
+    return out
+
+
+def _recalc_carry_fees(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from core.fee_providers import carry_two_leg_fee_pct, resolve_venue_fee  # noqa: E402
+
+    policy = _fee_policy()
+    out: list[dict[str, Any]] = []
+    for block in results:
+        if block.get("error"):
+            out.append(block)
+            continue
+        venue = str(block.get("venue", ""))
+        spot = resolve_venue_fee(venue, leg="spot", policy=policy)
+        fut = resolve_venue_fee(venue, leg="futures", policy=policy)
+        spot_pct = float(spot["taker_pct"])
+        fut_pct = float(fut["taker_pct"])
+        two_leg = spot_pct + fut_pct
+        nb = dict(block)
+        nb["spot_fee_pct"] = round(spot_pct, 4)
+        nb["futures_fee_pct"] = round(fut_pct, 4)
+        nb["two_leg_fee_pct"] = round(two_leg, 4)
+        nb["fee_source"] = fut.get("source", "tier")
+        nb["fee_tier"] = fut.get("tier")
+
+        for key in ("forward", "reverse"):
+            rows: list[dict[str, Any]] = []
+            for row in block.get(key, []):
+                sym = str(row.get("symbol", ""))
+                from core.fee_providers import normalize_symbol  # noqa: E402
+
+                cache_key = (venue.lower(), normalize_symbol(sym))
+                _, _, leg_fee = carry_two_leg_fee_pct(
+                    venue,
+                    sym,
+                    futures_cache={cache_key: {"taker_pct": fut_pct}},
+                    spot_cache={cache_key: {"taker_pct": spot_pct}},
+                )
+                r = dict(row)
+                r["spot_fee_pct"] = round(spot_pct, 4)
+                r["futures_fee_pct"] = round(fut_pct, 4)
+                r["fee_pct"] = round(leg_fee, 4)
+                rate = float(row.get("rate_pct", 0) or 0)
+                if key == "forward":
+                    r["net_edge_pct"] = round(rate - leg_fee, 4)
+                else:
+                    borrow_period = float(row.get("borrow_per_period_pct", 0) or 0)
+                    r["net_edge_pct"] = round(abs(rate) - borrow_period - leg_fee, 4)
+                rows.append(r)
+            nb[key] = rows
+        out.append(nb)
+    return out
 
 
 def _apply_group_thresholds(
@@ -142,127 +238,27 @@ def _apply_group_thresholds(
     return out
 
 
-# ---------------------------------------------------------------------------
-# Mock data
-# ---------------------------------------------------------------------------
-
-
-def _mock_pure() -> dict[str, Any]:
-    # Field names mirror cli.scan_pure_futures_spreads._scan_spreads output.
+def _empty_pure() -> dict[str, Any]:
+    """Empty scan result shape (no placeholder rows)."""
     return {
-        "venues": CARRY_VENUES,
-        "total_assets_scanned": 45,
-        "total_spreads_found": 2,
-        "forward": [
-            {
-                "base": "BTC",
-                "direction": "forward",
-                "long_venue": "binance",
-                "short_venue": "bybit",
-                "long_rate_pct": 0.0185,
-                "short_rate_pct": 0.0623,
-                "spread_pct": 0.0438,
-                "fee_pct": 0.0088,
-                "round_trip_fee_pct": 0.0176,
-                "net_edge_pct": 0.0350,
-                "annual_apy_pct": 47.9,
-                "long_mark": 95010.0,
-                "short_mark": 95025.0,
-                "mark_spread_pct": 0.0158,
-                "long_interval_h": 8.0,
-                "short_interval_h": 8.0,
-                "settle_mismatch": False,
-                "same_interval": True,
-            },
-        ],
-        "reverse": [
-            {
-                "base": "SOL",
-                "direction": "reverse",
-                "long_venue": "bybit",
-                "short_venue": "binance",
-                "long_rate_pct": -0.0680,
-                "short_rate_pct": -0.0210,
-                "spread_pct": 0.0470,
-                "fee_pct": 0.0094,
-                "round_trip_fee_pct": 0.0188,
-                "net_edge_pct": 0.0376,
-                "annual_apy_pct": 51.4,
-                "long_mark": 185.21,
-                "short_mark": 185.16,
-                "mark_spread_pct": 0.0270,
-                "long_interval_h": 1.0,
-                "short_interval_h": 8.0,
-                "settle_mismatch": True,
-                "same_interval": False,
-            },
-        ],
+        "venues": [],
+        "total_assets_scanned": 0,
+        "total_spreads_found": 0,
+        "forward": [],
+        "reverse": [],
         "venue_pair_stats": [],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": None,
     }
 
 
-def _mock_carry() -> list[dict[str, Any]]:
-    return [
-        {
-            "venue": "binance",
-            "total_pairs": 120,
-            "forward": [
-                {
-                    "base": "BTC",
-                    "symbol": "BTCUSDT",
-                    "rate_pct": 0.0623,
-                    "annual_pct": 68.2,
-                    "has_spot": True,
-                    "net_edge_pct": 0.04,
-                    "spot_price": 95000.0,
-                    "next_ts": int(time.time() * 1000 + 8 * 3600 * 1000),
-                    "interval_h": 8.0,
-                },
-                {
-                    "base": "ETH",
-                    "symbol": "ETHUSDT",
-                    "rate_pct": 0.0510,
-                    "annual_pct": 55.8,
-                    "has_spot": True,
-                    "net_edge_pct": 0.03,
-                    "spot_price": 4200.0,
-                    "next_ts": int(time.time() * 1000 + 8 * 3600 * 1000),
-                    "interval_h": 8.0,
-                },
-            ],
-            "reverse": [
-                {
-                    "base": "ARB",
-                    "symbol": "ARBUSDT",
-                    "rate_pct": -0.0245,
-                    "annual_pct": 26.8,
-                    "borrowable": True,
-                    "net_edge_pct": 0.01,
-                    "next_ts": int(time.time() * 1000 + 4 * 3600 * 1000),
-                    "interval_h": 4.0,
-                },
-            ],
-        },
-        {
-            "venue": "bybit",
-            "total_pairs": 118,
-            "forward": [
-                {
-                    "base": "SOL",
-                    "symbol": "SOLUSDT",
-                    "rate_pct": 0.0382,
-                    "annual_pct": 41.8,
-                    "has_spot": True,
-                    "net_edge_pct": 0.02,
-                    "spot_price": 185.0,
-                    "next_ts": int(time.time() * 1000 + 6 * 3600 * 1000),
-                    "interval_h": 8.0,
-                },
-            ],
-            "reverse": [],
-        },
-    ]
+def _scanner_available(strategy: str) -> bool:
+    if strategy == "pure":
+        return _scan_pure_fn is not None
+    if strategy == "carry":
+        return _scan_carry_fn is not None
+    if strategy == "unified":
+        return _unified_carry_cls is not None
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -313,29 +309,42 @@ async def scanner_status(
 async def scanner_opportunities(
     strategy: str = Query("pure", enum=["pure", "carry", "unified"]),
 ):
-    """Return latest opportunities for the requested strategy."""
+    """Return latest cached scan results (empty until a real scan completes)."""
+    available = _scanner_available(strategy)
     if strategy == "pure":
         if _pure_results is not None:
-            return {"success": True, "data": _pure_results, "live": True}
-        return {"success": True, "data": _mock_pure(), "live": False}
+            return {
+                "success": True,
+                "data": _pure_results,
+                "live": available,
+                "has_data": True,
+            }
+        return {
+            "success": True,
+            "data": _empty_pure(),
+            "live": available,
+            "has_data": False,
+        }
 
     if strategy == "carry":
         if _carry_results:
             return {
                 "success": True,
                 "data": _carry_results,
-                "live": _scan_carry_fn is not None,
+                "live": available,
+                "has_data": True,
             }
-        return {"success": True, "data": _mock_carry(), "live": False}
+        return {"success": True, "data": [], "live": available, "has_data": False}
 
     if strategy == "unified":
         if _unified_results:
             return {
                 "success": True,
                 "data": _unified_results,
-                "live": _unified_carry_cls is not None,
+                "live": available,
+                "has_data": True,
             }
-        return {"success": True, "data": [], "live": False}
+        return {"success": True, "data": [], "live": available, "has_data": False}
 
     return {"success": False, "error": f"Unknown strategy: {strategy}"}
 
@@ -368,14 +377,10 @@ async def scanner_trigger(
 
         if strategy == "pure":
             if _scan_pure_fn is None:
-                mock = _mock_pure()
-                _pure_results = mock
-                _pure_ts = time.time()
                 return {
-                    "success": True,
-                    "data": mock,
+                    "success": False,
+                    "error": "Pure futures scanner unavailable",
                     "live": False,
-                    "message": "Scanner unavailable, returning mock",
                 }
             venue_list = [
                 v
@@ -393,6 +398,7 @@ async def scanner_trigger(
                     min_spread=min_spread,
                     min_edge=scan_min_edge,
                     max_mark_spread_pct=max_mark,
+                    fee_policy=_fee_policy(),
                 )
                 return _apply_group_thresholds(raw, min_edge, edge_1h)
 
@@ -424,6 +430,7 @@ async def scanner_trigger(
                             exit_rate=min_edge,
                             universe_min=min_edge,
                             max_workers=8,
+                            fee_policy=_fee_policy(),
                         )
                         # Simplify: keep only forward/reverse candidates + metadata
                         results.append(
@@ -435,6 +442,8 @@ async def scanner_trigger(
                                 "spot_fee_pct": r.get("spot_fee_pct", 0),
                                 "futures_fee_pct": r.get("futures_fee_pct", 0),
                                 "two_leg_fee_pct": r.get("two_leg_fee_pct", 0),
+                                "fee_source": r.get("fee_source"),
+                                "fee_tier": r.get("fee_tier"),
                             }
                         )
                     except Exception as e:
@@ -530,6 +539,31 @@ async def scanner_scan_all():
         results["unified"] = None
 
     return {"success": True, "data": results}
+
+
+@router.post("/scanner/recalc-fees")
+async def scanner_recalc_fees():
+    """Recompute net edge on cached scan results using current fee policy (no re-scan)."""
+    global _pure_results, _carry_results
+
+    min_spread, min_edge, _ = _scan_thresholds()
+    edge_1h = _min_edge_1h()
+    updated: dict[str, Any] = {}
+
+    if _pure_results is not None:
+        recalc = _recalc_pure_fees(_pure_results)
+        _pure_results = _apply_group_thresholds(recalc, min_edge, edge_1h)
+        updated["pure"] = _pure_results
+
+    if _carry_results:
+        _carry_results = _recalc_carry_fees(_carry_results)
+        updated["carry"] = _carry_results
+
+    if not updated:
+        return {"success": False, "error": "No cached scan results to recalculate"}
+
+    await _broadcast("scanner.update", {"recalc_fees": True, "data": updated})
+    return {"success": True, "data": updated}
 
 
 async def _broadcast(event: str, data: dict[str, Any]) -> None:

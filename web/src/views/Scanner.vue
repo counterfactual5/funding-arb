@@ -12,8 +12,8 @@
         </n-space>
       </template>
       <template #header-extra>
-        <n-tag v-if="!scannerLive" size="small" type="warning" :bordered="false">{{ t('scanner.mock') }}</n-tag>
-        <n-tag v-else type="success" size="small" :bordered="false">{{ t('scanner.live') }}</n-tag>
+        <n-tag v-if="refreshing" size="small" type="info" :bordered="false">{{ t('scanner.scanningFromExchanges') }}</n-tag>
+        <n-tag v-else-if="lastScanLabel" size="small" type="success" :bordered="false">{{ lastScanLabel }}</n-tag>
       </template>
 
       <n-space align="center" style="margin-bottom: 12px" wrap>
@@ -45,7 +45,7 @@
         </template>
       </n-space>
 
-      <n-spin :show="loading">
+      <n-spin :show="loading || refreshing">
         <!-- PURE FUTURES -->
         <template v-if="strategy === 'pure'">
           <n-grid :cols="4" :x-gap="16" :y-gap="16" style="margin-bottom:16px">
@@ -167,7 +167,7 @@ type Strategy = 'pure' | 'carry' | 'unified'
 const strategy = ref<Strategy>('pure')
 const loading = ref(false)
 const refreshing = ref(false)
-const scannerLive = ref(false)
+const lastScanLabel = ref('')
 
 // Data stores per strategy
 const pureData = ref<ScannerOpportunities | null>(null)
@@ -223,17 +223,78 @@ function venuesQuery(): string {
   return selectedVenues.value.length > 0 ? selectedVenues.value.join(',') : ''
 }
 
-async function loadData(s?: Strategy | MouseEvent) {
+function applyScanData(st: Strategy, data: unknown) {
+  if (st === 'pure') pureData.value = data as ScannerOpportunities
+  else if (st === 'carry') carryData.value = Array.isArray(data) ? data : []
+  else unifiedData.value = Array.isArray(data) ? data as UnifiedCarryCand[] : []
+}
+
+function formatScanTime(iso: string | null | undefined) {
+  if (!iso) return ''
+  try {
+    const d = new Date(iso)
+    return t('scanner.lastScan', { time: d.toLocaleTimeString() })
+  } catch {
+    return ''
+  }
+}
+
+async function refreshScanLabel(st: Strategy) {
+  try {
+    const resp = await fetch(`/api/scanner/status?strategy=${st}`)
+    const json = await resp.json()
+    lastScanLabel.value = formatScanTime(json.data?.last_scan_time)
+  } catch {
+    lastScanLabel.value = ''
+  }
+}
+
+async function waitForScanData(st: Strategy, maxMs = 120000) {
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    await new Promise((r) => setTimeout(r, 2000))
+    const resp = await fetch(`/api/scanner/opportunities?strategy=${st}`)
+    const json = await resp.json()
+    if (json.success && json.has_data) {
+      applyScanData(st, json.data)
+      await refreshScanLabel(st)
+      return true
+    }
+    const status = await fetch(`/api/scanner/status?strategy=${st}`).then((r) => r.json())
+    if (!status.data?.scanning) break
+  }
+  return false
+}
+
+async function loadData(s?: Strategy | MouseEvent, autoScan = true) {
   const st = (s && typeof s !== 'object') ? s : strategy.value
   loading.value = true
   try {
     const resp = await fetch(`/api/scanner/opportunities?strategy=${st}`)
     const json = await resp.json()
-    scannerLive.value = json.live ?? false
     if (json.success) {
-      if (st === 'pure') pureData.value = json.data
-      else if (st === 'carry') carryData.value = Array.isArray(json.data) ? json.data : []
-      else unifiedData.value = Array.isArray(json.data) ? json.data : []
+      applyScanData(st, json.data)
+      await refreshScanLabel(st)
+    }
+    const available = json.live ?? false
+    const hasData = json.has_data ?? false
+    if (!available) {
+      message.warning(t('scanner.scannerUnavailable'))
+      return
+    }
+    if (autoScan && !hasData && !refreshing.value) {
+      const status = await fetch(`/api/scanner/status?strategy=${st}`).then((r) => r.json())
+      if (status.data?.scanning) {
+        refreshing.value = true
+        try {
+          const ok = await waitForScanData(st)
+          if (!ok) message.warning(t('scanner.scanFailed'))
+        } finally {
+          refreshing.value = false
+        }
+      } else {
+        await handleTriggerScan()
+      }
     }
   } catch { /* ignore */ }
   finally { loading.value = false }
@@ -243,14 +304,18 @@ async function handleTriggerScan() {
   refreshing.value = true
   try {
     const vq = venuesQuery()
-    const url = `/api/scanner/trigger?strategy=${strategy.value}${vq ? `&venues=${encodeURIComponent(vq)}` : ''}`
+    const st = strategy.value
+    const url = `/api/scanner/trigger?strategy=${st}${vq ? `&venues=${encodeURIComponent(vq)}` : ''}`
     const resp = await fetch(url, { method: 'POST' })
     const json = await resp.json()
     if (json.success) {
-      if (strategy.value === 'pure') pureData.value = json.data
-      else if (strategy.value === 'carry') carryData.value = Array.isArray(json.data) ? json.data : []
-      else unifiedData.value = Array.isArray(json.data) ? json.data : []
+      applyScanData(st, json.data)
+      await refreshScanLabel(st)
       message.success(t('scanner.scanComplete'))
+    } else if (json.error === 'Scan already in progress') {
+      const ok = await waitForScanData(st)
+      if (ok) message.success(t('scanner.scanComplete'))
+      else message.warning(t('scanner.scanFailed'))
     } else {
       message.error(json.error || t('scanner.scanFailed'))
     }
@@ -262,16 +327,23 @@ async function handleTriggerScan() {
 
 function onStrategyChange(val: Strategy) {
   strategy.value = val
-  loadData(val)
+  loadData(val, true)
 }
 
 // ---- WebSocket live updates (pushed by background scanner) ----
 function onWsMessage(msg: WsMessage) {
   if (msg.event !== 'scanner.update') return
   const d = msg.data as Record<string, any>
-  if (d.strategy === 'carry') carryData.value = Array.isArray(d.data) ? d.data : []
-  else if (d.strategy === 'unified') unifiedData.value = Array.isArray(d.data) ? d.data : []
-  else if (d.forward || d.reverse) { pureData.value = d as ScannerOpportunities; scannerLive.value = true }
+  if (d.strategy === 'carry') {
+    carryData.value = Array.isArray(d.data) ? d.data : []
+    refreshScanLabel('carry')
+  } else if (d.strategy === 'unified') {
+    unifiedData.value = Array.isArray(d.data) ? d.data : []
+    refreshScanLabel('unified')
+  } else if (d.forward || d.reverse) {
+    pureData.value = d as ScannerOpportunities
+    refreshScanLabel('pure')
+  }
 }
 const ws = useWebSocket(onWsMessage)
 

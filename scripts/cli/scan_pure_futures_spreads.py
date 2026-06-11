@@ -51,7 +51,8 @@ DEFAULT_JSONL_FILE = "data/pure_futures_spreads.jsonl"
 HOURS_PER_YEAR = 365.0 * 24.0
 
 from core.fee_providers import (
-    offline_fee_cache_from_by_base,
+    build_policy_futures_cache,
+    parse_fee_policy,
     pair_open_taker_fee_pct,
 )
 
@@ -306,6 +307,7 @@ def scan_pure_futures_spreads(
     min_edge: float = DEFAULT_MIN_EDGE,
     max_mark_spread_pct: float = 1.0,
     workers: int = DEFAULT_IO_WORKERS,
+    fee_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Main entry point — scan and return structured results."""
     if venues is None:
@@ -313,7 +315,8 @@ def scan_pure_futures_spreads(
 
     by_base = fetch_all_fee_rate_rows_by_base(venues, workers)
     _backfill_missing_settle_times(by_base, venues, workers)
-    fee_cache = offline_fee_cache_from_by_base(by_base)
+    policy = parse_fee_policy(fee_policy)
+    fee_cache = build_policy_futures_cache(by_base, policy, workers=workers)
 
     forward, reverse = _scan_spreads(
         by_base, min_spread, min_edge, fee_cache, max_mark_spread_pct

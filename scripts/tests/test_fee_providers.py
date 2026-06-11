@@ -11,11 +11,16 @@ sys.path.insert(0, str(ROOT))
 
 from core.fee_providers import (
     _decimal_to_pct,
+    build_policy_futures_cache,
+    carry_two_leg_fee_pct,
     normalize_symbol,
     offline_fee_cache_from_by_base,
     pair_open_taker_fee_pct,
+    parse_fee_policy,
     taker_fee_pct,
+    venue_uses_api,
 )
+from core.vip_fee_tiers import list_venue_tiers, tier_rates
 
 
 def test_normalize_symbol():
@@ -57,6 +62,52 @@ def test_pair_fee_uses_cache_not_venue_default():
     assert long_fee == 0.06
     assert short_fee == 0.11
     assert abs(total - 0.17) < 1e-9
+
+
+def test_carry_two_leg_fee_from_cache():
+    futures_cache = {("binance", "BTCUSDT"): {"taker_pct": 0.04, "maker_pct": 0.02}}
+    spot_cache = {("binance", "BTCUSDT"): {"taker_pct": 0.08, "maker_pct": 0.08}}
+    spot, futures, total = carry_two_leg_fee_pct(
+        "binance",
+        "BTCUSDT",
+        futures_cache=futures_cache,
+        spot_cache=spot_cache,
+    )
+    assert spot == 0.08
+    assert futures == 0.04
+    assert total == 0.12
+
+
+def test_tier_rates_binance_vip2():
+    rates = tier_rates("binance", "vip2")
+    assert rates["spot_taker_pct"] == 0.08
+    assert rates["futures_taker_pct"] == 0.035
+
+
+def test_list_venue_tiers_has_vip0():
+    tiers = list_venue_tiers("bybit")
+    assert any(t["id"] == "vip0" for t in tiers)
+
+
+def test_venue_uses_api_vip_tier_mode(monkeypatch):
+    monkeypatch.setenv("BINANCE_API_KEY", "x")
+    policy = parse_fee_policy({"fee_mode": "vip_tier", "venue_fee_tiers": {}})
+    assert venue_uses_api("binance", policy) is False
+
+
+def test_build_policy_futures_cache_uses_tier_without_api(monkeypatch):
+    monkeypatch.delenv("BINANCE_API_KEY", raising=False)
+    monkeypatch.delenv("BYBIT_API_KEY", raising=False)
+    by_base = {
+        "BTC": {
+            "binance": {"symbol": "BTCUSDT", "rate_pct": 0.01},
+            "bybit": {"symbol": "BTCUSDT", "rate_pct": 0.02},
+        },
+    }
+    policy = parse_fee_policy({"fee_mode": "auto", "venue_fee_tiers": {"bybit": "vip2"}})
+    cache = build_policy_futures_cache(by_base, policy)
+    assert cache[("binance", "BTCUSDT")]["taker_pct"] == 0.05  # vip0 futures
+    assert cache[("bybit", "BTCUSDT")]["taker_pct"] == 0.045  # vip2 futures
 
 
 def test_config_override_beats_cache():

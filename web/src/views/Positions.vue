@@ -17,13 +17,13 @@ const statusFilter = ref<'open' | 'closed' | 'all'>('open')
 const allItems = computed(() => positions.data.value ?? [])
 const filteredItems = computed(() => {
   if (statusFilter.value === 'all') return allItems.value
-  if (statusFilter.value === 'open') return allItems.value.filter((p) => p.status === 'open' || p.status === 'mock')
+  if (statusFilter.value === 'open') return allItems.value.filter((p) => p.status === 'open')
   return allItems.value.filter((p) => p.status === 'closed')
 })
 
 const summary = computed(() => {
   const items = allItems.value
-  const openItems = items.filter((p) => p.status === 'open' || p.status === 'mock')
+  const openItems = items.filter((p) => p.status === 'open')
   const closedItems = items.filter((p) => p.status === 'closed')
   const totalTrade = items.reduce((s, p) => s + (p.trade_usd ?? p.amount_usd ?? 0), 0)
   return {
@@ -99,8 +99,7 @@ const tableColumns = computed<DataTableColumns<PositionItem>>(() => [
     width: 110,
     render: (row) => {
       const val = row.mark_spread_pct ?? row.open_spread_pct ?? 0
-      // Real data: mark_spread_pct is a percentage already (e.g. 0.28 = 0.28%)
-      // Mock data: open_spread_pct is decimal (e.g. 0.035 = 3.5%)
+      // mark_spread_pct is already in percent; legacy open_spread_pct may be decimal
       const isReal = row.mark_spread_pct !== undefined
       return (isReal ? val : val * 100).toFixed(2) + '%'
     },
@@ -135,7 +134,6 @@ const tableColumns = computed<DataTableColumns<PositionItem>>(() => [
     render: (row) => {
       const colorMap: Record<string, 'success' | 'warning' | 'error' | 'default'> = {
         open: 'success',
-        mock: 'warning',
         closed: 'default',
       }
       return h(NTag, { size: 'small', type: colorMap[row.status] ?? 'default', bordered: false }, { default: () => row.status })

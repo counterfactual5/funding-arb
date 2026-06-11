@@ -156,14 +156,10 @@ def _adapt_result(raw: dict[str, Any], req: BacktestRequest) -> dict[str, Any]:
 async def run_backtest(req: BacktestRequest):
     """Run a backtest with given parameters."""
     if _backtest_fn is None:
-        # Return mock backtest result
-        result = _mock_backtest_result(req)
-        _save_backtest_result(result)
         return {
-            "success": True,
-            "data": result,
+            "success": False,
+            "error": "Backtest module unavailable",
             "live": False,
-            "message": "Backtest module unavailable, returning mock results",
         }
 
     try:
@@ -221,38 +217,6 @@ async def backtest_history():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _mock_backtest_result(req: BacktestRequest) -> dict[str, Any]:
-    now_ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    return {
-        "id": f"bt-{int(time.time())}",
-        "params": req.model_dump(),
-        "summary": {
-            "total_pnl_usd": 1847.32,
-            "total_pnl_pct": 1.85,
-            "annualized_pct": 7.4,
-            "max_drawdown_pct": 2.1,
-            "sharpe": 1.82,
-            "win_rate": 0.72,
-            "total_trades": 18,
-            "avg_hold_days": 4.3,
-        },
-        "trades": [
-            {
-                "base": "BTC",
-                "direction": "forward",
-                "long_venue": "binance",
-                "short_venue": "bybit",
-                "open_time": "2025-03-10T08:00:00Z",
-                "close_time": "2025-03-14T16:00:00Z",
-                "hold_days": 4.3,
-                "pnl_usd": 312.50,
-            },
-        ],
-        "run_time": now_ts,
-        "live": False,
-    }
 
 
 def _save_backtest_result(result: dict[str, Any]) -> None:

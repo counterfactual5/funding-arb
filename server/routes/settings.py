@@ -154,6 +154,14 @@ class StrategyParams(BaseModel):
             "hourly (1h group turns capital over faster)"
         ),
     )
+    fee_mode: str | None = Field(
+        None,
+        description="Fee source: auto (API when keys set, else VIP tier), api, vip_tier",
+    )
+    venue_fee_tiers: dict[str, str] | None = Field(
+        None,
+        description="Per-venue VIP tier when API keys are not configured",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +186,8 @@ _DEFAULT_STRATEGY: dict[str, Any] = {
     "scan_interval_sec": 300,
     "scan_venues": ["binance", "bitget", "bybit", "okx", "hyperliquid"],
     "min_edge_1h": 0.01,
+    "fee_mode": "auto",
+    "venue_fee_tiers": {},
 }
 
 
@@ -341,3 +351,54 @@ async def update_strategy(params: StrategyParams):
 async def get_strategy():
     """Return current strategy parameters."""
     return {"success": True, "data": _strategy_config}
+
+
+@router.get("/settings/fee-tiers")
+async def get_fee_tiers():
+    """Return available VIP tiers per venue for the settings UI."""
+    from core.vip_fee_tiers import ALL_VENUES, list_venue_tiers  # noqa: E402
+
+    return {
+        "success": True,
+        "data": {v: list_venue_tiers(v) for v in ALL_VENUES},
+    }
+
+
+@router.get("/settings/fees")
+async def get_resolved_fees():
+    """Return resolved spot/futures taker fees per venue (API or VIP tier)."""
+    from core.fee_providers import (  # noqa: E402
+        parse_fee_policy,
+        resolve_venue_fee,
+        venue_has_credentials,
+        venue_uses_api,
+    )
+    from core.vip_fee_tiers import ALL_VENUES  # noqa: E402
+
+    policy = parse_fee_policy(_strategy_config)
+    venues_out: dict[str, Any] = {}
+    for v in ALL_VENUES:
+        uses_api = venue_uses_api(v, policy)
+        spot = resolve_venue_fee(v, leg="spot", policy=policy)
+        futures = resolve_venue_fee(v, leg="futures", policy=policy)
+        tier = policy.get("venue_tiers", {}).get(v)
+        if not tier:
+            tier = spot.get("tier") or futures.get("tier")
+        venues_out[v] = {
+            "has_credentials": venue_has_credentials(v),
+            "uses_api": uses_api,
+            "tier": tier,
+            "spot_taker_pct": spot["taker_pct"],
+            "futures_taker_pct": futures["taker_pct"],
+            "spot_source": spot["source"],
+            "futures_source": futures["source"],
+        }
+
+    return {
+        "success": True,
+        "data": {
+            "fee_mode": policy.get("mode", "auto"),
+            "venue_fee_tiers": policy.get("venue_tiers", {}),
+            "venues": venues_out,
+        },
+    }

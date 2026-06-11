@@ -57,14 +57,14 @@ export interface PositionItem {
   long_price?: number;
   short_price?: number;
   trade_usd?: number;
-  amount_usd?: number; // Mock format
+  amount_usd?: number; // legacy field name
   pnl_usd?: number;
   unrealized_pnl_usd?: number;
   mark_spread_pct?: number;
-  open_spread_pct?: number; // Mock format
-  open_edge_pct?: number; // Mock format
-  opened_at?: number; // ms timestamp (real)
-  open_time?: string; // ISO string (mock)
+  open_spread_pct?: number; // legacy field name
+  open_edge_pct?: number; // legacy field name
+  opened_at?: number; // ms timestamp
+  open_time?: string; // legacy ISO string
   closed_at?: number;
   close_info?: Record<string, any>;
   dry_run?: boolean;
@@ -136,6 +136,31 @@ export interface StrategyParams {
   scan_interval_sec: number;
   scan_venues?: string[];
   min_edge_1h?: number;
+  fee_mode?: 'auto' | 'api' | 'vip_tier';
+  venue_fee_tiers?: Record<string, string>;
+}
+
+export interface FeeTierOption {
+  id: string;
+  label: string;
+  spot_taker_pct: number;
+  futures_taker_pct: number;
+}
+
+export interface ResolvedVenueFee {
+  has_credentials: boolean;
+  uses_api: boolean;
+  tier: string | null;
+  spot_taker_pct: number;
+  futures_taker_pct: number;
+  spot_source: 'api' | 'tier' | 'default';
+  futures_source: 'api' | 'tier' | 'default';
+}
+
+export interface ResolvedFees {
+  fee_mode: string;
+  venue_fee_tiers: Record<string, string>;
+  venues: Record<string, ResolvedVenueFee>;
 }
 
 export interface CredentialsStatus {
@@ -256,6 +281,14 @@ export function getCredentialsStatus() {
 
 export function getStrategy() {
   return useApi<StrategyParams>("/settings/strategy");
+}
+
+export function getFeeTiers() {
+  return useApi<Record<string, FeeTierOption[]>>("/settings/fee-tiers");
+}
+
+export function getResolvedFees() {
+  return useApi<ResolvedFees>("/settings/fees");
 }
 
 // ─── Cash-and-Carry types ──────────────────────────────────────────
