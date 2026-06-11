@@ -54,7 +54,7 @@ CEX_TIERS: dict[str, VenueTiers] = {
 # Perp-only venues (no spot leg in cash-and-carry)
 PERP_TIERS: dict[str, VenueTiers] = {
     "hyperliquid": {
-        "default": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.035},
+        "default": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.045},
     },
     "aster": {
         "default": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.035},

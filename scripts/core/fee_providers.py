@@ -20,7 +20,7 @@ DEFAULT_TAKER_PCT: dict[str, float] = {
     "binance": 0.05,
     "okx": 0.05,
     "bybit": 0.055,
-    "hyperliquid": 0.035,
+    "hyperliquid": 0.045,  # HL base cross rate (userFees userCrossRate=0.00045); was a stale 0.035
     "aster": 0.035,  # Aster perp taker VIP0
     "lighter": 0.0,  # Lighter currently zero-fee (orderBookDetails taker_fee=0)
     "edgex": 0.038,  # EdgeX defaultTakerFeeRate=0.00038 (getMetaData)
@@ -140,11 +140,96 @@ def _fetch_binance(symbol: str) -> dict[str, float]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Perp-DEX fee fetchers — public data, no account credentials required.
+# These replace stale hardcoded defaults so the scanner uses live venue fees.
+# ---------------------------------------------------------------------------
+
+# Venues whose real fees are fetchable from public endpoints (no API keys).
+_PUBLIC_FEE_VENUES = frozenset({"hyperliquid", "lighter", "edgex"})
+
+_HL_FEE_CACHE: tuple[float, dict[str, float]] | None = None
+_HL_FEE_TTL_SEC = 3600.0
+
+
+def _fetch_hyperliquid(symbol: str) -> dict[str, float]:
+    """Hyperliquid fees via the public `userFees` info endpoint (account-wide).
+
+    Effective rate = base tier rate × (1 − staking discount) × (1 − referral
+    discount), per the docs (multiplicative). With HYPERLIQUID_ADDRESS set the
+    rate reflects that account's HYPE-staking tier; otherwise the zero address
+    returns the base schedule. Cached account-wide (fee is not per-symbol).
+    """
+    global _HL_FEE_CACHE
+    now = time.time()
+    if _HL_FEE_CACHE and now - _HL_FEE_CACHE[0] < _HL_FEE_TTL_SEC:
+        return dict(_HL_FEE_CACHE[1])
+
+    import json as _json
+    import urllib.request
+
+    addr = (
+        os.environ.get("HYPERLIQUID_ADDRESS")
+        or os.environ.get("HYPERLIQUID_PUBLIC_ADDRESS")
+        or "0x0000000000000000000000000000000000000000"
+    ).strip()
+    body = _json.dumps({"type": "userFees", "user": addr}).encode()
+    req = urllib.request.Request(
+        "https://api.hyperliquid.xyz/info",
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        d = _json.loads(resp.read().decode())
+
+    taker = float(d.get("userCrossRate", 0.00045) or 0.00045)
+    maker = float(d.get("userAddRate", 0.00015) or 0.00015)
+    staking = float((d.get("activeStakingDiscount") or {}).get("discount", 0) or 0)
+    referral = float(d.get("activeReferralDiscount", 0) or 0)
+    rates = {
+        "taker_pct": taker * 100.0 * (1 - staking) * (1 - referral),
+        "maker_pct": maker * 100.0 * (1 - staking),
+    }
+    _HL_FEE_CACHE = (now, rates)
+    return dict(rates)
+
+
+def _fetch_lighter(symbol: str) -> dict[str, float]:
+    """Lighter per-market fees from orderBookDetails (decimal fractions → pct)."""
+    from venues.lighter_funding import LighterFundingProvider
+
+    base = normalize_symbol(symbol).removesuffix("USDT")
+    meta = LighterFundingProvider().market_meta_for_base(base)
+    if meta is None:
+        raise RuntimeError(f"lighter market meta unavailable for {base}")
+    return {
+        "taker_pct": _decimal_to_pct(meta.get("taker_fee", 0.0)),
+        "maker_pct": _decimal_to_pct(meta.get("maker_fee", 0.0)),
+    }
+
+
+def _fetch_edgex(symbol: str) -> dict[str, float]:
+    """EdgeX per-contract taker from metadata defaultTakerFeeRate (already pct)."""
+    from venues.edgex_funding import EdgexFundingProvider
+
+    base = normalize_symbol(symbol).removesuffix("USDT")
+    meta = EdgexFundingProvider().contract_meta_for_base(base)
+    if meta is None:
+        raise RuntimeError(f"edgex contract meta unavailable for {base}")
+    return {
+        "taker_pct": float(meta.get("taker_pct", DEFAULT_TAKER_PCT["edgex"])),
+        "maker_pct": DEFAULT_MAKER_PCT.get("edgex", 0.0),
+    }
+
+
 _FETCHERS: dict[str, Callable[[str], dict[str, float]]] = {
     "bitget": _fetch_bitget,
     "bybit": _fetch_bybit,
     "okx": _fetch_okx,
     "binance": _fetch_binance,
+    "hyperliquid": _fetch_hyperliquid,
+    "lighter": _fetch_lighter,
+    "edgex": _fetch_edgex,
 }
 
 
@@ -472,11 +557,18 @@ def parse_fee_policy(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def venue_uses_api(venue: str, policy: dict[str, Any] | None = None) -> bool:
-    """Whether this venue should fetch fees from account API."""
+    """Whether this venue should fetch fees from API (account or public).
+
+    Perp-DEX venues with public fee endpoints (no keys) always fetch live, so
+    the scanner reflects real venue fees instead of stale hardcoded defaults.
+    The user can still force the VIP-tier table via fee_mode='vip_tier'.
+    """
     policy = policy or parse_fee_policy()
     mode = policy.get("mode", "auto")
     if mode == "vip_tier":
         return False
+    if venue.lower() in _PUBLIC_FEE_VENUES:
+        return True
     if mode == "api":
         return venue_has_credentials(venue)
     return venue_has_credentials(venue)

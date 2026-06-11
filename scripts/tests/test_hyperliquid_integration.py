@@ -544,7 +544,9 @@ class TestRegistration:
 
         assert "hyperliquid" in DEFAULT_TAKER_PCT
         assert "hyperliquid" in DEFAULT_MAKER_PCT
-        assert DEFAULT_TAKER_PCT["hyperliquid"] == 0.035
+        # Live base cross rate (userFees userCrossRate=0.00045); fetched live
+        # when available, this is the offline fallback.
+        assert DEFAULT_TAKER_PCT["hyperliquid"] == 0.045
         assert DEFAULT_MAKER_PCT["hyperliquid"] == 0.01
 
     def test_funding_provider_registry(self):
@@ -561,7 +563,7 @@ class TestRegistration:
     def test_taker_fee_default_value(self):
         from core.fee_providers import default_taker_pct
 
-        assert default_taker_pct("hyperliquid") == 0.035
+        assert default_taker_pct("hyperliquid") == 0.045
 
 
 # ===========================================================================

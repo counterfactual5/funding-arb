@@ -72,6 +72,9 @@ class LighterFundingProvider:
                 "price_decimals": int(row.get("supported_price_decimals", 2) or 2),
                 "min_base_amount": float(row.get("min_base_amount", 0) or 0),
                 "min_quote_amount": float(row.get("min_quote_amount", 0) or 0),
+                # taker/maker fees as decimal fractions (0 while Lighter is zero-fee)
+                "taker_fee": float(row.get("taker_fee", 0) or 0),
+                "maker_fee": float(row.get("maker_fee", 0) or 0),
             }
         self._meta_cache = (now, out)
         return out
