@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Multi-source price oracle for CEX DCA.
 
-独立于下单 venue 的价格层：当主源（默认 Bitget）拉价失败或异常时，
-依次回退到 Binance / Coinbase / OKX 公开行情。所有源只读、无需 API key。
+Price layer independent of order venue: when the primary source (default Bitget)
+fails or returns abnormal data, falls back to Binance / Coinbase / OKX public
+quotes in sequence. All sources are read-only and require no API key.
 
-设计：
-- 主源优先（与下单所一致，减少价差滑点）
-- 多源 fallback（任一源拿到合理价即用）
-- 一致性校验（多源价差 > 5% 视为脏数据，全部拒绝）
-- K 线只从主源拿（fallback 源仅提供 last price）
+Design:
+- Primary source first (matches order venue to reduce slippage)
+- Multi-source fallback (uses the first source that returns a reasonable price)
+- Consistency check (rejects all data if cross-source spread > 5%)
+- K-lines fetched from primary only (fallback sources provide last price only)
 
-调用方式：
+Usage:
     from venues.price_oracle import fetch_price_with_fallback
     px, meta = fetch_price_with_fallback("BTC", "USDT", primary="bitget")
 """
@@ -22,12 +23,12 @@ from typing import Any
 
 from venues.http_util import http_get_json
 
-# 单源价差容差：超过此值视为脏数据
+# Single-source spread tolerance: values above this are treated as dirty data
 MAX_SPREAD = 0.05  # 5%
 
 
 def _bitget_price(asset: str, quote: str) -> tuple[float, str]:
-    """Bitget 公开 ticker（无需 key）。"""
+    """Bitget public ticker (no key required)."""
     pair = f"{asset.upper()}{quote.upper()}"
     url = f"https://api.bitget.com/api/v2/spot/market/tickers?symbol={pair}"
     data = http_get_json(url, timeout=5, retries=2, backoff=0.3)
@@ -38,7 +39,7 @@ def _bitget_price(asset: str, quote: str) -> tuple[float, str]:
 
 
 def _binance_price(asset: str, quote: str) -> tuple[float, str]:
-    """Binance 公开 ticker（无需 key）。"""
+    """Binance public ticker (no key required)."""
     pair = f"{asset.upper()}{quote.upper()}"
     url = f"https://api.binance.com/api/v3/ticker/price?symbol={pair}"
     data = http_get_json(url, timeout=5, retries=2, backoff=0.3)
@@ -46,7 +47,7 @@ def _binance_price(asset: str, quote: str) -> tuple[float, str]:
 
 
 def _coinbase_price(asset: str, quote: str) -> tuple[float, str]:
-    """Coinbase 公开 spot 价（USD 报价，quote 强制为 USD）。"""
+    """Coinbase public spot price (USD quote; quote is forced to USD)."""
     cur = "USD" if quote.upper() in ("USDT", "USDC", "USD") else quote.upper()
     url = f"https://api.coinbase.com/v2/prices/{asset.upper()}-{cur}/spot"
     data = http_get_json(url, timeout=5, retries=2, backoff=0.3)
@@ -55,7 +56,7 @@ def _coinbase_price(asset: str, quote: str) -> tuple[float, str]:
 
 
 def _okx_price(asset: str, quote: str) -> tuple[float, str]:
-    """OKX 公开 ticker（无需 key）。"""
+    """OKX public ticker (no key required)."""
     inst = f"{asset.upper()}-{quote.upper()}"
     url = f"https://www.okx.com/api/v5/market/ticker?instId={inst}"
     data = http_get_json(url, timeout=5, retries=2, backoff=0.3)
@@ -65,7 +66,7 @@ def _okx_price(asset: str, quote: str) -> tuple[float, str]:
     return 0.0, "okx"
 
 
-# 源顺序：主源优先，其余按稳定性/速度排序
+# Source order: primary first, then by stability/speed
 _SOURCES = {
     "bitget": _bitget_price,
     "binance": _binance_price,
@@ -79,12 +80,12 @@ def fetch_price_with_fallback(
     quote: str = "USDT",
     primary: str = "bitget",
 ) -> tuple[float, dict[str, Any]]:
-    """多源 fallback 拉价。
+    """Multi-source fallback price fetch.
 
-    返回 (price, meta)：
-    - price > 0：成功（来自首个可用源）
-    - price == 0：所有源都失败
-    meta 记录每个源的尝试结果，便于 journal 诊断。
+    Returns (price, meta):
+    - price > 0: success (from the first available source)
+    - price == 0: all sources failed
+    meta records each source's attempt result for journal diagnostics.
     """
     order = [primary] + [s for s in _SOURCES if s != primary]
     attempts: list[dict[str, Any]] = []
@@ -113,7 +114,7 @@ def fetch_price_with_fallback(
             attempts.append(
                 {"source": src_name, "ok": True, "price": round(px, 6), "ms": ms}
             )
-            # 首个成功源即可返回（主源已优先）
+            # Return on first successful source (primary already prioritized)
             break
         attempts.append({"source": src_name, "ok": False, "error": "price=0", "ms": ms})
 
@@ -134,9 +135,9 @@ def fetch_prices_batch(
     quote: str = "USDT",
     primary: str = "bitget",
 ) -> tuple[dict[str, float], dict[str, Any]]:
-    """批量拉价，返回 (prices, meta)。
+    """Batch price fetch. Returns (prices, meta).
 
-    每个资产独立 fallback。任一资产最终 price=0 会被记录在 meta.bad。
+    Each asset falls back independently. Any asset with final price=0 is recorded in meta.bad.
     """
     prices: dict[str, float] = {}
     detail: dict[str, Any] = {}

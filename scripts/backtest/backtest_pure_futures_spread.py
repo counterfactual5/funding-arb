@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
-"""Pure Futures Spread 回测驱动 — 历史资金费数据回放。
+"""Pure Futures Spread backtest driver -- historical funding rate data replay.
 
-功能:
-  - 加载 JSONL 格式的历史资金费快照（由 scan_pure_futures_spreads --watch 采集）
-  - 回放每个时刻的价差变化，模拟开仓/平仓/持仓
-  - 资金费按各腿真实结算周期 (interval_h) 在 UTC 对齐的结算边界逐腿累计，
-    与快照采集频率无关（5 分钟采集和 8 小时采集结果一致）
-  - settle_mismatch 候选接入 planner：用 adjusted_net_edge 做开仓门槛
-  - 统计总收益、年化、最大回撤、Sharpe、胜率、平均持仓天数
+Features:
+  - Loads JSONL-format historical funding rate snapshots (collected by scan_pure_futures_spreads --watch)
+  - Replays spread changes at each timestamp, simulating open/close/hold
+  - Funding accrues per-leg at real settlement intervals (interval_h) on UTC-aligned settlement boundaries,
+    independent of snapshot collection frequency (5-minute and 8-hour collection yield identical results)
+  - settle_mismatch candidates integrate with planner: uses adjusted_net_edge as entry threshold
+  - Statistics: total return, annualized, max drawdown, Sharpe, win rate, average holding time
 
-用法:
-  # 使用已有的 scanner JSONL 数据
+Usage:
+  # Use existing scanner JSONL data
   python3 scripts/backtest/backtest_pure_futures_spread.py \
     --jsonl-file data/pure_futures_spreads.jsonl
 
-  # 直接拉交易所历史 funding API（无需采集，缓存 6h）
+  # Fetch exchange historical funding API directly (no collection needed, 6h cache)
   python3 scripts/backtest/backtest_pure_futures_spread.py \
     --history-bases BTC,ETH,SOL --history-days 90
 
-  # 指定参数
+  # Specify parameters
   python3 scripts/backtest/backtest_pure_futures_spread.py \
     --jsonl-file data/pure_futures_spreads.jsonl \
     --capital 100000 --trade-usd 5000 --min-spread 0.08 --exit-edge 0.02
 
-  # 输出 JSON
+  # JSON output
   python3 scripts/backtest/backtest_pure_futures_spread.py --jsonl-file data/spreads.jsonl --json
 """
 
@@ -47,7 +47,7 @@ from execution.settle_mismatch_planner import analyze_settle_mismatch  # noqa: E
 
 @dataclass
 class OpenPair:
-    """回测中已开仓的配对。"""
+    """An opened pair in the backtest."""
 
     pair_id: str
     base: str
@@ -68,15 +68,15 @@ class OpenPair:
     long_settlements: int = 0
     short_settlements: int = 0
     accumulated_funding_pct: float = 0.0
-    # cash-and-carry 反向腿的借币成本（按结算周期折算，随结算累计）
+    # cash-and-carry reverse leg borrow cost (converted to per-settlement period, accrued with settlements)
     borrow_per_settle_pct: float = 0.0
     borrow_paid_pct: float = 0.0
 
 
 def _settlements_crossed(t0: datetime, t1: datetime, interval_h: float) -> int:
-    """(t0, t1] 之间跨过的结算边界数。
+    """Number of settlement boundaries crossed between (t0, t1].
 
-    边界按 UTC epoch 对齐（如 8h → 00:00/08:00/16:00），与真实交易所一致。
+    Boundaries are UTC epoch-aligned (e.g. 8h -> 00:00/08:00/16:00), consistent with real exchanges.
     """
     if interval_h <= 0 or t1 <= t0:
         return 0
@@ -85,7 +85,7 @@ def _settlements_crossed(t0: datetime, t1: datetime, interval_h: float) -> int:
 
 
 def _update_pair_rates(pair: OpenPair, row: dict[str, Any]) -> None:
-    """用最新快照的费率/周期刷新持仓腿状态。"""
+    """Refresh position leg state with the latest snapshot's rate/interval."""
     pair.long_rate_pct = float(row.get("long_rate_pct", pair.long_rate_pct) or 0.0)
     pair.short_rate_pct = float(row.get("short_rate_pct", pair.short_rate_pct) or 0.0)
     pair.long_interval_h = float(
@@ -100,10 +100,10 @@ def _update_pair_rates(pair: OpenPair, row: dict[str, Any]) -> None:
 
 
 def _accrue_funding(pair: OpenPair, ts: datetime) -> None:
-    """按各腿结算周期累计资金费。
+    """Accrue funding per leg's settlement period.
 
-    多头腿每次结算支付 long_rate（费率为负则收取）；
-    空头腿每次结算收取 short_rate（费率为负则支付）。
+    Long leg pays long_rate at each settlement (negative rate means receiving);
+    Short leg receives short_rate at each settlement (negative rate means paying).
     """
     t0 = pair.last_accrual_ts or pair.open_ts
     n_long = _settlements_crossed(t0, ts, pair.long_interval_h)
@@ -114,7 +114,7 @@ def _accrue_funding(pair: OpenPair, ts: datetime) -> None:
         )
         pair.long_settlements += n_long
         pair.short_settlements += n_short
-        # 借币利息随永续腿（cc_reverse 的 long 腿）结算周期累计
+        # Borrow interest accrues with the perp leg's settlement period (cc_reverse's long leg)
         if pair.borrow_per_settle_pct > 0:
             pair.borrow_paid_pct += n_long * pair.borrow_per_settle_pct
     pair.last_accrual_ts = ts
@@ -122,7 +122,7 @@ def _accrue_funding(pair: OpenPair, ts: datetime) -> None:
 
 @dataclass
 class ClosedTrade:
-    """已平仓的交易记录。"""
+    """A closed trade record."""
 
     pair_id: str
     base: str
@@ -190,12 +190,14 @@ def _parse_ts(value: Any) -> datetime | None:
 
 
 def _opp_key(row: dict[str, Any]) -> str:
-    return ":".join([
-        str(row.get("base", "")).upper(),
-        str(row.get("direction", "")),
-        str(row.get("long_venue", "")),
-        str(row.get("short_venue", "")),
-    ])
+    return ":".join(
+        [
+            str(row.get("base", "")).upper(),
+            str(row.get("direction", "")),
+            str(row.get("long_venue", "")),
+            str(row.get("short_venue", "")),
+        ]
+    )
 
 
 _STRATEGY_OF_DIRECTION = {
@@ -225,7 +227,7 @@ def _iter_rows(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def load_snapshots(jsonl_path: Path) -> list[dict[str, Any]]:
-    """加载 JSONL 快照。"""
+    """Load JSONL snapshots."""
     if not jsonl_path.exists():
         raise FileNotFoundError(f"JSONL not found: {jsonl_path}")
 
@@ -263,11 +265,11 @@ def run_backtest(
     strategies: set[str] | None = None,
     verbose: bool = False,
 ) -> BacktestResult:
-    """回放历史快照，模拟资金费策略组合。
+    """Replay historical snapshots, simulating funding rate strategy combinations.
 
-    strategies: 允许开仓的策略集合，默认 {"pure"}。
-      - "pure": 跨所纯永续价差（forward/reverse 行）
-      - "cc":   单所 cash-and-carry（cc_forward/cc_reverse 行，history 模式合成）
+    strategies: allowed strategy set for opening, default {"pure"}.
+      - "pure": cross-venue pure perp spread (forward/reverse rows)
+      - "cc":   single-venue cash-and-carry (cc_forward/cc_reverse rows, synthesized in history mode)
     """
     if strategies is None:
         strategies = {"pure"}
@@ -290,10 +292,10 @@ def run_backtest(
         current_date = ts.strftime("%Y-%m-%d")
         rows = _iter_rows(snap)
 
-        # Unfiltered lookup（退出判断 / 费率刷新用，不受入场阈值影响）
+        # Unfiltered lookup (for exit decisions / rate refresh, not affected by entry thresholds)
         all_by_key: dict[str, dict[str, Any]] = {_opp_key(r): r for r in rows}
 
-        # Entry candidates（受入场阈值过滤；mismatch 走 planner 调整后边际）
+        # Entry candidates (filtered by entry thresholds; mismatch goes through planner's adjusted edge)
         current_spreads: dict[str, dict[str, Any]] = {}
         for row in rows:
             strat = _STRATEGY_OF_DIRECTION.get(str(row.get("direction", "")), "pure")
@@ -328,15 +330,17 @@ def run_backtest(
         # 1) Refresh rates + accrue funding, then check exits
         to_close: list[str] = []
         for pair_id, pair in list(open_pairs.items()):
-            lookup_key = _opp_key({
-                "base": pair.base,
-                "direction": pair.direction,
-                "long_venue": pair.long_venue,
-                "short_venue": pair.short_venue,
-            })
+            lookup_key = _opp_key(
+                {
+                    "base": pair.base,
+                    "direction": pair.direction,
+                    "long_venue": pair.long_venue,
+                    "short_venue": pair.short_venue,
+                }
+            )
             current_row = all_by_key.get(lookup_key)
 
-            # 用最新费率刷新，再按各腿结算周期累计已跨过的结算
+            # Refresh with latest rates, then accrue settlements crossed per leg's settlement period
             if current_row:
                 _update_pair_rates(pair, current_row)
             _accrue_funding(pair, ts)
@@ -346,7 +350,7 @@ def run_backtest(
             current_edge = -999.0
 
             if current_row is None:
-                # 配对从扫描结果中消失（交易对下架/费率不可得）
+                # Pair disappeared from scan results (pair delisted / rate unavailable)
                 should_close = True
                 close_reason = "spread_disappeared"
             else:
@@ -363,7 +367,9 @@ def run_backtest(
             hours_held = (ts - pair.open_ts).total_seconds() / 3600.0
             if hours_held >= max_holding_hours:
                 should_close = True
-                close_reason = f"max_holding: {hours_held:.0f}h >= {max_holding_hours:.0f}h"
+                close_reason = (
+                    f"max_holding: {hours_held:.0f}h >= {max_holding_hours:.0f}h"
+                )
 
             if should_close:
                 to_close.append(pair_id)
@@ -373,28 +379,30 @@ def run_backtest(
                     pair.accumulated_funding_pct - pair.borrow_paid_pct - total_fee
                 )
                 pnl_usd = pair.amount_usd * net_pnl / 100.0
-                # 归还开仓时锁定的保证金 + 结算盈亏
+                # Return margin locked at open + settlement PnL
                 capital += pair.amount_usd + pnl_usd
 
-                closed_trades.append(ClosedTrade(
-                    pair_id=pair_id,
-                    base=pair.base,
-                    direction=pair.direction,
-                    open_ts=pair.open_ts,
-                    close_ts=ts,
-                    holding_hours=hours_held,
-                    open_edge_pct=pair.open_edge_pct,
-                    close_edge_pct=current_edge,
-                    total_funding_pct=round(pair.accumulated_funding_pct, 6),
-                    total_fee_pct=round(total_fee, 4),
-                    net_pnl_pct=round(net_pnl, 6),
-                    amount_usd=pair.amount_usd,
-                    close_reason=close_reason,
-                    win=net_pnl > 0,
-                    long_settlements=pair.long_settlements,
-                    short_settlements=pair.short_settlements,
-                    borrow_paid_pct=round(pair.borrow_paid_pct, 6),
-                ))
+                closed_trades.append(
+                    ClosedTrade(
+                        pair_id=pair_id,
+                        base=pair.base,
+                        direction=pair.direction,
+                        open_ts=pair.open_ts,
+                        close_ts=ts,
+                        holding_hours=hours_held,
+                        open_edge_pct=pair.open_edge_pct,
+                        close_edge_pct=current_edge,
+                        total_funding_pct=round(pair.accumulated_funding_pct, 6),
+                        total_fee_pct=round(total_fee, 4),
+                        net_pnl_pct=round(net_pnl, 6),
+                        amount_usd=pair.amount_usd,
+                        close_reason=close_reason,
+                        win=net_pnl > 0,
+                        long_settlements=pair.long_settlements,
+                        short_settlements=pair.short_settlements,
+                        borrow_paid_pct=round(pair.borrow_paid_pct, 6),
+                    )
+                )
 
         for pid in to_close:
             del open_pairs[pid]
@@ -405,8 +413,8 @@ def run_backtest(
 
         candidates = sorted(
             current_spreads.values(),
-            key=lambda x: -float(
-                x.get("adjusted_net_edge_pct", x.get("net_edge_pct", 0)) or 0
+            key=lambda x: (
+                -float(x.get("adjusted_net_edge_pct", x.get("net_edge_pct", 0)) or 0)
             ),
         )
 
@@ -426,13 +434,12 @@ def run_backtest(
             short_venue = str(row.get("short_venue", ""))
             pair_id = _opp_key(row)
 
-            # 行自带 fee_pct（单边两腿合计）优先——cc 行含现货费率，
-            # 永续费率表查不到 "venue:spot" 这类腿名
+            # Row carries fee_pct (single-side two-leg total) with priority -- cc rows include spot fee,
+            # perp fee tables can't look up leg names like "venue:spot"
             open_fee = float(row.get("fee_pct", 0) or 0)
             if open_fee <= 0:
-                open_fee = (
-                    FEE_RATES.get(long_venue, 0.06) +
-                    FEE_RATES.get(short_venue, 0.06)
+                open_fee = FEE_RATES.get(long_venue, 0.06) + FEE_RATES.get(
+                    short_venue, 0.06
                 )
 
             pair = OpenPair(
@@ -456,7 +463,7 @@ def run_backtest(
             capital -= trade_usd  # margin locked
             active_bases.add(base)
             opened += 1
-            # 资金费在下一个结算边界才累计，开仓瞬间不计（与真实结算一致）
+            # Funding accrues at the next settlement boundary, not at open time (consistent with real settlement)
 
         # 3) Track equity
         # Release margin back + unrealized funding for open pairs
@@ -465,12 +472,14 @@ def run_backtest(
             unrealized_equity += pair.amount_usd  # margin back
             unrealized_equity += pair.amount_usd * pair.accumulated_funding_pct / 100.0
 
-        equity_curve.append({
-            "ts": ts.isoformat(),
-            "equity": round(unrealized_equity, 2),
-            "open_pairs": len(open_pairs),
-            "capital_free": round(capital, 2),
-        })
+        equity_curve.append(
+            {
+                "ts": ts.isoformat(),
+                "equity": round(unrealized_equity, 2),
+                "open_pairs": len(open_pairs),
+                "capital_free": round(capital, 2),
+            }
+        )
 
         peak_equity = max(peak_equity, unrealized_equity)
         drawdown = (peak_equity - unrealized_equity) / peak_equity * 100.0
@@ -492,31 +501,38 @@ def run_backtest(
         pnl_usd = pair.amount_usd * net_pnl / 100.0
         final_equity += pair.amount_usd + pnl_usd
 
-        closed_trades.append(ClosedTrade(
-            pair_id=pair.pair_id,
-            base=pair.base,
-            direction=pair.direction,
-            open_ts=pair.open_ts,
-            close_ts=snapshots[-1]["_ts"] if snapshots else pair.open_ts,
-            holding_hours=(snapshots[-1]["_ts"] - pair.open_ts).total_seconds() / 3600.0 if snapshots else 0,
-            open_edge_pct=pair.open_edge_pct,
-            close_edge_pct=-999,
-            total_funding_pct=round(pair.accumulated_funding_pct, 6),
-            total_fee_pct=round(total_fee, 4),
-            net_pnl_pct=round(net_pnl, 6),
-            amount_usd=pair.amount_usd,
-            close_reason="backtest_end",
-            win=net_pnl > 0,
-            long_settlements=pair.long_settlements,
-            short_settlements=pair.short_settlements,
-            borrow_paid_pct=round(pair.borrow_paid_pct, 6),
-        ))
+        closed_trades.append(
+            ClosedTrade(
+                pair_id=pair.pair_id,
+                base=pair.base,
+                direction=pair.direction,
+                open_ts=pair.open_ts,
+                close_ts=snapshots[-1]["_ts"] if snapshots else pair.open_ts,
+                holding_hours=(snapshots[-1]["_ts"] - pair.open_ts).total_seconds()
+                / 3600.0
+                if snapshots
+                else 0,
+                open_edge_pct=pair.open_edge_pct,
+                close_edge_pct=-999,
+                total_funding_pct=round(pair.accumulated_funding_pct, 6),
+                total_fee_pct=round(total_fee, 4),
+                net_pnl_pct=round(net_pnl, 6),
+                amount_usd=pair.amount_usd,
+                close_reason="backtest_end",
+                win=net_pnl > 0,
+                long_settlements=pair.long_settlements,
+                short_settlements=pair.short_settlements,
+                borrow_paid_pct=round(pair.borrow_paid_pct, 6),
+            )
+        )
 
     # Calculate stats
     total_return = (final_equity - initial_capital) / initial_capital * 100.0
     total_hours = 0.0
     if snapshots:
-        total_hours = (snapshots[-1]["_ts"] - snapshots[0]["_ts"]).total_seconds() / 3600.0
+        total_hours = (
+            snapshots[-1]["_ts"] - snapshots[0]["_ts"]
+        ).total_seconds() / 3600.0
     annual_return = (total_return / total_hours * 8760.0) if total_hours > 0 else 0.0
 
     wins = sum(1 for t in closed_trades if t.win)
@@ -537,7 +553,9 @@ def run_backtest(
     sharpe = 0.0
     if len(daily_returns) > 1:
         mean_ret = sum(daily_returns) / len(daily_returns)
-        variance = sum((r - mean_ret) ** 2 for r in daily_returns) / (len(daily_returns) - 1)
+        variance = sum((r - mean_ret) ** 2 for r in daily_returns) / (
+            len(daily_returns) - 1
+        )
         std_dev = math.sqrt(variance) if variance > 0 else 0.0
         if std_dev > 0:
             sharpe = (mean_ret / std_dev) * math.sqrt(365.0)
@@ -549,25 +567,30 @@ def run_backtest(
         sharpe_ratio=round(sharpe, 2),
         trade_count=len(closed_trades),
         win_count=wins,
-        win_rate_pct=round(wins / len(closed_trades) * 100.0, 1) if closed_trades else 0.0,
+        win_rate_pct=round(wins / len(closed_trades) * 100.0, 1)
+        if closed_trades
+        else 0.0,
         avg_holding_hours=round(avg_holding, 1),
         avg_pnl_per_trade_pct=round(avg_pnl, 4),
         total_funding_collected_pct=round(total_funding, 4),
         total_fees_paid_pct=round(total_fees, 4),
-        trades=[{
-            "pair_id": t.pair_id,
-            "base": t.base,
-            "direction": t.direction,
-            "open_ts": t.open_ts.isoformat(),
-            "close_ts": t.close_ts.isoformat(),
-            "holding_hours": round(t.holding_hours, 1),
-            "net_pnl_pct": t.net_pnl_pct,
-            "close_reason": t.close_reason,
-            "win": t.win,
-            "long_settlements": t.long_settlements,
-            "short_settlements": t.short_settlements,
-            "borrow_paid_pct": t.borrow_paid_pct,
-        } for t in closed_trades],
+        trades=[
+            {
+                "pair_id": t.pair_id,
+                "base": t.base,
+                "direction": t.direction,
+                "open_ts": t.open_ts.isoformat(),
+                "close_ts": t.close_ts.isoformat(),
+                "holding_hours": round(t.holding_hours, 1),
+                "net_pnl_pct": t.net_pnl_pct,
+                "close_reason": t.close_reason,
+                "win": t.win,
+                "long_settlements": t.long_settlements,
+                "short_settlements": t.short_settlements,
+                "borrow_paid_pct": t.borrow_paid_pct,
+            }
+            for t in closed_trades
+        ],
         equity_curve=equity_curve,
     )
 
@@ -615,42 +638,55 @@ def main() -> int:
     parser.add_argument(
         "--history-bases",
         default="",
-        help="逗号分隔 base 列表（如 BTC,ETH,SOL）；非空时直接拉交易所历史 funding API，忽略 --jsonl-file",
+        help="Comma-separated base list (e.g. BTC,ETH,SOL); when non-empty, fetches exchange historical funding API directly, ignoring --jsonl-file",
     )
     parser.add_argument(
-        "--history-days", type=int, default=30, help="历史回看天数（默认 30）"
+        "--history-days",
+        type=int,
+        default=30,
+        help="Historical lookback days (default 30)",
     )
     parser.add_argument(
         "--venues",
         default="binance,bitget,bybit,okx",
-        help="history 模式的交易所列表",
+        help="Exchange list for history mode",
     )
     parser.add_argument(
-        "--refresh-cache", action="store_true", help="忽略 6h 磁盘缓存强制重新拉取"
+        "--refresh-cache",
+        action="store_true",
+        help="Ignore 6h disk cache and force re-fetch",
     )
-    parser.add_argument("--capital", type=float, default=100000.0, help="Initial capital USD")
+    parser.add_argument(
+        "--capital", type=float, default=100000.0, help="Initial capital USD"
+    )
     parser.add_argument("--trade-usd", type=float, default=5000.0, help="USD per pair")
     parser.add_argument("--max-pairs", type=int, default=3, help="Max concurrent pairs")
     parser.add_argument("--min-spread", type=float, default=0.05, help="Min spread %%")
     parser.add_argument("--min-edge", type=float, default=0.01, help="Min net edge %%")
-    parser.add_argument("--exit-edge", type=float, default=0.01, help="Exit when edge ≤ this %%")
-    parser.add_argument("--max-holding-hours", type=float, default=720.0, help="Max holding time")
-    parser.add_argument("--allow-mismatch", action="store_true", help="Allow settle mismatch pairs")
+    parser.add_argument(
+        "--exit-edge", type=float, default=0.01, help="Exit when edge ≤ this %%"
+    )
+    parser.add_argument(
+        "--max-holding-hours", type=float, default=720.0, help="Max holding time"
+    )
+    parser.add_argument(
+        "--allow-mismatch", action="store_true", help="Allow settle mismatch pairs"
+    )
     parser.add_argument(
         "--strategies",
         default="pure",
-        help="逗号分隔策略集合：pure（跨所纯永续）/ cc（单所现货+永续）；如 pure,cc",
+        help="Comma-separated strategy set: pure (cross-venue pure perps) / cc (single-venue spot+perp); e.g. pure,cc",
     )
     parser.add_argument(
         "--cc-borrow-apr",
         type=float,
         default=15.0,
-        help="cc_reverse 借币年化假设 %%（历史借币利率无公开数据，默认 15）",
+        help="cc_reverse borrow APR assumption %% (no public historical borrow data, default 15)",
     )
     parser.add_argument(
         "--cc-check-caps",
         action="store_true",
-        help="实时探测现货可买/可借状态过滤 cc 行（用当前状态代理历史，更接近可执行收益）",
+        help="Probe real-time spot/borrow status to filter cc rows (uses current state as proxy for historical, closer to executable returns)",
     )
     parser.add_argument("--verbose", "-V", action="store_true")
     parser.add_argument("--json", action="store_true", help="JSON output")
@@ -695,7 +731,7 @@ def main() -> int:
     total_hours = (snapshots[-1]["_ts"] - snapshots[0]["_ts"]).total_seconds() / 3600.0
     print(
         f"Loaded {len(snapshots)} snapshots ({total_hours:.0f}h, "
-        f"{total_hours/24:.1f} days): {first_ts} → {last_ts}",
+        f"{total_hours / 24:.1f} days): {first_ts} → {last_ts}",
         file=sys.stderr,
     )
 
@@ -709,9 +745,7 @@ def main() -> int:
         exit_edge_pct=args.exit_edge,
         max_holding_hours=args.max_holding_hours,
         allow_mismatch=args.allow_mismatch,
-        strategies={
-            s.strip().lower() for s in args.strategies.split(",") if s.strip()
-        },
+        strategies={s.strip().lower() for s in args.strategies.split(",") if s.strip()},
         verbose=args.verbose,
     )
 

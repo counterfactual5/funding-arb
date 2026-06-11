@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""扫描多交易所资金费率套利机会。
+"""Scan multi-exchange funding rate arbitrage opportunities.
 
-正向套利（正资金费率）：买现货 + 开空合约 → 需要现货市场
-反向套利（负资金费率）：借币卖出 + 开多合约 → 需要可借币，不是仅有现货
+Forward arbitrage (positive funding rate): buy spot + open short perp -> requires spot market
+Reverse arbitrage (negative funding rate): borrow & sell + open long perp -> requires borrowable coins, not just spot
 
-用法:
-  python3 scripts/cli/scan_funding_arbitrage.py                 # 全部交易所
-  python3 scripts/cli/scan_funding_arbitrage.py --venue bitget  # 指定交易所
-  python3 scripts/cli/scan_funding_arbitrage.py --entry 0.03    # 自定义入场线
-  python3 scripts/cli/scan_funding_arbitrage.py --json           # JSON 输出
+Usage:
+  python3 scripts/cli/scan_funding_arbitrage.py                 # All exchanges
+  python3 scripts/cli/scan_funding_arbitrage.py --venue bitget  # Specify exchange
+  python3 scripts/cli/scan_funding_arbitrage.py --entry 0.03    # Custom entry threshold
+  python3 scripts/cli/scan_funding_arbitrage.py --json           # JSON Output
 """
 from __future__ import annotations
 
@@ -30,14 +30,14 @@ from market.parallel_fetch import run_io_parallel
 
 TZ = timezone(timedelta(hours=8))
 
-# 默认阈值
+# Default thresholds
 DEFAULT_ENTRY = 0.05
 DEFAULT_EXIT = 0.01
 DEFAULT_UNIVERSE_MIN = 0.03
 DEFAULT_BORROW_ANNUAL_PCT = 8.0
 DEFAULT_IO_WORKERS = 8
 HOURS_PER_YEAR = 365.0 * 24.0
-# taker 费率分现货/合约两套：现货腿普遍 0.1%，远高于合约腿
+# Taker fee rates split into spot/futures: spot leg generally 0.1%, much higher than futures leg
 SPOT_TAKER_FEE = {
     "bitget": 0.001,
     "binance": 0.001,
@@ -61,7 +61,7 @@ VENUE_CLASSES = {
 
 
 def _get_venue(venue: str):
-    """动态导入并实例化 venue."""
+    """Dynamically import and instantiate venue."""
     parts = VENUE_CLASSES[venue].rsplit(".", 1)
     mod = __import__(parts[0], fromlist=[parts[1]])
     return getattr(mod, parts[1])()
@@ -85,7 +85,7 @@ def _mins_to_settle(ts_ms: int) -> str:
 
 
 def _borrow_pct_per_interval(annual_pct: float, interval_h: float) -> float:
-    """借币年化利率归一到与资金费相同的结算周期（百分比 / 每 interval）。"""
+    """Normalize annual borrow rate to the same settlement cycle as funding rate (percentage per interval)."""
     if annual_pct <= 0 or interval_h <= 0:
         return 0.0
     return (annual_pct / HOURS_PER_YEAR) * interval_h
@@ -99,13 +99,13 @@ def scan_venue(
     borrow_fallback_annual_pct: float = DEFAULT_BORROW_ANNUAL_PCT,
     max_workers: int = DEFAULT_IO_WORKERS,
 ) -> dict[str, Any]:
-    """扫描单个交易所，返回结构化结果。"""
+    """Scan a single exchange, return structured results."""
     fp = get_funding_provider(venue)
     rows = fp.fetch_all("USDT")
     imap = fp.fetch_interval_map("USDT")
     spot_fee = SPOT_TAKER_FEE.get(venue, 0.001)
     futures_fee = FUTURES_TAKER_FEE.get(venue, 0.0006)
-    two_leg_fee = (spot_fee + futures_fee) * 100  # 现货腿 + 合约腿，百分比
+    two_leg_fee = (spot_fee + futures_fee) * 100  # Spot leg + futures leg, percentage
 
     positive: list[dict[str, Any]] = []
     negative: list[dict[str, Any]] = []
@@ -151,7 +151,7 @@ def scan_venue(
     positive.sort(key=lambda x: -x["rate_pct"])
     negative.sort(key=lambda x: x["rate_pct"])
 
-    # 正向：检查现货（仅阈值以上；优先 bulk tickers）
+    # Forward: check spot (above threshold only; prefer bulk tickers)
     pos_bases = [x["base"] for x in positive if x["rate_pct"] >= universe_min]
     bulk_tickers: dict[str, float] = {}
     if pos_bases:
@@ -179,7 +179,7 @@ def scan_venue(
         except Exception:
             pass
 
-    # 反向：检查可借性 + 借币利率（并行 per-coin）
+    # Reverse: check borrowability + borrow rates (parallel per-coin)
     neg_bases = [x["base"] for x in negative if x["rate_pct"] <= -universe_min]
     borrow_map: dict[str, dict[str, Any]] = {}
     if neg_bases:
@@ -218,7 +218,7 @@ def scan_venue(
             if info.get("max_borrow"):
                 x["max_borrow"] = info.get("max_borrow")
 
-    # 回填缺失的下次结算时间（如 Bitget 批量接口不带），仅限阈值内候选
+    # Backfill missing next settlement times (e.g. Bitget bulk API missing), only for candidates above threshold
     missing_ts = [
         x for x in (positive + negative)
         if not x["next_ts"] and abs(x["rate_pct"]) >= universe_min
@@ -262,7 +262,7 @@ def scan_venue(
 
 
 def print_report(result: dict[str, Any], verbose: bool = False):
-    """打印人类可读报告。"""
+    """Print human-readable report."""
     v = result["venue"].upper()
     fee = result["two_leg_fee_pct"]
     fwd = result["forward_candidates"]
@@ -280,7 +280,7 @@ def print_report(result: dict[str, Any], verbose: bool = False):
     print(f"{'='*70}")
 
     if fwd:
-        print(f"\n  FORWARD (买现货+开空) — {len(fwd)} tradeable:")
+        print(f"\n  FORWARD (buy spot + open short) — {len(fwd)} tradeable:")
         for x in fwd:
             net = x["net_edge_pct"]
             flag = "PROFIT" if net > 0 else "LOSS-after-fee"
@@ -294,7 +294,7 @@ def print_report(result: dict[str, Any], verbose: bool = False):
             print(f"    {x['base']:10s} rate={x['rate_pct']:+.4f}%  APR~{x['annual_pct']:>6.0f}%")
 
     if rev:
-        print(f"\n  REVERSE (借币卖出+开多) — {len(rev)} borrowable:")
+        print(f"\n  REVERSE (borrow sell + open long) — {len(rev)} borrowable:")
         for x in rev:
             net = x["net_edge_pct"]
             flag = "PROFIT" if net > 0 else "LOSS-after-cost"
@@ -305,7 +305,7 @@ def print_report(result: dict[str, Any], verbose: bool = False):
                 f"borrow_y={x.get('borrow_annual_pct', 0):.0f}%  settle={_mins_to_settle(x['next_ts'])}"
             )
     if rev_nb and verbose:
-        print(f"\n  REVERSE not-borrowable ({len(rev_nb)}) — 有负费率但无法借币做空:")
+        print(f"\n  REVERSE not-borrowable ({len(rev_nb)}) — Negative rate but cannot borrow to short:")
         for x in rev_nb[:8]:
             print(
                 f"    {x['base']:10s} rate={x['rate_pct']:+.4f}%  APR~{x['annual_pct']:>6.0f}%  "
@@ -340,20 +340,20 @@ def print_report(result: dict[str, Any], verbose: bool = False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="扫描多交易所资金费率套利机会")
-    parser.add_argument("--venue", "-v", help="指定交易所 (bitget/bybit/okx/binance)，默认全部")
-    parser.add_argument("--entry", "-e", type=float, default=DEFAULT_ENTRY, help=f"入场费率阈值 (默认 {DEFAULT_ENTRY}%%)")
-    parser.add_argument("--exit", "-x", type=float, default=DEFAULT_EXIT, help="退出费率阈值")
-    parser.add_argument("--universe-min", "-u", type=float, default=DEFAULT_UNIVERSE_MIN, help="入池最低费率")
+    parser = argparse.ArgumentParser(description="Scan multi-exchange funding rate arbitrage opportunities")
+    parser.add_argument("--venue", "-v", help="Specify exchange (bitget/bybit/okx/binance), default all")
+    parser.add_argument("--entry", "-e", type=float, default=DEFAULT_ENTRY, help=f"Entry rate threshold (default {DEFAULT_ENTRY}%%)")
+    parser.add_argument("--exit", "-x", type=float, default=DEFAULT_EXIT, help="Exit rate threshold")
+    parser.add_argument("--universe-min", "-u", type=float, default=DEFAULT_UNIVERSE_MIN, help="Minimum rate to enter universe")
     parser.add_argument(
         "--borrow-fallback",
         type=float,
         default=DEFAULT_BORROW_ANNUAL_PCT,
-        help=f"Reverse 借币年化利率 fallback（%%/年，无 live 借率时用，默认 {DEFAULT_BORROW_ANNUAL_PCT}）",
+        help=f"Reverse borrow annual rate fallback (%%/yr, used when live borrow rates are unavailable; default {DEFAULT_BORROW_ANNUAL_PCT})",
     )
-    parser.add_argument("--verbose", "-V", action="store_true", help="显示不可执行的候选（无现货/不可借）")
-    parser.add_argument("--workers", "-w", type=int, default=DEFAULT_IO_WORKERS, help="并行 I/O 线程数")
-    parser.add_argument("--json", action="store_true", help="JSON 输出")
+    parser.add_argument("--verbose", "-V", action="store_true", help="Show untradeable candidates (no spot / not borrowable)")
+    parser.add_argument("--workers", "-w", type=int, default=DEFAULT_IO_WORKERS, help="Parallel I/O thread count")
+    parser.add_argument("--json", action="store_true", help="JSON Output")
     args = parser.parse_args()
 
     venues = [args.venue] if args.venue else ["binance", "bitget", "bybit", "okx"]
@@ -386,7 +386,7 @@ def main():
         now = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
         print(f"\nFunding Rate Arbitrage Scanner — {now}")
         print(f"Entry: >= {args.entry}% | Exit: <= {args.exit}% | Universe min: {args.universe_min}%")
-        print(f"Reverse borrow fallback: {args.borrow_fallback}%/yr (live 借率优先)")
+        print(f"Reverse borrow fallback: {args.borrow_fallback}%/yr (live rate takes priority)")
         print("Forward = spot required | Reverse = margin borrow required (not just spot listing)")
         for r in results:
             print_report(r, verbose=args.verbose)

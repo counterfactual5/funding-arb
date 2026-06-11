@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""各交易所充提 / 链信息抽象层。"""
+"""Cross-exchange deposit/withdrawal and chain information abstraction layer."""
+
 from __future__ import annotations
 
 import sys
@@ -13,14 +14,14 @@ from transfer.chain_aliases import native_chain, to_canonical
 
 @dataclass
 class ChainRoute:
-    """单所、单链的充提能力。"""
+    """Single-venue, single-chain deposit/withdrawal capability."""
 
     venue: str
     coin: str
     native_chain: str
     canonical: str | None
     withdraw_fee: float
-    withdraw_fee_pct: float  # 百分比手续费（Bybit 等）
+    withdraw_fee_pct: float  # Percentage fee (e.g. Bybit)
     min_withdraw: float
     min_deposit: float
     withdraw_enabled: bool
@@ -29,7 +30,9 @@ class ChainRoute:
 
     @property
     def effective_withdraw_fee(self) -> float:
-        return self.withdraw_fee  # 百分比费由 router 按 amount 另算
+        return (
+            self.withdraw_fee
+        )  # Percentage fee is calculated separately by router based on amount
 
 
 @dataclass
@@ -63,7 +66,7 @@ class TransferProvider:
         raise NotImplementedError
 
     def prepare_for_withdraw(self, coin: str, amount: float) -> list[str]:
-        """将资金归集到可提现账户（如 futures→spot）。返回执行步骤描述。"""
+        """Aggregate funds to the withdrawable account (e.g. futures->spot). Returns execution step descriptions."""
         return []
 
     def withdraw(
@@ -82,7 +85,7 @@ class TransferProvider:
         since_ms: int = 0,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
-        """最近充值记录（各所子类实现）。"""
+        """Recent deposit records (implemented by each venue subclass)."""
         return []
 
 
@@ -172,7 +175,9 @@ class BitgetTransferProvider(TransferProvider):
         if fut <= 0:
             return steps
         xfer = min(fut, need) * 1.01
-        if hasattr(v, "transfer_asset") and v.transfer_asset("USDT", xfer, "futures", "spot"):
+        if hasattr(v, "transfer_asset") and v.transfer_asset(
+            "USDT", xfer, "futures", "spot"
+        ):
             steps.append(f"bitget: futures→spot USDT {xfer:.4f}")
         else:
             steps.append(f"bitget: futures→spot USDT {xfer:.4f} FAILED")
@@ -201,8 +206,12 @@ class BitgetTransferProvider(TransferProvider):
             data = _api_call("POST", "/api/v2/spot/wallet/withdrawal", body=body)
             if str(data.get("code")) == "00000":
                 oid = str((data.get("data") or {}).get("orderId", ""))
-                return WithdrawResult(ok=True, order_id=oid, message="submitted", raw=data)
-            return WithdrawResult(ok=False, message=str(data.get("msg", data)), raw=data)
+                return WithdrawResult(
+                    ok=True, order_id=oid, message="submitted", raw=data
+                )
+            return WithdrawResult(
+                ok=False, message=str(data.get("msg", data)), raw=data
+            )
         except Exception as e:
             return WithdrawResult(ok=False, message=str(e))
 
@@ -218,7 +227,9 @@ class BitgetTransferProvider(TransferProvider):
         if since_ms > 0:
             params["startTime"] = str(since_ms)
         try:
-            data = _api_call("GET", "/api/v2/spot/wallet/deposit-records", params=params)
+            data = _api_call(
+                "GET", "/api/v2/spot/wallet/deposit-records", params=params
+            )
             rows = data.get("data") or []
         except Exception:
             return []
@@ -247,7 +258,9 @@ class BybitTransferProvider(TransferProvider):
     def fetch_chain_routes(self, coin: str) -> list[ChainRoute]:
         from venues.bybit import _api_call
 
-        data = _api_call("GET", "/v5/asset/coin/query-info", params={"coin": coin.upper()})
+        data = _api_call(
+            "GET", "/v5/asset/coin/query-info", params={"coin": coin.upper()}
+        )
         rows = data.get("result", {}).get("rows") or []
         if not rows:
             return []
@@ -315,7 +328,7 @@ class BybitTransferProvider(TransferProvider):
         return _safe_float(bals.get(coin.upper()))
 
     def prepare_for_withdraw(self, coin: str, amount: float) -> list[str]:
-        # Bybit UTA 通常可直接提；若不足则尝试 UNIFIED 内划转（多数情况不需要）
+        # Bybit UTA can usually withdraw directly; tries UNIFIED internal transfer if insufficient (rarely needed)
         return []
 
     def withdraw(
@@ -343,8 +356,12 @@ class BybitTransferProvider(TransferProvider):
             data = _api_call("POST", "/v5/asset/withdraw/create", body=body)
             if int(data.get("retCode", -1)) == 0:
                 oid = str((data.get("result") or {}).get("id", ""))
-                return WithdrawResult(ok=True, order_id=oid, message="submitted", raw=data)
-            return WithdrawResult(ok=False, message=str(data.get("retMsg", data)), raw=data)
+                return WithdrawResult(
+                    ok=True, order_id=oid, message="submitted", raw=data
+                )
+            return WithdrawResult(
+                ok=False, message=str(data.get("retMsg", data)), raw=data
+            )
         except Exception as e:
             return WithdrawResult(ok=False, message=str(e))
 
@@ -390,7 +407,9 @@ class OkxTransferProvider(TransferProvider):
         from venues.okx import _api_call
 
         try:
-            data = _api_call("GET", "/api/v5/asset/currencies", params={"ccy": coin.upper()})
+            data = _api_call(
+                "GET", "/api/v5/asset/currencies", params={"ccy": coin.upper()}
+            )
         except Exception as e:
             print(f"[okx] fetch currencies failed: {e}", file=sys.stderr)
             return []
@@ -440,7 +459,9 @@ class OkxTransferProvider(TransferProvider):
         from venues.okx import _api_call
 
         try:
-            data = _api_call("GET", "/api/v5/account/balance", params={"ccy": coin.upper()})
+            data = _api_call(
+                "GET", "/api/v5/account/balance", params={"ccy": coin.upper()}
+            )
             for row in (data.get("data") or [{}])[0].get("details") or []:
                 if str(row.get("ccy", "")).upper() == coin.upper():
                     return _safe_float(row.get("availBal"))
@@ -456,7 +477,9 @@ class OkxTransferProvider(TransferProvider):
 
         steps: list[str] = []
         try:
-            bal = _api_call("GET", "/api/v5/account/balance", params={"ccy": coin.upper()})
+            bal = _api_call(
+                "GET", "/api/v5/account/balance", params={"ccy": coin.upper()}
+            )
             details = (bal.get("data") or [{}])[0].get("details") or []
             trading_avail = 0.0
             for d in details:
@@ -465,7 +488,7 @@ class OkxTransferProvider(TransferProvider):
                     break
             if trading_avail >= amount:
                 return steps
-            # 交易账户 -> 资金账户（18=资金, 6=交易 等，OKX 内部划转）
+            # Trading account -> Funding account (18=funding, 6=trading etc., OKX internal transfer)
             xfer = amount - trading_avail + 0.01
             _api_call(
                 "POST",
@@ -499,7 +522,7 @@ class OkxTransferProvider(TransferProvider):
             "dest": "4",  # on-chain
             "toAddr": address,
             "chain": native_chain_name,
-            "fee": "",  # 让交易所自动计算
+            "fee": "",  # Let the exchange calculate automatically
         }
         if tag:
             body["tag"] = tag
@@ -507,8 +530,12 @@ class OkxTransferProvider(TransferProvider):
             data = _api_call("POST", "/api/v5/asset/withdrawal", body=body)
             if str(data.get("code")) == "0":
                 oid = str((data.get("data") or [{}])[0].get("wdId", ""))
-                return WithdrawResult(ok=True, order_id=oid, message="submitted", raw=data)
-            return WithdrawResult(ok=False, message=str(data.get("msg", data)), raw=data)
+                return WithdrawResult(
+                    ok=True, order_id=oid, message="submitted", raw=data
+                )
+            return WithdrawResult(
+                ok=False, message=str(data.get("msg", data)), raw=data
+            )
         except Exception as e:
             return WithdrawResult(ok=False, message=str(e))
 
@@ -641,7 +668,9 @@ class BinanceTransferProvider(TransferProvider):
         if tag:
             params["addressTag"] = tag
         try:
-            data = _api_call("POST", "/sapi/v1/capital/withdraw/apply", params=params, signed=True)
+            data = _api_call(
+                "POST", "/sapi/v1/capital/withdraw/apply", params=params, signed=True
+            )
             oid = str(data.get("id", ""))
             return WithdrawResult(ok=True, order_id=oid, message="submitted", raw=data)
         except Exception as e:
@@ -660,7 +689,9 @@ def get_transfer_provider(venue: str) -> TransferProvider:
     v = str(venue or "").strip().lower()
     p = _PROVIDERS.get(v)
     if p is None:
-        raise ValueError(f"不支持的 transfer venue={v!r}，可选: {', '.join(sorted(_PROVIDERS))}")
+        raise ValueError(
+            f"Unsupported transfer venue={v!r}, available: {', '.join(sorted(_PROVIDERS))}"
+        )
     return p
 
 
@@ -699,7 +730,7 @@ def poll_deposit_until(
     poll_interval_s: int = 15,
     tolerance: float = 0.02,
 ) -> tuple[bool, list[dict[str, Any]]]:
-    """轮询充值到账。返回 (matched, records)。"""
+    """Poll for deposit arrival. Returns (matched, records)."""
     provider = get_transfer_provider(venue)
     deadline = time.time() + timeout_s
     seen: list[dict[str, Any]] = []

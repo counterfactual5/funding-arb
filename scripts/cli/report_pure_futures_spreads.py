@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Pure Futures Spread observation report — 读取 scanner JSONL，统计机会质量。
+"""Pure Futures Spread observation report — Read scanner JSONL and compute opportunity quality statistics。
 
-配套 scanner:
+Companion scanner:
   python3 scripts/cli/scan_pure_futures_spreads.py --watch 5 \
     --jsonl-file data/pure_futures_spreads.jsonl
 
-报告:
+Report:
   python3 scripts/cli/report_pure_futures_spreads.py
   python3 scripts/cli/report_pure_futures_spreads.py --since-hours 24 --top 20
   python3 scripts/cli/report_pure_futures_spreads.py --json

@@ -95,14 +95,14 @@ MODE_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 MODE_LABELS: dict[str, str] = {
-    "accumulate": "屯币",
-    "recycle": "回收",
+    "accumulate": "Accumulate",
+    "recycle": "Recycle",
 }
 
 MODE_HINTS: dict[str, str] = {
     "recycle": (
-        "回收模式：适合持续阴跌且偶发小反弹；反弹接近完成时请手动关停或切到屯币，"
-        "否则可能卖光筹码、错过全面回升。"
+        "Recycle mode: suitable for sustained downtrends with occasional small bounces; manually stop or switch to Accumulate near the bounce peak, "
+        "otherwise you may sell all holdings and miss a full recovery."
     ),
 }
 

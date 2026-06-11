@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""各所 cross margin 能力探测（只读 + 配置探测，默认不下单）。
+"""Cross-exchange margin capability detection（Read-only + config detection, default no orders）。
 
-用法:
+Usage:
   python3 scripts/cli/margin_smoke_test.py
   python3 scripts/cli/margin_smoke_test.py --venue okx --asset ETH
 """
@@ -49,9 +49,9 @@ def _probe(venue_id: str, asset: str) -> dict:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Cross margin 能力 smoke test（不下单）")
-    p.add_argument("--venue", choices=list(VENUES), help="只测单所")
-    p.add_argument("--asset", default="ETH", help="探测负债的币种")
+    p = argparse.ArgumentParser(description="Cross margin capability smoke test (no orders)")
+    p.add_argument("--venue", choices=list(VENUES), help="Test single exchange only")
+    p.add_argument("--asset", default="ETH", help="Asset to test for debt")
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
 

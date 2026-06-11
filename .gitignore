@@ -9,6 +9,10 @@ strategy-runs/
 .env.local
 *.pem
 
+# Frontend
+web/node_modules/
+web/dist/
+
 # Python
 __pycache__/
 *.py[cod]

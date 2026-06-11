@@ -162,7 +162,7 @@ def test_live_open_both_legs_filled():
 
 
 def test_close_single_leg_only_touches_that_venue():
-    """单腿消失场景：只对存活腿下平仓单（对消失腿下单会反向开新仓）。"""
+    """Single-leg gone scenario: only place close order on surviving leg (ordering on the vanished leg would open a new reverse position)."""
     path = _path("single_leg")
     lv, sv = FakeFuturesVenue("okx"), FakeFuturesVenue("bybit")
     res = open_pure_futures_pair(
@@ -179,7 +179,7 @@ def test_close_single_leg_only_touches_that_venue():
     lv.trades.clear()
     sv.trades.clear()
 
-    # long 腿被强平 → 只平 short 腿
+    # long leg force-liquidated → only close short leg
     res2 = close_pure_futures_leg(
         res.position_id,
         "short",
@@ -189,7 +189,7 @@ def test_close_single_leg_only_touches_that_venue():
         close_reason="emergency: long_leg_gone@okx",
     )
     assert res2.ok and res2.state == "filled"
-    assert lv.trades == []  # 消失腿绝不下单
+    assert lv.trades == []  # vanished leg must never receive orders
     assert [t["type"] for t in sv.trades] == ["close_short"]
     rows = load_pure_futures_positions(path)
     assert rows[0]["status"] == "closed"
@@ -219,7 +219,7 @@ def test_close_single_leg_failure_keeps_position_open():
     )
     assert not res2.ok and res2.state == "naked"
     rows = load_pure_futures_positions(path)
-    assert rows[0]["status"] == "open"  # 留待人工/下轮处理
+    assert rows[0]["status"] == "open"  # left for manual/next-cycle handling
 
 
 def test_short_leg_fail_rolls_back_long():
@@ -302,7 +302,7 @@ def test_mark_spread_gate_aborts():
         positions_path=path,
     )
     assert not res.ok and res.state == "aborted"
-    assert "标记价差" in res.logs[0]
+    assert "mark spread" in res.logs[0]
 
 
 def _open_live(path: Path) -> tuple:
@@ -415,7 +415,7 @@ def test_rebalance_leg_gone_aborts():
 
 
 def test_open_aborts_when_margin_insufficient():
-    """两所余额都不足 → 不下任何单直接放弃。"""
+    """Both venues have insufficient balance → abort without placing any orders."""
     path = _path("margin_insufficient")
     lv = FakeFuturesVenue("okx", balances={"spot": 0.0, "futures": 100.0})
     sv = FakeFuturesVenue("bybit", balances={"spot": 0.0, "futures": 100.0})
@@ -423,7 +423,7 @@ def test_open_aborts_when_margin_insufficient():
         "BTC",
         "okx",
         "bybit",
-        500,  # 需要 ≥ 525 (1.05x)
+        500,  # needs ≥ 525 (1.05x)
         dry_run=False,
         long_venue=lv,
         short_venue=sv,
@@ -431,11 +431,11 @@ def test_open_aborts_when_margin_insufficient():
     )
     assert not res.ok and res.state == "aborted"
     assert lv.trades == [] and sv.trades == []
-    assert any("保证金不足" in log for log in res.logs)
+    assert any("insufficient margin" in log for log in res.logs)
 
 
 def test_open_transfers_shortfall_from_spot():
-    """futures 不足但 spot 可补 → 划转差额后正常开仓。"""
+    """futures insufficient but spot can cover → transfer shortfall then open normally."""
     path = _path("margin_transfer")
     lv = FakeFuturesVenue("okx", balances={"spot": 1000.0, "futures": 100.0})
     sv = FakeFuturesVenue("bybit", balances={"spot": 1000.0, "futures": 600.0})
@@ -450,23 +450,23 @@ def test_open_transfers_shortfall_from_spot():
         positions_path=path,
     )
     assert res.ok and res.state == "filled"
-    # okx 划转差额 525 - 100 = 425；bybit 600 ≥ 525 无需划转
+    # okx transfers shortfall 525 - 100 = 425; bybit 600 ≥ 525 no transfer needed
     assert len(lv.transfers) == 1
     assert abs(lv.transfers[0][1] - 425.0) < 1e-9
     assert sv.transfers == []
 
 
 def test_open_margin_includes_capital_buffer():
-    """capital_buffer_pct 计入保证金要求。"""
+    """capital_buffer_pct is included in margin requirement."""
     path = _path("margin_buffer")
-    # 余额刚好满足 1.05x 但不够 1.05x + 10% buffer
+    # Balance just meets 1.05x but not 1.05x + 10% buffer
     lv = FakeFuturesVenue("okx", balances={"spot": 0.0, "futures": 530.0})
     sv = FakeFuturesVenue("bybit", balances={"spot": 0.0, "futures": 530.0})
     res = open_pure_futures_pair(
         "BTC",
         "okx",
         "bybit",
-        500,  # 1.05x = 525 ≤ 530，但 + 10% buffer = 575 > 530
+        500,  # 1.05x = 525 ≤ 530, but + 10% buffer = 575 > 530
         dry_run=False,
         long_venue=lv,
         short_venue=sv,
@@ -474,7 +474,7 @@ def test_open_margin_includes_capital_buffer():
         capital_buffer_pct=10.0,
     )
     assert not res.ok and res.state == "aborted"
-    # 不带 buffer 则可开
+    # Without buffer it can open
     res2 = open_pure_futures_pair(
         "BTC",
         "okx",
@@ -489,7 +489,7 @@ def test_open_margin_includes_capital_buffer():
 
 
 def test_open_margin_check_skipped_when_api_fails():
-    """余额接口异常 → 跳过校验放行（不阻塞交易）。"""
+    """Balance API fails → skip check and allow through (don't block trading)."""
     path = _path("margin_api_fail")
     lv = FakeFuturesVenue("okx")
     sv = FakeFuturesVenue("bybit")
@@ -509,14 +509,14 @@ def test_open_margin_check_skipped_when_api_fails():
         positions_path=path,
     )
     assert res.ok and res.state == "filled"
-    assert any("跳过校验" in log for log in res.logs)
+    assert any("skipping check" in log for log in res.logs)
 
 
 def test_close_spread_normal_no_warning():
-    """平仓时价差正常（未明显扩大）→ 无 WARN 日志，正常平仓。"""
+    """Spread is normal at close (not significantly widened) → no WARN log, normal close."""
     path = _path("close_spread_ok")
     lv = FakeFuturesVenue("okx", price=100.0)
-    sv = FakeFuturesVenue("bybit", price=101.0)  # 开仓价差 ~1%
+    sv = FakeFuturesVenue("bybit", price=101.0)  # opening spread ~1%
     res = open_pure_futures_pair(
         "BTC",
         "okx",
@@ -529,7 +529,7 @@ def test_close_spread_normal_no_warning():
     )
     assert res.ok
 
-    # 平仓时价差未扩大（仍约 1%）
+    # Spread has not widened at close (still ~1%)
     res2 = close_pure_futures_pair(
         res.position_id,
         dry_run=False,
@@ -539,8 +539,8 @@ def test_close_spread_normal_no_warning():
         warn_spread_widen_pct=0.5,
     )
     assert res2.ok and res2.state == "filled"
-    assert not any("WARN 价差扩大" in log for log in res2.logs)
-    # 验证 close_info 包含 spread 数据
+    assert not any("WARN spread widened" in log for log in res2.logs)
+    # Verify close_info contains spread data
     pos = load_pure_futures_positions(path)[0]
     assert pos["status"] == "closed"
     assert "open_mark_spread" in pos["close_info"]
@@ -548,10 +548,10 @@ def test_close_spread_normal_no_warning():
 
 
 def test_close_spread_widened_warns():
-    """价差扩大超过阈值 → 仍正常平仓，但 logs 中有 WARN。"""
+    """Spread widens beyond threshold → still closes normally, but logs contain WARN."""
     path = _path("close_spread_warn")
     lv = FakeFuturesVenue("okx", price=100.0)
-    sv = FakeFuturesVenue("bybit", price=100.5)  # 开仓价差 ~0.5%
+    sv = FakeFuturesVenue("bybit", price=100.5)  # opening spread ~0.5%
     res = open_pure_futures_pair(
         "BTC",
         "okx",
@@ -564,8 +564,8 @@ def test_close_spread_widened_warns():
     )
     assert res.ok
 
-    # 模拟持仓期间价差扩大：bybit 价格跳涨
-    sv.price = 103.0  # 平仓价差 ~3%
+    # Simulate spread widening during hold: bybit price jumps
+    sv.price = 103.0  # close spread ~3%
 
     res2 = close_pure_futures_pair(
         res.position_id,
@@ -576,7 +576,7 @@ def test_close_spread_widened_warns():
         warn_spread_widen_pct=0.5,
     )
     assert res2.ok and res2.state == "filled"
-    assert any("WARN 价差扩大" in log for log in res2.logs)
+    assert any("WARN spread widened" in log for log in res2.logs)
     pos = load_pure_futures_positions(path)[0]
     assert pos["close_info"]["open_mark_spread"] > 0
     assert (
@@ -585,7 +585,7 @@ def test_close_spread_widened_warns():
 
 
 def test_close_no_mark_spread_field_graceful():
-    """position 记录中没有 mark_spread_pct → 不报错，优雅降级。"""
+    """position record has no mark_spread_pct → no error, graceful degradation."""
     path = _path("close_no_spread")
     lv = FakeFuturesVenue("okx", price=100.0)
     sv = FakeFuturesVenue("bybit", price=100.5)
@@ -601,14 +601,14 @@ def test_close_no_mark_spread_field_graceful():
     )
     assert res.ok
 
-    # 手动删除 mark_spread_pct 模拟旧数据
+    # Manually remove mark_spread_pct to simulate legacy data
     import json
 
     rows = json.loads(path.read_text())
     del rows[0]["mark_spread_pct"]
     path.write_text(json.dumps(rows))
 
-    # 价差再扩大，但不应报错
+    # Spread widens further, but should not error
     sv.price = 105.0
     res2 = close_pure_futures_pair(
         res.position_id,
@@ -619,7 +619,7 @@ def test_close_no_mark_spread_field_graceful():
         warn_spread_widen_pct=0.5,
     )
     assert res2.ok and res2.state == "filled"
-    assert not any("WARN 价差扩大" in log for log in res2.logs)
+    assert not any("WARN spread widened" in log for log in res2.logs)
 
 
 def test_rebalance_dry_run_no_record_change():

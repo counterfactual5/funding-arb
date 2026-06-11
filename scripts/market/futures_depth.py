@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""永续合约盘口深度查询与开仓前流动性预检（4 所公开端点，无需鉴权）。
+"""Perpetual futures order book depth query and pre-open liquidity check
+(4-exchange public endpoints, no authentication required).
 
-小币种盘口薄，taker 吃单滑点是实盘第一大隐性成本。开仓前检查
-两腿盘口在价格偏离窗口内的累计名义额是否足够覆盖下单量，
-不足则放弃，避免一笔滑点吃掉数个结算周期的费差收益。
+Small-cap coins have thin order books; taker slippage is the top hidden cost
+in live trading. Before opening a position, check whether the cumulative
+notional within the price deviation window on both legs is sufficient to
+cover the order size. If insufficient, skip — a single slippage event can
+eat up multiple settlement periods of spread profit.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ _OKX_CTVAL_TTL_S = 3600.0
 
 
 def _okx_ctval_map() -> dict[str, float]:
-    """OKX 深度数量单位是「张」，需乘 ctVal 换算成币本位数量（1h 缓存）。"""
+    """OKX depth quantities are in contracts; multiply by ctVal to convert to base currency (1h cache)."""
     global _OKX_CTVAL_CACHE
     now = time.time()
     if _OKX_CTVAL_CACHE and now - _OKX_CTVAL_CACHE[0] < _OKX_CTVAL_TTL_S:
@@ -57,8 +60,10 @@ def _parse_levels(raw: Any, qty_mult: float = 1.0) -> list[tuple[float, float]]:
     return out
 
 
-def fetch_futures_depth(venue: str, base: str, quote: str = "USDT", limit: int = 50) -> Book:
-    """拉取某所永续盘口（bids/asks 均为 (price, base_qty)，按优先级排序）。"""
+def fetch_futures_depth(
+    venue: str, base: str, quote: str = "USDT", limit: int = 50
+) -> Book:
+    """Fetch perpetual order book for a venue (bids/asks as (price, base_qty), sorted by priority)."""
     v = venue.lower()
     sym = f"{base.upper()}{quote.upper()}"
     if v == "binance":
@@ -66,7 +71,10 @@ def fetch_futures_depth(venue: str, base: str, quote: str = "USDT", limit: int =
             f"https://fapi.binance.com/fapi/v1/depth?symbol={sym}&limit={limit}",
             timeout=15,
         )
-        return {"bids": _parse_levels(d.get("bids")), "asks": _parse_levels(d.get("asks"))}
+        return {
+            "bids": _parse_levels(d.get("bids")),
+            "asks": _parse_levels(d.get("asks")),
+        }
     if v == "bybit":
         d = http_get_json(
             f"https://api.bybit.com/v5/market/orderbook"
@@ -74,7 +82,10 @@ def fetch_futures_depth(venue: str, base: str, quote: str = "USDT", limit: int =
             timeout=15,
         )
         result = d.get("result", {}) if isinstance(d, dict) else {}
-        return {"bids": _parse_levels(result.get("b")), "asks": _parse_levels(result.get("a"))}
+        return {
+            "bids": _parse_levels(result.get("b")),
+            "asks": _parse_levels(result.get("a")),
+        }
     if v == "bitget":
         d = http_get_json(
             f"https://api.bitget.com/api/v2/mix/market/merge-depth"
@@ -82,7 +93,10 @@ def fetch_futures_depth(venue: str, base: str, quote: str = "USDT", limit: int =
             timeout=15,
         )
         data = d.get("data", {}) if isinstance(d, dict) else {}
-        return {"bids": _parse_levels(data.get("bids")), "asks": _parse_levels(data.get("asks"))}
+        return {
+            "bids": _parse_levels(data.get("bids")),
+            "asks": _parse_levels(data.get("asks")),
+        }
     if v == "okx":
         inst = f"{base.upper()}-{quote.upper()}-SWAP"
         d = http_get_json(
@@ -97,14 +111,85 @@ def fetch_futures_depth(venue: str, base: str, quote: str = "USDT", limit: int =
             "bids": _parse_levels(rows.get("bids"), ctval),
             "asks": _parse_levels(rows.get("asks"), ctval),
         }
-    raise ValueError(f"不支持的 venue: {venue!r}")
+    if v == "aster":
+        # Aster fapi is Binance-compatible
+        d = http_get_json(
+            f"https://fapi.asterdex.com/fapi/v1/depth?symbol={sym}&limit={limit}",
+            timeout=15,
+        )
+        return {
+            "bids": _parse_levels(d.get("bids")),
+            "asks": _parse_levels(d.get("asks")),
+        }
+    if v == "hyperliquid":
+        return _fetch_hyperliquid_depth(base)
+    if v == "lighter":
+        return _fetch_lighter_depth(base, limit)
+    raise ValueError(f"Unsupported venue: {venue!r}")
+
+
+def _fetch_hyperliquid_depth(base: str) -> Book:
+    """Hyperliquid L2 order book via the public Info endpoint (POST)."""
+    import json as _json
+    import urllib.request
+
+    body = _json.dumps({"type": "l2Book", "coin": base.upper()}).encode()
+    req = urllib.request.Request(
+        "https://api.hyperliquid.xyz/info",
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        d = _json.loads(resp.read().decode())
+    levels = d.get("levels") or [[], []]
+    # levels[0] = bids (descending), levels[1] = asks (ascending); entries {px, sz, n}
+    def _conv(rows: Any) -> list[tuple[float, float]]:
+        out: list[tuple[float, float]] = []
+        for r in rows or []:
+            try:
+                px, qty = float(r["px"]), float(r["sz"])
+            except (TypeError, KeyError, ValueError):
+                continue
+            if px > 0 and qty > 0:
+                out.append((px, qty))
+        return out
+
+    return {"bids": _conv(levels[0]), "asks": _conv(levels[1])}
+
+
+def _fetch_lighter_depth(base: str, limit: int = 50) -> Book:
+    """Lighter order book via /api/v1/orderBookOrders (needs symbol → market_id map)."""
+    from venues.lighter_funding import LighterFundingProvider
+
+    market_id = LighterFundingProvider().market_id_for_base(base)
+    if market_id is None:
+        raise RuntimeError(f"lighter market_id unavailable for {base}")
+    d = http_get_json(
+        f"https://mainnet.zklighter.elliot.ai/api/v1/orderBookOrders"
+        f"?market_id={market_id}&limit={min(limit, 100)}",
+        timeout=15,
+    )
+
+    def _conv(rows: Any) -> list[tuple[float, float]]:
+        out: list[tuple[float, float]] = []
+        for r in rows or []:
+            try:
+                px = float(r["price"])
+                qty = float(r["remaining_base_amount"])
+            except (TypeError, KeyError, ValueError):
+                continue
+            if px > 0 and qty > 0:
+                out.append((px, qty))
+        return out
+
+    return {"bids": _conv(d.get("bids")), "asks": _conv(d.get("asks"))}
 
 
 def depth_usd_within(book: Book, side: str, max_dev_pct: float) -> float:
-    """统计 mid 价偏离窗口内某一侧的累计名义额 (USD)。
+    """Calculate cumulative notional (USD) on one side within the mid-price deviation window.
 
-    side="asks": 买入吃单消耗卖盘，窗口 [mid, mid×(1+dev)]；
-    side="bids": 卖出吃单消耗买盘，窗口 [mid×(1−dev), mid]。
+    side="asks": buy taker consumes asks, window [mid, mid×(1+dev)];
+    side="bids": sell taker consumes bids, window [mid×(1−dev), mid].
     """
     bids = book.get("bids") or []
     asks = book.get("asks") or []
@@ -139,15 +224,15 @@ def check_pair_depth(
     max_dev_pct: float = 0.3,
     min_multiple: float = 3.0,
     depth_fetcher: Callable[[str, str, str], Book] | None = None,
+    fail_open: bool = True,
 ) -> tuple[bool, str]:
-    """两腿流动性预检：偏离窗口内深度 ≥ min_multiple × trade_usd 才放行。
+    """Two-leg liquidity pre-check: pass only if depth within deviation window ≥ min_multiple × trade_usd.
 
-    返回 (ok, detail)。盘口拉取失败时放行（不让偶发接口故障阻塞交易），
-    detail 中注明。多头腿吃 asks，空头腿吃 bids。
+    Returns (ok, detail). Long leg consumes asks, short leg consumes bids.
+    fail_open=True passes on fetch failure (don't block on transient API errors);
+    fail_open=False blocks the open instead (recommended for thin DEX books).
     """
-    fetcher = depth_fetcher or (
-        lambda v, b, q: fetch_futures_depth(v, b, q)
-    )
+    fetcher = depth_fetcher or (lambda v, b, q: fetch_futures_depth(v, b, q))
     required = trade_usd * min_multiple
     details: list[str] = []
     for venue, side, label in (
@@ -157,13 +242,15 @@ def check_pair_depth(
         try:
             book = fetcher(venue, base, quote)
         except Exception as e:
+            if not fail_open:
+                return False, f"{label}@{venue}: depth_fetch_failed({e}), blocking open"
             details.append(f"{label}@{venue}: depth_fetch_failed({e}), skipped")
             continue
         avail = depth_usd_within(book, side, max_dev_pct)
         if avail < required:
             return False, (
-                f"{label}@{venue}: 仅 ${avail:.0f} 在 ±{max_dev_pct}% 窗口内 "
-                f"(需 ${required:.0f} = {min_multiple}×${trade_usd:.0f})"
+                f"{label}@{venue}: only ${avail:.0f} within ±{max_dev_pct}% window "
+                f"(need ${required:.0f} = {min_multiple}×${trade_usd:.0f})"
             )
         details.append(f"{label}@{venue}: ${avail:.0f} ok")
     return True, "; ".join(details)

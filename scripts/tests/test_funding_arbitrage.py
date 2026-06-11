@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Hermetic unit tests for funding-rate arbitrage (no network)."""
+
 from __future__ import annotations
 
 import sys
@@ -45,11 +46,21 @@ def _base_cfg(**over):
 
 
 def test_apply_live_safety_disables_reverse():
-    cfg = {"dry_run": False, "crossAssetArbitrage": {"reverseEntryFundingRatePct": -0.05}}
+    cfg = {
+        "dry_run": False,
+        "crossAssetArbitrage": {"reverseEntryFundingRatePct": -0.05},
+    }
     out = apply_live_safety(cfg)
     assert out["crossAssetArbitrage"]["reverseEntryFundingRatePct"] == -999.0
-    cfg2 = {"dry_run": False, "enableReverseArbitrage": True, "crossAssetArbitrage": {"reverseEntryFundingRatePct": -0.05}}
-    assert apply_live_safety(cfg2)["crossAssetArbitrage"]["reverseEntryFundingRatePct"] == -0.05
+    cfg2 = {
+        "dry_run": False,
+        "enableReverseArbitrage": True,
+        "crossAssetArbitrage": {"reverseEntryFundingRatePct": -0.05},
+    }
+    assert (
+        apply_live_safety(cfg2)["crossAssetArbitrage"]["reverseEntryFundingRatePct"]
+        == -0.05
+    )
 
 
 def test_funding_direction():
@@ -77,7 +88,13 @@ def test_close_perp_only_when_spot_missing():
     fs = default_futures_state()
     fs["positions"]["BTC"] = {"amount": 0.01, "entry_price": 100.0, "side": "short"}
     trades, _ = decide_cross_asset_arbitrage(
-        h, fs, {"BTC": 100.0}, {"BTC": {"price": 100.0}}, _base_cfg(), {"BTC": 0.0}, {"BTC": 0.0}
+        h,
+        fs,
+        {"BTC": 100.0},
+        {"BTC": {"price": 100.0}},
+        _base_cfg(),
+        {"BTC": 0.0},
+        {"BTC": 0.0},
     )
     assert [t["type"] for t in trades] == ["close_short"]
 
@@ -86,7 +103,11 @@ def test_cash_and_carry_delegates():
     cfg = {
         "cash": "USDT",
         "assets": ["BTC"],
-        "cashAndCarry": {"tradeUsd": 1000.0, "entryFundingRatePct": 0.05, "minNetEdgePct": 0.02},
+        "cashAndCarry": {
+            "tradeUsd": 1000.0,
+            "entryFundingRatePct": 0.05,
+            "minNetEdgePct": 0.02,
+        },
     }
     trades, meta = decide_cash_and_carry(
         {"USDT": 10000.0, "BTC": 0.0},
@@ -102,31 +123,51 @@ def test_cash_and_carry_delegates():
 
 
 def test_normalized_trades_are_booked():
-    """回归：归一化丢 status/amount_usdt 会让账本静默跳过所有成交。"""
+    """Regression: missing status/amount_usdt in normalization causes ledger to silently skip all fills."""
     prices = {"BTC": 50000.0}
     executed = [
-        {"symbol": "BTC", "type": "open_short", "status": "filled",
-         "exec_qty": 0.01, "exec_price": 50000.0},
-        {"symbol": "BTC", "type": "buy", "status": "simulated",
-         "amount_base": 0.01, "price": 50000.0},
-        {"symbol": "BTC", "type": "open_short", "status": "failed",
-         "amount_base": 0.5, "price": 50000.0},
+        {
+            "symbol": "BTC",
+            "type": "open_short",
+            "status": "filled",
+            "exec_qty": 0.01,
+            "exec_price": 50000.0,
+        },
+        {
+            "symbol": "BTC",
+            "type": "buy",
+            "status": "simulated",
+            "amount_base": 0.01,
+            "price": 50000.0,
+        },
+        {
+            "symbol": "BTC",
+            "type": "open_short",
+            "status": "failed",
+            "amount_base": 0.5,
+            "price": 50000.0,
+        },
     ]
     ux = normalize_executed_for_ledger(executed, prices)
-    assert len(ux) == 2  # failed 被剔除
+    assert len(ux) == 2  # failed ones are filtered out
     assert all(t["status"] in ("simulated", "filled") for t in ux)
     assert all(approx(t["amount_usdt"], 500.0) for t in ux)
 
     h, fs = apply_simulated_futures_trades(
-        {"USDT": 10000.0}, default_futures_state(), ux, prices, "USDT",
-        spot_fee_rate=0.001, perp_fee_rate=0.0005,
+        {"USDT": 10000.0},
+        default_futures_state(),
+        ux,
+        prices,
+        "USDT",
+        spot_fee_rate=0.001,
+        perp_fee_rate=0.0005,
     )
     pos = fs["positions"]["BTC"]
     assert approx(pos["amount"], 0.01)
     assert pos["side"] == "short"
     assert approx(pos["entry_price"], 50000.0)
     assert approx(h["BTC"], 0.01)
-    # cash = 10000 - 500(现货买) - 0.5(现货费) - 0.25(永续费)
+    # cash = 10000 - 500(spot buy) - 0.5(spot fee) - 0.25(perp fee)
     assert approx(h["USDT"], 10000.0 - 500.0 - 0.5 - 0.25)
 
 
@@ -134,13 +175,31 @@ def test_weighted_entry_price_on_addon():
     prices = {"ETH": 2000.0}
     fs = default_futures_state()
     ux1 = normalize_executed_for_ledger(
-        [{"symbol": "ETH", "type": "open_short", "status": "filled",
-          "exec_qty": 1.0, "exec_price": 2000.0}], prices)
+        [
+            {
+                "symbol": "ETH",
+                "type": "open_short",
+                "status": "filled",
+                "exec_qty": 1.0,
+                "exec_price": 2000.0,
+            }
+        ],
+        prices,
+    )
     h, fs = apply_simulated_futures_trades({"USDT": 10000.0}, fs, ux1, prices, "USDT")
     prices2 = {"ETH": 1000.0}
     ux2 = normalize_executed_for_ledger(
-        [{"symbol": "ETH", "type": "open_short", "status": "filled",
-          "exec_qty": 1.0, "exec_price": 1000.0}], prices2)
+        [
+            {
+                "symbol": "ETH",
+                "type": "open_short",
+                "status": "filled",
+                "exec_qty": 1.0,
+                "exec_price": 1000.0,
+            }
+        ],
+        prices2,
+    )
     h, fs = apply_simulated_futures_trades(h, fs, ux2, prices2, "USDT")
     assert approx(fs["positions"]["ETH"]["amount"], 2.0)
     assert approx(fs["positions"]["ETH"]["entry_price"], 1500.0)

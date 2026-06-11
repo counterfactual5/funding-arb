@@ -60,7 +60,7 @@ def fetch_funding_snaps_for_assets(
             pass
 
     need_current = [a for a in assets if a not in snaps]
-    # Bitget fetch_all 常缺 next_funding_ts，需 per-symbol 补全
+    # Bitget fetch_all often missing next_funding_ts, needs per-symbol backfill
     need_current.extend(
         a
         for a in assets

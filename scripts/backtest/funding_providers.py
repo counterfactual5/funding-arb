@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""多交易所资金费公开数据提供者（Bitget / OKX / Bybit / Binance）。"""
+"""Multi-exchange funding rate public data providers (Bitget / OKX / Bybit / Binance)."""
 
 from __future__ import annotations
 
@@ -68,10 +68,14 @@ class FundingProvider:
 
 
 class BinanceFundingProvider(FundingProvider):
+    """Binance-style fapi provider. Subclass with a different BASE for
+    API-compatible venues (e.g. Aster)."""
+
     venue_id = "binance"
+    BASE = "https://fapi.binance.com"
 
     def fetch_all(self, quote: str = "USDT") -> list[dict[str, Any]]:
-        data = _http_get_with_retry("https://fapi.binance.com/fapi/v1/premiumIndex")
+        data = _http_get_with_retry(f"{self.BASE}/fapi/v1/premiumIndex")
         out: list[dict[str, Any]] = []
         for row in data if isinstance(data, list) else [data]:
             sym = str(row.get("symbol", ""))
@@ -88,14 +92,14 @@ class BinanceFundingProvider(FundingProvider):
         return out
 
     def fetch_current(self, symbol: str) -> dict[str, Any]:
-        url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={symbol.upper()}"
+        url = f"{self.BASE}/fapi/v1/premiumIndex?symbol={symbol.upper()}"
         data = _http_get_with_retry(url)
         if isinstance(data, list):
             data = data[0]
         next_ts = int(data.get("nextFundingTime", 0) or 0)
         interval_ms = _DEFAULT_INTERVAL_MS
         try:
-            info = _http_get_with_retry("https://fapi.binance.com/fapi/v1/fundingInfo")
+            info = _http_get_with_retry(f"{self.BASE}/fapi/v1/fundingInfo")
             for row in info if isinstance(info, list) else []:
                 if str(row.get("symbol", "")).upper() == symbol.upper():
                     hrs = float(row.get("fundingIntervalHours", 8) or 8)
@@ -119,7 +123,7 @@ class BinanceFundingProvider(FundingProvider):
             return []
         out: list[dict[str, Any]] = []
         cursor = int(start_ms)
-        url_base = "https://fapi.binance.com/fapi/v1/fundingRate"
+        url_base = f"{self.BASE}/fapi/v1/fundingRate"
         for _ in range(max_pages):
             url = f"{url_base}?symbol={symbol.upper()}&startTime={cursor}&limit=1000"
             chunk = _http_get_with_retry(url)
@@ -140,7 +144,7 @@ class BinanceFundingProvider(FundingProvider):
 
     def fetch_interval_map(self, quote: str = "USDT") -> dict[str, float]:
         try:
-            info = _http_get_with_retry("https://fapi.binance.com/fapi/v1/fundingInfo")
+            info = _http_get_with_retry(f"{self.BASE}/fapi/v1/fundingInfo")
         except Exception:
             return {}
         if not isinstance(info, list):
@@ -347,7 +351,7 @@ class OkxFundingProvider(FundingProvider):
         return sym
 
     def _fetch_any(self) -> list[dict[str, Any]]:
-        """instId=ANY 一次拉全市场 funding（fetch_all/interval_map 共享 60s 缓存）。"""
+        """instId=ANY fetches all-market funding in one request (shared 60s cache between fetch_all/interval_map)."""
         now = time.time()
         if self._any_cache and now - self._any_cache[0] < self._ANY_CACHE_TTL_S:
             return self._any_cache[1]
@@ -358,7 +362,7 @@ class OkxFundingProvider(FundingProvider):
         return rows
 
     def _fetch_mark_prices(self) -> dict[str, float]:
-        """批量获取 OKX SWAP 标记价格（60s 缓存，与 _any_cache 同步）。"""
+        """Batch fetch OKX SWAP mark prices (60s cache, synchronized with _any_cache)."""
         now = time.time()
         if self._mark_cache and now - self._mark_cache[0] < 60.0:
             return self._mark_cache[1]
@@ -378,7 +382,7 @@ class OkxFundingProvider(FundingProvider):
             return {}
 
     def fetch_all(self, quote: str = "USDT") -> list[dict[str, Any]]:
-        """批量端点 instId=ANY：1 次请求替代逐币并行（~400 合约 <1s）。"""
+        """Batch endpoint instId=ANY: 1 request replaces per-symbol parallel (~400 contracts < 1s)."""
         quote_u = quote.upper()
         mp_map = self._fetch_mark_prices()
         out: list[dict[str, Any]] = []
@@ -391,7 +395,7 @@ class OkxFundingProvider(FundingProvider):
             out.append(
                 {
                     "symbol": f"{base}{quote_u}",
-                    # fundingRate = 当期费率，将于 fundingTime 结算
+                    # fundingRate = current period rate, to be settled at fundingTime
                     "rate_pct": float(row.get("fundingRate", 0) or 0) * 100,
                     "next_funding_ts": int(row.get("fundingTime", 0) or 0),
                     "mark_price": float(mp_map.get(swap_inst, 0.0)),
@@ -400,7 +404,7 @@ class OkxFundingProvider(FundingProvider):
         return out
 
     def fetch_interval_map(self, quote: str = "USDT") -> dict[str, float]:
-        """从 ANY 响应的 fundingTime/nextFundingTime 差推断各币结算周期。"""
+        """Infer settlement interval per symbol from fundingTime/nextFundingTime difference in ANY response."""
         quote_u = quote.upper()
         out: dict[str, float] = {}
         for row in self._fetch_any():
@@ -486,17 +490,39 @@ _PROVIDERS: dict[str, FundingProvider] = {
     "okx": OkxFundingProvider(),
 }
 
-# Lazy import to avoid circular dependency (hyperliquid_funding imports requests)
+
+# Lazy imports to avoid circular dependency / optional dependencies (requests)
 def _get_hyperliquid_provider() -> FundingProvider:
     from venues.hyperliquid_funding import HyperliquidFundingProvider
+
     return HyperliquidFundingProvider()
 
-_PROVIDERS["hyperliquid"] = None  # placeholder, resolved lazily
+
+def _get_aster_provider() -> FundingProvider:
+    from venues.aster_funding import AsterFundingProvider
+
+    return AsterFundingProvider()
+
+
+def _get_lighter_provider() -> FundingProvider:
+    from venues.lighter_funding import LighterFundingProvider
+
+    return LighterFundingProvider()
+
+
+_LAZY_FACTORIES = {
+    "hyperliquid": _get_hyperliquid_provider,
+    "aster": _get_aster_provider,
+    "lighter": _get_lighter_provider,
+}
+
+for _name in _LAZY_FACTORIES:
+    _PROVIDERS[_name] = None  # placeholder, resolved lazily
 
 
 def _resolve_provider(venue: str) -> FundingProvider:
-    if venue == "hyperliquid" and _PROVIDERS.get("hyperliquid") is None:
-        _PROVIDERS["hyperliquid"] = _get_hyperliquid_provider()
+    if _PROVIDERS.get(venue) is None and venue in _LAZY_FACTORIES:
+        _PROVIDERS[venue] = _LAZY_FACTORIES[venue]()
     return _PROVIDERS[venue]
 
 
@@ -504,7 +530,7 @@ def get_funding_provider(venue: str) -> FundingProvider:
     v = str(venue or "binance").strip().lower()
     if v not in _PROVIDERS:
         raise ValueError(
-            f"不支持的 funding venue={v!r}，可选: {', '.join(sorted(_PROVIDERS))}"
+            f"Unsupported funding venue={v!r}, available: {', '.join(sorted(_PROVIDERS))}"
         )
     provider = _PROVIDERS[v]
     if provider is None:

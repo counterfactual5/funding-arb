@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Pure Perpetual Futures Spread Arbitrage Scanner — 跨交易所永续合约资金费价差扫描。
+"""Pure Perpetual Futures Spread Arbitrage Scanner — Cross-exchange perpetual contract funding rate spread scanner。
 
-无需现货/借币，只比较各所 USDT 永续合约的资金费率差：
-  - 正向：在 rate 最高的所做多，rate 最低的所做空
-  - 反向：在 rate 最低(最负)的所做多，rate 最高(或不太负)的所做空
+No spot/borrow needed; only compares funding rate differences across exchanges for USDT perpetuals：
+  - Forward: long at the venue with the highest rate, short at the venue with the lowest rate
+  - Reverse: long at the venue with the lowest (most negative) rate, short at the venue with the highest (or less negative) rate
 
-与 cash-and-carry 扫描器的核心区别：双腿都是 perp（taker fee 更低，无 spot slippage），
-且可拆分到不同交易所，不需要同一所同时支持 spot 和 perp。
+Key difference from cash-and-carry scanner：both legs are perp（lower taker fees, no spot slippage），
+Legs can be split across different exchanges; no need for one exchange to support both spot and perp.
 
-用法:
+Usage:
   python3 scripts/cli/scan_pure_futures_spreads.py
   python3 scripts/cli/scan_pure_futures_spreads.py --venues binance,bybit,okx,bitget
   python3 scripts/cli/scan_pure_futures_spreads.py --min-spread 0.1 --verbose
   python3 scripts/cli/scan_pure_futures_spreads.py --json
-  python3 scripts/cli/scan_pure_futures_spreads.py --watch 5  # 每5分钟扫一次，追加JSONL
+  python3 scripts/cli/scan_pure_futures_spreads.py --watch 5  # scan every 5 minutes and append to JSONL
 
 Architecture note:
   This is Phase 1 — data-driven scan only. No order execution. The output answers:
@@ -178,17 +178,48 @@ def _scan_spreads(
                 rb = venue_map[vb]
                 rate_a = float(ra["rate_pct"])
                 rate_b = float(rb["rate_pct"])
+                interval_a = float(ra.get("interval_h", 8.0) or 8.0)
+                interval_b = float(rb.get("interval_h", 8.0) or 8.0)
 
                 # Perp-perp: short at higher rate (receives funding), long at lower (pays less).
                 # Spread = absolute difference regardless of sign.
                 if rate_a >= rate_b:
-                    short_venue, short_rate, short_info = va, rate_a, ra
-                    long_venue, long_rate, long_info = vb, rate_b, rb
+                    short_venue, short_rate, short_info, short_interval = (
+                        va,
+                        rate_a,
+                        ra,
+                        interval_a,
+                    )
+                    long_venue, long_rate, long_info, long_interval = (
+                        vb,
+                        rate_b,
+                        rb,
+                        interval_b,
+                    )
                 else:
-                    short_venue, short_rate, short_info = vb, rate_b, rb
-                    long_venue, long_rate, long_info = va, rate_a, ra
+                    short_venue, short_rate, short_info, short_interval = (
+                        vb,
+                        rate_b,
+                        rb,
+                        interval_b,
+                    )
+                    long_venue, long_rate, long_info, long_interval = (
+                        va,
+                        rate_a,
+                        ra,
+                        interval_a,
+                    )
 
-                spread = short_rate - long_rate
+                # Normalize rates to per-hour so venues with different settlement
+                # intervals (HL 1h vs CEX 8h) are compared on the same time base.
+                long_rate_hourly = long_rate / long_interval
+                short_rate_hourly = short_rate / short_interval
+
+                # Effective holding period: the shorter interval determines the
+                # minimum cycle (you can exit the shorter side sooner).
+                # Scale hourly spread back to the effective cycle length.
+                eff_interval = min(long_interval, short_interval)
+                spread = (short_rate_hourly - long_rate_hourly) * eff_interval
                 if spread < min_spread:
                     continue
 
@@ -212,11 +243,7 @@ def _scan_spreads(
                 else:
                     direction = "forward"
 
-                interval_h = max(
-                    float(long_info.get("interval_h", 8.0) or 8.0),
-                    float(short_info.get("interval_h", 8.0) or 8.0),
-                )
-                annual = _annual_from_rate(spread, interval_h)
+                annual = _annual_from_rate(spread, eff_interval)
                 settle_mismatch = (
                     abs(
                         float(long_info.get("interval_h", 8.0) or 8.0)
@@ -225,7 +252,7 @@ def _scan_spreads(
                     > 0.5
                 )
 
-                # 计算标记价差百分比
+                # Calculate mark price spread percentage
                 long_mark = float(long_info.get("mark_price", 0.0) or 0.0)
                 short_mark = float(short_info.get("mark_price", 0.0) or 0.0)
                 mark_spread_pct = (
@@ -234,7 +261,7 @@ def _scan_spreads(
                     else 0.0
                 )
 
-                # 标记价差过大则跳过（mark 为 0 时保守放行）
+                # Skip if mark price spread is too large（conservative pass when mark is 0）
                 if mark_spread_pct > 0 and mark_spread_pct > max_mark_spread_pct:
                     continue
 
@@ -257,6 +284,7 @@ def _scan_spreads(
                     "long_interval_h": float(long_info.get("interval_h", 8.0) or 8.0),
                     "short_interval_h": float(short_info.get("interval_h", 8.0) or 8.0),
                     "settle_mismatch": settle_mismatch,
+                    "same_interval": not settle_mismatch,
                     "long_mark": long_mark,
                     "short_mark": short_mark,
                     "mark_spread_pct": round(mark_spread_pct, 6),
@@ -281,7 +309,7 @@ def scan_pure_futures_spreads(
 ) -> dict[str, Any]:
     """Main entry point — scan and return structured results."""
     if venues is None:
-        venues = ["binance", "bitget", "bybit", "okx"]
+        venues = ["binance", "bitget", "bybit", "okx", "hyperliquid"]
 
     by_base = fetch_all_fee_rate_rows_by_base(venues, workers)
     _backfill_missing_settle_times(by_base, venues, workers)
@@ -420,8 +448,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--venues",
-        default="binance,bitget,bybit,okx",
-        help="Comma-separated venues (default: binance,bitget,bybit,okx)",
+        default="binance,bitget,bybit,okx,hyperliquid",
+        help=(
+            "Comma-separated venues (default: binance,bitget,bybit,okx,hyperliquid; "
+            "also available: aster, lighter)"
+        ),
     )
     parser.add_argument(
         "--min-spread",

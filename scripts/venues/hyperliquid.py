@@ -21,22 +21,43 @@ from typing import Any
 import requests
 
 # ---------------------------------------------------------------------------
-# Bootstrap: import from the hyperliquid skill (write-path only)
+# Bootstrap: lazy import from the hyperliquid skill (write-path only).
+# Read paths (prices, meta, rules) work without the sibling repo, so the
+# adapter stays importable for scanning and dry-run execution.
 # ---------------------------------------------------------------------------
 _HL_DIR = (
     Path(__file__).resolve().parent.parent.parent.parent / "hyperliquid" / "scripts"
 )
-if str(_HL_DIR) not in sys.path:
-    sys.path.insert(0, str(_HL_DIR))
 
-# Write-path imports (these use SDK exchange client for signing)
-from hyperliquid_order import (  # noqa: E402
-    get_account_value as hl_get_account_value,
-    get_positions as hl_get_positions,
-    place_market_order as hl_place_market_order,
-    set_leverage as hl_set_leverage,
-)
-from common import get_base_url as _hl_get_base_url  # noqa: E402
+_hl_skill_cache: dict[str, Any] | None = None
+
+
+def _hl_skill() -> dict[str, Any]:
+    """Import write-path functions from the sibling hyperliquid skill repo."""
+    global _hl_skill_cache
+    if _hl_skill_cache is not None:
+        return _hl_skill_cache
+    if str(_HL_DIR) not in sys.path:
+        sys.path.insert(0, str(_HL_DIR))
+    try:
+        from hyperliquid_order import (  # noqa: E402
+            get_account_value,
+            get_positions,
+            place_market_order,
+            set_leverage,
+        )
+    except ImportError as e:
+        raise RuntimeError(
+            f"Hyperliquid order signing requires the sibling repo at {_HL_DIR} "
+            "(clone the hyperliquid skill repo next to funding-arb)"
+        ) from e
+    _hl_skill_cache = {
+        "get_account_value": get_account_value,
+        "get_positions": get_positions,
+        "place_market_order": place_market_order,
+        "set_leverage": set_leverage,
+    }
+    return _hl_skill_cache
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -168,7 +189,7 @@ class HyperliquidVenue:
         margin checks (USDC ≈ USDT 1:1).
         """
         try:
-            acct = hl_get_account_value()
+            acct = _hl_skill()["get_account_value"]()
             val = float(acct.get("totalAccountValue", 0) or 0)
             return {"spot": 0.0, "futures": val}
         except Exception:
@@ -180,7 +201,7 @@ class HyperliquidVenue:
         Output: [{symbol, side, qty, entry_price, liq_price, leverage, unrealized_pnl}]
         """
         try:
-            raw_positions = hl_get_positions()
+            raw_positions = _hl_skill()["get_positions"]()
         except Exception:
             return []
         out: list[dict[str, Any]] = []
@@ -215,7 +236,7 @@ class HyperliquidVenue:
         if coin in self._leverage_set:
             return
         try:
-            hl_set_leverage(coin=coin, leverage=1, is_cross=True)
+            _hl_skill()["set_leverage"](coin=coin, leverage=1, is_cross=True)
             self._leverage_set.add(coin)
         except Exception:
             pass  # Non-fatal: executor catches failures downstream
@@ -272,7 +293,7 @@ class HyperliquidVenue:
             submit_ts = time.time()
 
             try:
-                res = hl_place_market_order(
+                res = _hl_skill()["place_market_order"](
                     coin=coin,
                     is_buy=is_buy,
                     size=size,

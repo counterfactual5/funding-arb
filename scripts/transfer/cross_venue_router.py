@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""跨所资金路由 — 匹配共同链、选最低提现费、生成执行计划。"""
+"""Cross-venue fund routing — match common chains, pick lowest withdrawal fee, generate execution plan."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -16,7 +17,7 @@ from transfer.transfer_providers import (
 
 @dataclass
 class CrossTransferRoute:
-    """一条可行的跨所划转路由。"""
+    """A viable cross-venue transfer route."""
 
     canonical: str
     from_venue: str
@@ -96,14 +97,14 @@ def find_routes(
     *,
     fetch_deposit_address: bool = True,
 ) -> list[CrossTransferRoute]:
-    """列出 from→to 所有共同链路由，按 total_fee 升序。"""
+    """List all common-chain routes from→to, sorted by total_fee ascending."""
     src = get_transfer_provider(from_venue)
     dst = get_transfer_provider(to_venue)
     src_routes = _index_routes(src.fetch_chain_routes(coin), from_venue)
     dst_routes = _index_routes(dst.fetch_chain_routes(coin), to_venue)
 
     canon_list = common_canonicals(from_venue, to_venue)
-    # 也尝试从实际 fetch 结果交集
+    # Also try intersecting actual fetch results
     for c in set(src_routes) & set(dst_routes):
         if c not in canon_list:
             canon_list.append(c)
@@ -216,9 +217,9 @@ def estimate_transfer_fee(
     coin: str,
     amount: float,
 ) -> tuple[float, float, str]:
-    """估算跨所划转成本。返回 (fee_usdt, fee_pct, canonical_chain)。
+    """Estimate cross-venue transfer cost. Returns (fee_usdt, fee_pct, canonical_chain).
 
-    fee_pct 与统一池 net_edge 同单位：占名义金额的百分比点数（0.1 = 0.1%）。
+    fee_pct is in the same unit as the pool's net_edge: percentage points of notional (0.1 = 0.1%).
     """
     fv, tv = from_venue.lower(), to_venue.lower()
     if fv == tv or amount <= 0:
@@ -279,7 +280,7 @@ def build_plan(
 
 
 def execute_plan(plan: TransferPlan) -> tuple[list[str], WithdrawResult | None]:
-    """执行划转计划。返回 (步骤日志, 提现结果)。"""
+    """Execute transfer plan. Returns (step logs, withdrawal result)."""
     if plan.dry_run:
         return ["dry_run: skipped execution"], None
 
@@ -293,7 +294,7 @@ def execute_plan(plan: TransferPlan) -> tuple[list[str], WithdrawResult | None]:
     prep = src.prepare_for_withdraw(route.coin, route.amount)
     logs.extend(prep)
 
-    # 刷新充值地址
+    # Refresh deposit address
     dst = get_transfer_provider(route.to_venue)
     dep: DepositAddress = dst.get_deposit_address(route.coin, route.to_chain)
     if not dep.address:
@@ -303,9 +304,9 @@ def execute_plan(plan: TransferPlan) -> tuple[list[str], WithdrawResult | None]:
 
     bal = src.get_withdrawable_balance(route.coin)
     if bal < route.amount:
-        return logs + [f"aborted: balance {bal:.4f} < amount {route.amount:.4f}"], WithdrawResult(
-            ok=False, message="insufficient balance"
-        )
+        return logs + [
+            f"aborted: balance {bal:.4f} < amount {route.amount:.4f}"
+        ], WithdrawResult(ok=False, message="insufficient balance")
 
     result = src.withdraw(
         route.coin,

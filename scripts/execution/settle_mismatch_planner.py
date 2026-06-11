@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Settle-mismatch fee planner — 结算周期错配的资金费规划。
+"""Settle-mismatch fee planner — funding rate planning for settlement period mismatches.
 
-当两个交易所的 funding 结算周期不同时（如 Bitget 2h vs Binance 8h），虽然 spread
-看起来不错，但实际收/付频率不对称，可能导致:
-  - 预期收益高估（以为每 8h 收 0.15%，实际 short 腿 2h 一付 4 次）
-  - 现金流错配（一边频繁付费，另一边 8h 才收一次）
+When two exchanges have different funding settlement periods (e.g. Bitget 2h vs Binance 8h),
+the spread may look attractive, but the actual pay/receive frequency is asymmetrical, which can cause:
+  - Overestimated returns (expecting 0.15% every 8h, but the short leg pays 4 times per 2h)
+  - Cash flow mismatch (one side pays frequently, the other only receives every 8h)
 
-本模块:
-  1. 计算实际的有效资金费（按短周期折算到统一时间窗口）
-  2. 评估现金流是否需要预留资金
-  3. 生成调整后的 net_edge（考虑周期错配）
+This module:
+  1. Calculates the effective funding rate (normalized to a common time window using the shorter period)
+  2. Evaluates whether cash needs to be reserved for cash flow
+  3. Generates an adjusted net_edge (accounting for period mismatch)
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from typing import Any
 
 @dataclass
 class MismatchAnalysis:
-    """结算周期错配分析结果。"""
+    """Settlement period mismatch analysis result."""
 
     base: str
     long_venue: str
@@ -30,15 +30,17 @@ class MismatchAnalysis:
     long_interval_h: float
     short_interval_h: float
     is_mismatch: bool
-    # 标准化到 8h 窗口的资金费
+    # Rates normalized to 8h window
     long_rate_per_8h_pct: float
     short_rate_per_8h_pct: float
     spread_per_8h_pct: float
-    # 现金流影响
-    max_cumulative_outflow_pct: float  # 在一个周期内最大累计流出（占名义价值的百分比）
-    # 调整建议
-    adjusted_net_edge_pct: float  # 考虑周期错配后的净边际
-    capital_buffer_pct: float  # 建议预留资金（占名义价值的百分比）
+    # Cash flow impact
+    max_cumulative_outflow_pct: (
+        float  # Max cumulative outflow within one period (% of notional)
+    )
+    # Adjustment recommendations
+    adjusted_net_edge_pct: float  # Net edge after accounting for period mismatch
+    capital_buffer_pct: float  # Recommended capital reservation (% of notional)
     viable: bool
     note: str
 
@@ -76,20 +78,22 @@ def analyze_settle_mismatch(
     max_spread_tolerance_pct: float = 0.5,
     min_periods_for_viable: int = 3,
 ) -> MismatchAnalysis:
-    """分析结算周期错配的实际收益和风险。
+    """Analyze the actual return and risk of settlement period mismatches.
 
-    核心思路:
-      - 将两腿的 rate 标准化到 8h 窗口
-      - 计算现金流错配: 短周期腿在每个短周期都要付/收，长周期腿只在长周期时收/付
-      - 最大累积流出 = 在长周期腿收/付之前，短周期腿已付/收的总和
+    Core approach:
+      - Normalize both legs' rates to an 8h window
+      - Calculate cash flow mismatch: the short-period leg pays/receives every short period,
+        while the long-period leg only pays/receives at the long period boundary
+      - Maximum cumulative outflow = total paid/received by the short-period leg before
+        the long-period leg settles
 
     Args:
-        max_spread_tolerance_pct: 两腿周期差距超过此值（%）标记为高风险
-        min_periods_for_viable: 至少期望持仓 N 个短周期才算 viable
+        max_spread_tolerance_pct: Mark as high risk if the period gap exceeds this (%)
+        min_periods_for_viable: Require at least N short periods of expected holding to be viable
     """
     is_mismatch = abs(long_interval_h - short_interval_h) > 0.5
 
-    # 标准化到 8h 窗口
+    # Normalize to 8h window
     long_rate_per_8h = (
         long_rate_pct * (8.0 / long_interval_h) if long_interval_h > 0 else 0.0
     )
@@ -99,7 +103,7 @@ def analyze_settle_mismatch(
     spread_per_8h = abs(short_rate_per_8h - long_rate_per_8h)
 
     if not is_mismatch:
-        # 无错配，直接用原始数据
+        # No mismatch, use raw data directly
         return MismatchAnalysis(
             base=base,
             long_venue=long_venue,
@@ -119,7 +123,7 @@ def analyze_settle_mismatch(
             note="no mismatch",
         )
 
-    # 有错配: 分析现金流
+    # Mismatch present: analyze cash flow
     shorter_interval = min(long_interval_h, short_interval_h)
     longer_interval = max(long_interval_h, short_interval_h)
 
@@ -143,10 +147,10 @@ def analyze_settle_mismatch(
             note="invalid interval (<=0)",
         )
 
-    # 在一个长周期内，短周期腿结算次数
+    # Number of short-period settlements within one long period
     settlements_in_longer = max(1, round(longer_interval / shorter_interval))
 
-    # 找出哪个腿是短周期的
+    # Determine which leg has the shorter period
     if long_interval_h <= short_interval_h:
         # Long leg settles more frequently
         # Long pays rate to shorts on each settlement
@@ -158,13 +162,13 @@ def analyze_settle_mismatch(
         per_settlement_rate = short_rate_pct
         max_cumulative = abs(per_settlement_rate) * (settlements_in_longer - 1)
 
-    # Adjusted net edge: 考虑错配带来的潜在成本
-    # 保守估计：扣除最大累积流出的一部分（假设 spread 不会完全反转）
+    # Adjusted net edge: account for potential costs from mismatch
+    # Conservative estimate: deduct a portion of max cumulative outflow (assuming spread won't fully reverse)
     spread_gap_penalty = max_cumulative * 0.3  # 30% buffer for timing risk
     adjusted_net = spread_per_8h - total_fee_pct - spread_gap_penalty
 
-    # Capital buffer: 建议预留资金以覆盖现金流错配
-    capital_buffer = max_cumulative * 0.5  # 预留 50% 的最大累积流出
+    # Capital buffer: recommend reserving funds to cover cash flow mismatch
+    capital_buffer = max_cumulative * 0.5  # Reserve 50% of max cumulative outflow
 
     # Viability check
     viable = True
@@ -206,11 +210,11 @@ def analyze_settle_mismatch(
 
 
 def effective_trade_usd(trade_usd: float, row: dict[str, Any]) -> float:
-    """按 capital_buffer_pct 缩小名义本金，为错配现金流预留保证金余量。"""
+    """Scale down notional by capital_buffer_pct to reserve margin buffer for mismatched cash flows."""
     buffer_pct = float(row.get("capital_buffer_pct", 0) or 0)
     if buffer_pct <= 0:
         return trade_usd
-    # buffer 是名义价值百分比；缩小仓位以留出账户 USDT 缓冲
+    # Buffer is a % of notional; reduce position to leave account USDT buffer
     scale = max(0.5, 1.0 - buffer_pct / 100.0)
     return round(trade_usd * scale, 2)
 
@@ -222,13 +226,13 @@ def filter_candidates_with_mismatch(
     max_cumulative_outflow_pct: float = 0.5,
     min_adjusted_edge_pct: float = 0.0,
 ) -> list[dict[str, Any]]:
-    """过滤扫描结果中的 settle-mismatch 候选，添加分析数据。
+    """Filter settle-mismatch candidates from scan results and add analysis data.
 
     Args:
-        candidates: scan_pure_futures_spreads 返回的 rows
-        allow_mismatch: 是否允许有错配但仍然 viable 的候选
-        max_cumulative_outflow_pct: 最大允许的累积流出
-        min_adjusted_edge_pct: 调整后最低净边际
+        candidates: rows returned by scan_pure_futures_spreads
+        allow_mismatch: Whether to allow viable-but-mismatched candidates
+        max_cumulative_outflow_pct: Maximum allowed cumulative outflow
+        min_adjusted_edge_pct: Minimum adjusted net edge
     """
     filtered = []
     for row in candidates:

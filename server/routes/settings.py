@@ -1,0 +1,343 @@
+#!/usr/bin/env python3
+"""Settings & credentials API routes."""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+from fastapi import APIRouter
+from pydantic import BaseModel, Field
+
+router = APIRouter(tags=["settings"])
+
+# ---------------------------------------------------------------------------
+# Try importing real credential manager
+# ---------------------------------------------------------------------------
+_ensure_env = None
+try:
+    from core.credentials import ensure_env  # noqa: E402
+
+    _ensure_env = ensure_env
+    # Populate os.environ from keyring/age/json once at import so the
+    # configuration status below reflects stored credentials.
+    ensure_env()
+except Exception:
+    pass
+
+# ---------------------------------------------------------------------------
+# Known venues
+# ---------------------------------------------------------------------------
+VENUES = {
+    "binance": {
+        "name": "Binance",
+        "type": "cefi",
+        "prefix": "BINANCE_",
+        "required_keys": ["BINANCE_API_KEY", "BINANCE_API_SECRET"],
+        "trade_keys": ["BINANCE_TRADE_API_KEY", "BINANCE_SECRET_KEY"],
+    },
+    "bitget": {
+        "name": "Bitget",
+        "type": "cefi",
+        "prefix": "BITGET_",
+        "required_keys": ["BITGET_API_KEY", "BITGET_SECRET_KEY", "BITGET_PASSPHRASE"],
+    },
+    "bybit": {
+        "name": "Bybit",
+        "type": "cefi",
+        "prefix": "BYBIT_",
+        "required_keys": ["BYBIT_API_KEY", "BYBIT_SECRET_KEY"],
+    },
+    "okx": {
+        "name": "OKX",
+        "type": "cefi",
+        "prefix": "OKX_",
+        "required_keys": ["OKX_API_KEY", "OKX_SECRET_KEY", "OKX_PASSPHRASE"],
+    },
+    "hyperliquid": {
+        "name": "Hyperliquid",
+        "type": "dex",
+        "prefix": "HYPERLIQUID_",
+        "required_keys": ["HYPERLIQUID_API_KEY", "HYPERLIQUID_API_SECRET"],
+    },
+    "aster": {
+        "name": "Aster",
+        "type": "dex",
+        "prefix": "ASTER_",
+        "required_keys": [],  # scanning uses public fapi data, no keys needed
+        "trade_keys": ["ASTER_API_KEY", "ASTER_API_SECRET"],
+    },
+    "lighter": {
+        "name": "Lighter",
+        "type": "dex",
+        "prefix": "LIGHTER_",
+        "required_keys": [],  # scanning uses public REST, no keys needed
+        "trade_keys": ["LIGHTER_API_PRIVATE_KEY", "LIGHTER_ACCOUNT_INDEX"],
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Venue capability model (scan vs trade)
+# ---------------------------------------------------------------------------
+from pathlib import Path
+
+_ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+# Hyperliquid order signing reuses the sibling `hyperliquid` skill repo.
+_HL_SKILL_DIR = _ROOT_DIR.parent / "hyperliquid" / "scripts"
+
+
+def venue_trade_capability(venue_id: str) -> tuple[bool, str]:
+    """Whether the executor can route orders (incl. dry-run) for this venue.
+
+    Returns (trade_capable, reason_if_not).
+    """
+    v = str(venue_id).strip().lower()
+    if v in ("binance", "bitget", "bybit", "okx", "hyperliquid", "aster"):
+        return True, ""
+    if v == "lighter":
+        from importlib.util import find_spec
+
+        if find_spec("lighter") is not None:
+            return True, ""
+        return False, "lighter-sdk not installed (pip install lighter-sdk)"
+    return False, f"unknown venue {v!r}"
+
+
+def venue_live_ready(venue_id: str) -> tuple[bool, str]:
+    """Whether LIVE (non-dry-run) orders can actually be signed and submitted."""
+    v = str(venue_id).strip().lower()
+    capable, reason = venue_trade_capability(v)
+    if not capable:
+        return False, reason
+    info = VENUES.get(v, {})
+    keys = info.get("trade_keys") or info.get("required_keys") or []
+    missing = [k for k in keys if not os.environ.get(k)]
+    if missing:
+        return False, f"missing credentials: {', '.join(missing)}"
+    if v == "hyperliquid" and not _HL_SKILL_DIR.exists():
+        return False, "sibling ../hyperliquid repo not found (needed for order signing)"
+    return True, ""
+
+
+# ---------------------------------------------------------------------------
+# Request models
+# ---------------------------------------------------------------------------
+
+
+class StrategyParams(BaseModel):
+    min_spread_annual: float | None = Field(
+        None, description="Minimum spread threshold (%) per funding period"
+    )
+    min_edge_annual: float | None = Field(
+        None, description="Minimum net edge (%) after fees"
+    )
+    max_mark_spread_pct: float | None = Field(
+        None, description="Maximum mark spread (%)"
+    )
+    trade_usd: float | None = Field(
+        None, gt=0, description="Trade size per transaction"
+    )
+    max_positions: int | None = Field(
+        None, ge=1, description="Maximum number of positions"
+    )
+    scan_interval_sec: int | None = Field(
+        None, ge=10, description="Scan interval (seconds)"
+    )
+    scan_venues: list[str] | None = Field(
+        None, description="Venues to include in scanner runs"
+    )
+    min_edge_1h: float | None = Field(
+        None,
+        description=(
+            "Lower net-edge threshold (%) for pairs where both legs settle "
+            "hourly (1h group turns capital over faster)"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Strategy config, persisted to scripts/data/strategy_config.json
+# ---------------------------------------------------------------------------
+import json
+from pathlib import Path
+
+_CONFIG_PATH = (
+    Path(__file__).resolve().parent.parent.parent
+    / "scripts"
+    / "data"
+    / "strategy_config.json"
+)
+
+_DEFAULT_STRATEGY: dict[str, Any] = {
+    "min_spread_annual": 0.04,
+    "min_edge_annual": 0.02,
+    "max_mark_spread_pct": 1.0,
+    "trade_usd": 5000,
+    "max_positions": 3,
+    "scan_interval_sec": 300,
+    "scan_venues": ["binance", "bitget", "bybit", "okx", "hyperliquid"],
+    "min_edge_1h": 0.01,
+}
+
+
+def _load_strategy_config() -> dict[str, Any]:
+    cfg = dict(_DEFAULT_STRATEGY)
+    try:
+        if _CONFIG_PATH.exists():
+            saved = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+            if isinstance(saved, dict):
+                cfg.update({k: v for k, v in saved.items() if k in _DEFAULT_STRATEGY})
+    except Exception:
+        pass
+    return cfg
+
+
+def _save_strategy_config(cfg: dict[str, Any]) -> None:
+    try:
+        _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _CONFIG_PATH.write_text(
+            json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+_strategy_config: dict[str, Any] = _load_strategy_config()
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+
+@router.get("/settings/venues")
+async def get_venues():
+    """Return venue configuration and connection status."""
+    result = []
+    for venue_id, info in VENUES.items():
+        # Check if credentials are configured (no keys required = public data venue)
+        required = info.get("required_keys", [])
+        configured = not required
+        missing_keys: list[str] = []
+        for key in required:
+            val = os.environ.get(key)
+            if val:
+                configured = True
+            else:
+                missing_keys.append(key)
+
+        # Also check trade keys
+        for key in info.get("trade_keys", []):
+            if os.environ.get(key):
+                configured = True
+
+        trade_capable, trade_reason = venue_trade_capability(venue_id)
+        live_ready, live_reason = venue_live_ready(venue_id)
+        result.append(
+            {
+                "id": venue_id,
+                "name": info["name"],
+                "type": info["type"],
+                "configured": configured,
+                "missing_keys": missing_keys if not configured else [],
+                "status": "connected" if configured else "not_configured",
+                "scan_capable": True,
+                "trade_capable": trade_capable,
+                "trade_reason": trade_reason,
+                "live_ready": live_ready,
+                "live_reason": live_reason,
+            }
+        )
+
+    return {"success": True, "data": result}
+
+
+@router.get("/settings/credentials/status")
+async def credentials_status():
+    """Return credential backend status and venue configuration."""
+    backends: dict[str, Any] = {}
+
+    # Check keyring
+    try:
+        import keyring  # noqa: E402
+
+        backends["keyring"] = {
+            "available": True,
+            "description": "macOS Keychain / System Key Management",
+        }
+    except ImportError:
+        backends["keyring"] = {
+            "available": False,
+            "description": "keyring package not installed",
+        }
+
+    # Check systemd-creds
+    import shutil
+    import sys
+
+    if sys.platform == "linux" and shutil.which("systemd-creds"):
+        backends["systemd_creds"] = {
+            "available": True,
+            "description": "systemd-creds (Linux TPM2)",
+        }
+    else:
+        backends["systemd_creds"] = {"available": False, "description": "Linux only"}
+
+    # Check age
+    if shutil.which("age"):
+        backends["age"] = {"available": True, "description": "age encrypted file"}
+    else:
+        backends["age"] = {"available": False, "description": "age tool not installed"}
+
+    # Check legacy JSON
+    from pathlib import Path
+
+    legacy_path = Path.home() / ".funding-arb" / "funding-arb.json"
+    backends["funding-arb_json"] = {
+        "available": legacy_path.exists(),
+        "description": "Plaintext JSON (fallback)",
+        "path": str(legacy_path),
+    }
+
+    # Determine which venues have credentials
+    venues_configured: list[str] = []
+    venues_missing: list[str] = []
+    for venue_id, info in VENUES.items():
+        required = info.get("required_keys", [])
+        has_key = not required or any(os.environ.get(k) for k in required)
+        if not has_key:
+            has_key = any(os.environ.get(k) for k in info.get("trade_keys", []))
+        if has_key:
+            venues_configured.append(venue_id)
+        else:
+            venues_missing.append(venue_id)
+
+    return {
+        "success": True,
+        "data": {
+            "backends": backends,
+            "venues_configured": venues_configured,
+            "venues_missing": venues_missing,
+        },
+    }
+
+
+@router.post("/settings/strategy")
+async def update_strategy(params: StrategyParams):
+    """Update strategy parameters."""
+    updates = params.model_dump(exclude_none=True)
+    _strategy_config.update(updates)
+    _save_strategy_config(_strategy_config)
+
+    return {
+        "success": True,
+        "data": _strategy_config,
+        "message": f"Updated {len(updates)} parameter(s)",
+    }
+
+
+@router.get("/settings/strategy")
+async def get_strategy():
+    """Return current strategy parameters."""
+    return {"success": True, "data": _strategy_config}

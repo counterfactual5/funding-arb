@@ -118,7 +118,10 @@ def test_max_holding_forces_close(tmp_path: Path):
     path = tmp_path / "maxhold.jsonl"
     t0 = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
     # Keep spread alive for many periods
-    snaps = [_snap(t0 + timedelta(hours=8 * i), [_row(spread=0.12, edge=0.02)]) for i in range(10)]
+    snaps = [
+        _snap(t0 + timedelta(hours=8 * i), [_row(spread=0.12, edge=0.02)])
+        for i in range(10)
+    ]
     path.write_text("\n".join(json.dumps(s) for s in snaps) + "\n")
 
     result = run_backtest(
@@ -138,7 +141,10 @@ def test_equity_curve_monotonic_with_profit(tmp_path: Path):
     """With consistent positive spreads, equity should increase."""
     path = tmp_path / "profit.jsonl"
     t0 = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
-    snaps = [_snap(t0 + timedelta(hours=8 * i), [_row(spread=0.12, edge=0.02)]) for i in range(20)]
+    snaps = [
+        _snap(t0 + timedelta(hours=8 * i), [_row(spread=0.12, edge=0.02)])
+        for i in range(20)
+    ]
     path.write_text("\n".join(json.dumps(s) for s in snaps) + "\n")
 
     result = run_backtest(
@@ -170,21 +176,25 @@ def test_settlements_crossed_epoch_aligned():
 
 
 def test_funding_accrual_independent_of_snapshot_frequency(tmp_path: Path):
-    """5 分钟采集与 8 小时采集的资金费结果应一致（按结算边界计费）。"""
+    """5-minute vs 8-hour snapshots should produce identical funding results (settled by boundary)."""
     t0 = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
     row = _row(spread=0.12, edge=0.02)
 
     # Coarse: every 8h, 4 snapshots (0, 8, 16, 24h)
     coarse = tmp_path / "coarse.jsonl"
-    coarse.write_text("\n".join(
-        json.dumps(_snap(t0 + timedelta(hours=8 * i), [row])) for i in range(4)
-    ) + "\n")
+    coarse.write_text(
+        "\n".join(
+            json.dumps(_snap(t0 + timedelta(hours=8 * i), [row])) for i in range(4)
+        )
+        + "\n"
+    )
 
     # Fine: every 1h over the same 24h window
     fine = tmp_path / "fine.jsonl"
-    fine.write_text("\n".join(
-        json.dumps(_snap(t0 + timedelta(hours=i), [row])) for i in range(25)
-    ) + "\n")
+    fine.write_text(
+        "\n".join(json.dumps(_snap(t0 + timedelta(hours=i), [row])) for i in range(25))
+        + "\n"
+    )
 
     kwargs = dict(
         initial_capital=100000.0,
@@ -198,19 +208,21 @@ def test_funding_accrual_independent_of_snapshot_frequency(tmp_path: Path):
 
     # Same settlements crossed → same funding → same return
     assert abs(res_coarse.total_return_pct - res_fine.total_return_pct) < 1e-9
-    assert res_coarse.total_funding_collected_pct == res_fine.total_funding_collected_pct
+    assert (
+        res_coarse.total_funding_collected_pct == res_fine.total_funding_collected_pct
+    )
 
 
 def test_mismatch_interval_accrual(tmp_path: Path):
-    """2h vs 8h 错配腿按各自周期结算。"""
+    """2h vs 8h mismatched legs settle on their own intervals."""
     t0 = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
     row = {
         "base": "BTC",
         "direction": "forward",
         "long_venue": "bitget",
         "short_venue": "binance",
-        "long_rate_pct": -0.01,   # 2h leg: long receives 0.01 per 2h
-        "short_rate_pct": 0.10,   # 8h leg: short receives 0.10 per 8h
+        "long_rate_pct": -0.01,  # 2h leg: long receives 0.01 per 2h
+        "short_rate_pct": 0.10,  # 8h leg: short receives 0.10 per 8h
         "long_interval_h": 2.0,
         "short_interval_h": 8.0,
         "spread_pct": 0.11,

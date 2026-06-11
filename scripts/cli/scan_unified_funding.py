@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""跨所资金费率套利扫描 — 三所统一池，现货腿与合约腿可拆分。
+"""Cross-exchange funding rate arbitrage scanner — unified pool across three exchanges;
+spot leg and futures leg can be at different venues.
 
-正向：futures 开空 @ funding 最高所 + spot 买入 @ 成本最低所
-反向：futures 开多 @ funding 最低所 + margin 借卖 @ 借率最低所
+Forward: futures open short @ venue with highest funding + spot buy @ lowest-cost venue
+Reverse: futures open long @ venue with lowest funding + margin borrow-sell @ lowest borrow-rate venue
 
-用法:
+Usage:
   python3 scripts/cli/scan_unified_funding.py
   python3 scripts/cli/scan_unified_funding.py --entry 0.03 --verbose
-  python3 scripts/cli/scan_unified_funding.py --compare   # 同所 vs 跨所对比
+  python3 scripts/cli/scan_unified_funding.py --compare   # same-venue vs cross-venue comparison
   python3 scripts/cli/scan_unified_funding.py --json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -51,7 +53,7 @@ def _mins_to_settle(ts_ms: int) -> str:
 
 def _route_leg_str(route: CrossRoute) -> str:
     if route.same_venue:
-        return f"{route.futures_venue} (同所)"
+        return f"{route.futures_venue} (same venue)"
     return f"fut={route.futures_venue}  spot/margin={route.spot_venue}"
 
 
@@ -91,7 +93,9 @@ def print_report(
     rev = [r for r in routes["reverse"] if r.net_edge_pct > 0 or verbose]
 
     print(f"\n{'=' * 78}")
-    print(f"UNIFIED POOL  venues=[{venues}]  assets={len(pool.legs_by_base)}  entry>={entry}%")
+    print(
+        f"UNIFIED POOL  venues=[{venues}]  assets={len(pool.legs_by_base)}  entry>={entry}%"
+    )
     print(f"{'=' * 78}")
 
     cross_fwd = [r for r in routes["forward"] if not r.same_venue]
@@ -99,21 +103,25 @@ def print_report(
 
     if fwd:
         n_cross = len([r for r in fwd if not r.same_venue])
-        print(f"\n  FORWARD (spot买 + perp空) — {len(fwd)} routes, {n_cross} cross-venue:")
+        print(
+            f"\n  FORWARD (spot buy + perp short) — {len(fwd)} routes, {n_cross} cross-venue:"
+        )
         for r in routes["forward"][:20]:
             if r.net_edge_pct > 0 or verbose:
                 _print_route(r)
     else:
-        print("\n  FORWARD: 无满足条件的跨所路由")
+        print("\n  FORWARD: no qualifying cross-venue routes")
 
     if rev:
         n_cross = len([r for r in rev if not r.same_venue])
-        print(f"\n  REVERSE (margin借卖 + perp多) — {len(rev)} routes, {n_cross} cross-venue:")
+        print(
+            f"\n  REVERSE (margin borrow-sell + perp long) — {len(rev)} routes, {n_cross} cross-venue:"
+        )
         for r in routes["reverse"][:20]:
             if r.net_edge_pct > 0 or verbose:
                 _print_route(r)
     else:
-        print("\n  REVERSE: 无满足条件的跨所路由")
+        print("\n  REVERSE: no qualifying cross-venue routes")
 
     profit_fwd = len([r for r in routes["forward"] if r.net_edge_pct > 0])
     profit_rev = len([r for r in routes["reverse"] if r.net_edge_pct > 0])
@@ -128,7 +136,7 @@ def print_report(
         if improved:
             print(f"\n  CROSS vs SINGLE-VENUE (improvement > 0):")
             for c in improved[:12]:
-                same = "同所" if c["cross_same_venue"] else "跨所"
+                same = "same-venue" if c["cross_same_venue"] else "cross-venue"
                 print(
                     f"    {c['base']:10s} {c['direction']:8s}  single@{c['single_venue']} "
                     f"net={c['single_net_pct']:+.4f}%  →  {same} fut@{c['cross_futures_venue']} "
@@ -137,35 +145,57 @@ def print_report(
                 )
 
     print("\n  EXECUTION MODEL:")
-    print("    · 跨所 all-in 净边际已扣链上提现费（按 reference_trade_usd 估算）")
-    print("    · 完整编排: scripts/cli/orchestrate_funding.py（scan→transfer→execute）")
-    print("    · 反向仅 spot_venue 需支持 margin 借币；futures_venue 只负责收 funding")
+    print(
+        "    · Cross-venue all-in net edge already deducts on-chain withdrawal fees (estimated from reference_trade_usd)"
+    )
+    print(
+        "    · Full orchestration: scripts/cli/orchestrate_funding.py (scan→transfer→execute)"
+    )
+    print(
+        "    · Reverse only requires spot_venue to support margin borrowing; futures_venue only collects funding"
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="跨所资金费率套利统一池扫描")
+    parser = argparse.ArgumentParser(
+        description="Cross-exchange funding rate arbitrage unified pool scanner"
+    )
     parser.add_argument(
         "--venues",
         default=",".join(DEFAULT_VENUES),
-        help=f"逗号分隔交易所，默认 {','.join(DEFAULT_VENUES)}",
+        help="Annualized fallback rate when live borrow rate is unavailable (%%)",
     )
     parser.add_argument("--entry", "-e", type=float, default=DEFAULT_ENTRY)
-    parser.add_argument("--universe-min", "-u", type=float, default=DEFAULT_UNIVERSE_MIN)
+    parser.add_argument(
+        "--universe-min", "-u", type=float, default=DEFAULT_UNIVERSE_MIN
+    )
     parser.add_argument(
         "--borrow-fallback",
         type=float,
         default=DEFAULT_BORROW_FALLBACK_ANNUAL_PCT,
-        help="无 live 借率时的年化 fallback (%%)",
+        help="Annual fallback when live borrow rates are unavailable (%%)",
     )
-    parser.add_argument("--compare", action="store_true", help="输出同所 vs 跨所对比")
-    parser.add_argument("--workers", "-w", type=int, default=DEFAULT_IO_WORKERS, help="并行 I/O 线程数")
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="Output same-venue vs cross-venue comparison",
+    )
+    parser.add_argument(
+        "--workers",
+        "-w",
+        type=int,
+        default=DEFAULT_IO_WORKERS,
+        help="Parallel I/O thread count",
+    )
     parser.add_argument(
         "--reference-trade-usd",
         type=float,
         default=DEFAULT_REFERENCE_TRADE_USD,
-        help="跨所链上费估算名义金额 (USD)",
+        help="Include routes with net edge <= 0",
     )
-    parser.add_argument("--verbose", "-V", action="store_true", help="含净边际<=0 的路由")
+    parser.add_argument(
+        "--verbose", "-V", action="store_true", help="Include routes with net edge <= 0"
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -199,7 +229,9 @@ def main() -> None:
 
     now = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
     print(f"\nUnified Funding Arbitrage — {now}")
-    print(f"Entry>={args.entry}%  universe_min={args.universe_min}%  borrow_fallback={args.borrow_fallback}%/yr")
+    print(
+        f"Entry>={args.entry}%  universe_min={args.universe_min}%  borrow_fallback={args.borrow_fallback}%/yr"
+    )
     print_report(pool, routes, compare, args.entry, args.verbose)
 
 

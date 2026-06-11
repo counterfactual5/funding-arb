@@ -161,7 +161,7 @@ def test_leg_qty_from_snapshot():
 
 
 def test_estimate_spread_pnl_profit():
-    """开仓价差大、当前价差小 → 正收益。"""
+    """Opening spread large, current spread small → positive profit."""
     pos = {
         "long_price": 100.0,
         "short_price": 101.0,
@@ -176,7 +176,7 @@ def test_estimate_spread_pnl_profit():
 
 
 def test_estimate_spread_pnl_loss():
-    """开仓价差小、当前价差大 → 负收益。"""
+    """Opening spread small, current spread large → negative profit."""
     pos = {
         "long_price": 100.0,
         "short_price": 101.0,
@@ -191,7 +191,7 @@ def test_estimate_spread_pnl_loss():
 
 
 def test_estimate_spread_pnl_zero():
-    """价格相同 → 零收益。"""
+    """Prices unchanged → zero profit."""
     pos = {
         "long_price": 100.0,
         "short_price": 101.0,
@@ -206,7 +206,7 @@ def test_estimate_spread_pnl_zero():
 
 
 def test_check_rebalance_qty_mismatch(monkeypatch):
-    """部分强平导致 short 腿数量缩水 → 触发重平衡。"""
+    """Partial liquidation shrinks short leg quantity → triggers rebalance."""
     monkeypatch.setattr(watcher_mod, "_get_mark_price", lambda v, b, q="USDT": 100.0)
     pos = _pos(qty=1.0)
     venue_positions = {
@@ -237,13 +237,13 @@ def test_check_rebalance_equal_qty_no_skew(monkeypatch):
 
 
 def test_check_margin_distance_alerts_when_close(monkeypatch):
-    """标记价距强平价 <阈值 → 告警；远离 → 无告警。"""
+    """Mark price close to liquidation price (< threshold) → alert; far away → no alert."""
     monkeypatch.setattr(watcher_mod, "_get_mark_price", lambda v, b, q="USDT": 100.0)
     pos = _pos(qty=1.0)
     venue_positions = {
-        # long 腿强平价 90 → 距离 10% < 20% 阈值 → 告警
+        # long leg liq price 90 → distance 10% < 20% threshold → alert
         "okx": [{"symbol": "BTCUSDT", "side": "long", "qty": 1.0, "liq_price": 90.0}],
-        # short 腿强平价 150 → 距离 50% → 安全
+        # short leg liq price 150 → distance 50% → safe
         "bybit": [
             {"symbol": "BTCUSDT", "side": "short", "qty": 1.0, "liq_price": 150.0}
         ],
@@ -256,7 +256,7 @@ def test_check_margin_distance_alerts_when_close(monkeypatch):
 
 
 def test_check_margin_distance_no_liq_price(monkeypatch):
-    """交易所未返回强平价（全仓低杠杆常见）→ 不告警不报错。"""
+    """Exchange returns no liquidation price (common for cross-margin low-leverage) → no alert, no error."""
     monkeypatch.setattr(watcher_mod, "_get_mark_price", lambda v, b, q="USDT": 100.0)
     pos = _pos(qty=1.0)
     venue_positions = {
@@ -267,7 +267,7 @@ def test_check_margin_distance_no_liq_price(monkeypatch):
 
 
 def test_check_margin_distance_skips_unfetched_venue(monkeypatch):
-    """venue 快照缺失（拉取失败）→ 跳过该腿而非误判。"""
+    """Venue snapshot missing (fetch failed) → skip that leg rather than misjudge."""
     monkeypatch.setattr(watcher_mod, "_get_mark_price", lambda v, b, q="USDT": 100.0)
     pos = _pos(qty=1.0)
     venue_positions = {

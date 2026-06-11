@@ -6,6 +6,7 @@
   "venue": { "type": "binance" },
   "pureFuturesArbitrage": {
     "venues": ["binance", "bitget", "bybit", "okx", "hyperliquid"],
+    "_venuesNote": "perp DEX 'aster' and 'lighter' are also supported (scan + trade)",
     "maxConcurrentPairs": 3,
     "tradeUsdPerPair": 500.0,
     "minSpreadPct": 0.05,
@@ -28,6 +29,8 @@
     "depthCheckEnabled": true,
     "depthMaxDevPct": 0.3,
     "depthMinMultiple": 3.0,
+    "depthCheckFailOpen": false,
+    "_depthNote": "depthCheckFailOpen=false blocks opens when the order book fetch fails (recommended for thin DEX books)",
 
     "workers": 4
   }

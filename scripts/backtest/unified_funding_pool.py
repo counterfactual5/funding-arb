@@ -1,28 +1,37 @@
 #!/usr/bin/env python3
-"""跨交易所资金费率统一池 — 现货腿与合约腿可拆分到不同 venue。
+"""Cross-exchange funding rate unified pool — spot leg and futures leg can be split across different venues.
 
-核心思路：
-  - 正向：在 funding 最高的 venue 开空合约，在现货可用且成本最低的 venue 买现货
-  - 反向：在 funding 最低（最负）的 venue 开多合约，在可借且借率最低的 venue 借币卖出
-  - 三所（bitget/okx/bybit）抽象为一个整体路由表，不必同一所完成两腿
-  - 纯永续：perp long + perp short，利用两所 funding rate 差异，无现货/借贷
+Core idea:
+  - Forward: open short perp at the venue with the highest funding, buy spot at the venue with the lowest cost and available spot
+  - Reverse: open long perp at the venue with the lowest (most negative) funding, borrow-sell at the venue with the lowest borrow rate
+  - Three venues (bitget/okx/bybit) are abstracted as a unified routing table; both legs need not be on the same venue
+  - Pure perp: perp long + perp short, exploiting funding rate differences between two venues, no spot/borrow
 """
+
 from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from backtest.borrow_providers import borrow_cost_per_period, get_borrow_provider, _venue_reverse_executable
+from backtest.borrow_providers import (
+    _venue_reverse_executable,
+    borrow_cost_per_period,
+    get_borrow_provider,
+)
 from backtest.funding_providers import get_funding_provider
-from core.fee_providers import pair_open_taker_fee_pct, prefetch_futures_fee_rates, taker_fee_pct
+from core.fee_providers import (
+    pair_open_taker_fee_pct,
+    prefetch_futures_fee_rates,
+    taker_fee_pct,
+)
 from market.parallel_fetch import run_io_parallel
 
 Direction = Literal["forward", "reverse"]
 
 DEFAULT_VENUES = ("bitget", "okx", "bybit")
 BLACKLIST = {"USDC", "FDUSD", "TUSD", "BTCDOM", "BUSD"}
-# taker 费率分现货/合约：现货腿普遍 0.1%，远高于合约腿
+# Taker fees differ for spot vs futures: spot leg is typically 0.1%, much higher than futures leg
 SPOT_TAKER_FEE = {
     "bitget": 0.001,
     "binance": 0.001,
@@ -51,7 +60,9 @@ def _spot_fee_pct(venue: str) -> float:
     return SPOT_TAKER_FEE.get(venue, 0.001) * 100.0
 
 
-def _borrow_interval_pct(daily_pct: float, annual_pct: float, interval_h: float, fallback_annual: float) -> float:
+def _borrow_interval_pct(
+    daily_pct: float, annual_pct: float, interval_h: float, fallback_annual: float
+) -> float:
     if daily_pct > 0:
         return borrow_cost_per_period(daily_pct, interval_h)
     annual = annual_pct if annual_pct > 0 else fallback_annual
@@ -60,7 +71,7 @@ def _borrow_interval_pct(daily_pct: float, annual_pct: float, interval_h: float,
 
 @dataclass
 class VenueLeg:
-    """单所、单资产的一条能力快照。"""
+    """Single-venue, single-asset capability snapshot."""
 
     venue: str
     base: str
@@ -79,7 +90,7 @@ class VenueLeg:
 
 @dataclass
 class CrossRoute:
-    """跨所（或同所）套利路由。"""
+    """Cross-venue (or same-venue) arbitrage route."""
 
     base: str
     direction: Direction
@@ -131,7 +142,7 @@ class CrossRoute:
 
 @dataclass
 class UnifiedFundingPool:
-    """多 venue 聚合池。"""
+    """Multi-venue aggregated pool."""
 
     venues: tuple[str, ...] = DEFAULT_VENUES
     borrow_fallback_annual_pct: float = DEFAULT_BORROW_FALLBACK_ANNUAL_PCT
@@ -147,7 +158,9 @@ class UnifiedFundingPool:
             fee_cache=self.fee_cache or None,
         )
 
-    def _pair_open_fee_pct(self, long_l: VenueLeg, short_l: VenueLeg) -> tuple[float, float, float]:
+    def _pair_open_fee_pct(
+        self, long_l: VenueLeg, short_l: VenueLeg
+    ) -> tuple[float, float, float]:
         return pair_open_taker_fee_pct(
             long_l.venue,
             long_l.symbol,
@@ -157,7 +170,7 @@ class UnifiedFundingPool:
         )
 
     def _apply_transfer_cost(self, route: CrossRoute) -> CrossRoute:
-        """跨所路由叠加 USDT 划转成本（按 reference_trade_usd 估算）。"""
+        """Add USDT transfer cost to cross-venue routes (estimated at reference_trade_usd)."""
         if route.same_venue or self.reference_trade_usd <= 0:
             route.net_edge_all_in_pct = route.net_edge_pct
             return route
@@ -175,12 +188,14 @@ class UnifiedFundingPool:
             route.transfer_chain = chain or ""
             route.net_edge_all_in_pct = round(route.net_edge_pct - fee_pct, 4)
         except Exception as e:
-            route.note = (route.note + "; " if route.note else "") + f"transfer_est_err:{e}"
+            route.note = (
+                route.note + "; " if route.note else ""
+            ) + f"transfer_est_err:{e}"
             route.net_edge_all_in_pct = route.net_edge_pct
         return route
 
     def refresh(self, universe_min: float = 0.03) -> None:
-        """拉取各所 funding，并按阈值补全现货/借币能力（并行 I/O）。"""
+        """Fetch funding from all venues, and supplement spot/borrow capabilities by threshold (parallel I/O)."""
         self.legs_by_base = {}
 
         def _fetch_funding(venue: str) -> tuple[str, list[VenueLeg]]:
@@ -265,9 +280,9 @@ class UnifiedFundingPool:
 
         def _fetch_borrow(venue: str) -> tuple[str, dict[str, dict[str, Any]]]:
             legs = per_venue.get(venue, [])
-            venue_negs = sorted({
-                leg.base for leg in legs if leg.rate_pct <= -universe_min
-            })
+            venue_negs = sorted(
+                {leg.base for leg in legs if leg.rate_pct <= -universe_min}
+            )
             if not venue_negs:
                 return venue, {}
             try:
@@ -289,7 +304,9 @@ class UnifiedFundingPool:
         for venue, legs in per_venue.items():
             for leg in legs:
                 if leg.base in pos_bases:
-                    has_spot, px = spot_by_venue.get(venue, {}).get(leg.base, (False, 0.0))
+                    has_spot, px = spot_by_venue.get(venue, {}).get(
+                        leg.base, (False, 0.0)
+                    )
                     leg.has_spot = has_spot
                     leg.spot_price = px
                 if leg.base in neg_bases:
@@ -337,7 +354,9 @@ class UnifiedFundingPool:
             spot_fee_pct=s_fee,
             total_fee_pct=total_fee,
             net_edge_pct=round(net, 4),
-            annual_funding_pct=round(self._annual_funding(futures_leg.rate_pct, futures_leg.interval_h), 1),
+            annual_funding_pct=round(
+                self._annual_funding(futures_leg.rate_pct, futures_leg.interval_h), 1
+            ),
             same_venue=futures_leg.venue == spot_leg.venue,
             spot_price=spot_leg.spot_price,
         )
@@ -387,7 +406,9 @@ class UnifiedFundingPool:
             spot_fee_pct=s_fee,
             total_fee_pct=total_fee,
             net_edge_pct=round(net, 4),
-            annual_funding_pct=round(self._annual_funding(futures_leg.rate_pct, futures_leg.interval_h), 1),
+            annual_funding_pct=round(
+                self._annual_funding(futures_leg.rate_pct, futures_leg.interval_h), 1
+            ),
             same_venue=futures_leg.venue == margin_leg.venue,
             spot_price=margin_leg.spot_price,
             borrow_annual_pct=round(annual_borrow, 2),
@@ -416,7 +437,7 @@ class UnifiedFundingPool:
         return {"forward": forward, "reverse": reverse}
 
     def _backfill_settle_ts(self, routes: list[CrossRoute], cap: int = 30) -> None:
-        """为缺失下次结算时间的路由补查（如 Bitget 批量接口不带该字段）。"""
+        """Backfill next settlement timestamps for routes missing them (e.g. Bitget bulk endpoint doesn't include this field)."""
         missing = [r for r in routes if not r.next_funding_ts][:cap]
         if not missing:
             return
@@ -424,7 +445,9 @@ class UnifiedFundingPool:
         def _one(route: CrossRoute) -> tuple[str, int]:
             fp = get_funding_provider(route.futures_venue)
             snap = fp.fetch_current(f"{route.base}USDT")
-            return f"{route.futures_venue}:{route.base}", int(snap.get("next_funding_ts", 0) or 0)
+            return f"{route.futures_venue}:{route.base}", int(
+                snap.get("next_funding_ts", 0) or 0
+            )
 
         ts_map = run_io_parallel(
             missing, _one, max_workers=self.max_workers, swallow_errors=True
@@ -433,19 +456,21 @@ class UnifiedFundingPool:
             r.next_funding_ts = ts_map.get(f"{r.futures_venue}:{r.base}", 0) or 0
 
     def funding_spread_matrix(self, base: str) -> list[dict[str, Any]]:
-        """同资产跨所 funding 价差（不含现货对冲，仅供参考）。"""
+        """Same-asset cross-venue funding spread (for reference only, no spot hedge)."""
         legs = sorted(self.legs_by_base.get(base, []), key=lambda l: -l.rate_pct)
         out: list[dict[str, Any]] = []
         for i, hi in enumerate(legs):
             for lo in legs[i + 1 :]:
-                out.append({
-                    "base": base,
-                    "high_venue": hi.venue,
-                    "low_venue": lo.venue,
-                    "high_rate_pct": hi.rate_pct,
-                    "low_rate_pct": lo.rate_pct,
-                    "spread_pct": round(hi.rate_pct - lo.rate_pct, 4),
-                })
+                out.append(
+                    {
+                        "base": base,
+                        "high_venue": hi.venue,
+                        "low_venue": lo.venue,
+                        "high_rate_pct": hi.rate_pct,
+                        "low_rate_pct": lo.rate_pct,
+                        "spread_pct": round(hi.rate_pct - lo.rate_pct, 4),
+                    }
+                )
         out.sort(key=lambda x: -x["spread_pct"])
         return out
 
@@ -456,10 +481,10 @@ class UnifiedFundingPool:
         base: str,
         min_spread_pct: float = 0.10,
     ) -> dict[str, Any] | None:
-        """同资产跨所最优纯永续资金费差（perp long + perp short）。
+        """Best same-asset cross-venue pure perp funding spread (perp long + perp short).
 
-        在 rate 高的交易所做多（收到 funding），rate 低的交易所做空（少付 funding）。
-        双腿都是 perp，无现货/借贷/转账，完全 delta-neutral。
+        Go long at the venue with higher rate (receive funding), go short at the venue with lower rate (pay less funding).
+        Both legs are perps, no spot/borrow/transfer, fully delta-neutral.
 
         Returns dict with spread details, or None if no profitable pair exists.
         """
@@ -469,7 +494,7 @@ class UnifiedFundingPool:
 
         best: dict[str, Any] | None = None
         for i, long_leg in enumerate(legs):
-            for short_leg in legs[i + 1:]:
+            for short_leg in legs[i + 1 :]:
                 # Convention: spread = higher_rate - lower_rate
                 # long at lower rate (pays less), short at higher rate (receives more)
                 if long_leg.rate_pct >= short_leg.rate_pct:
@@ -504,12 +529,14 @@ class UnifiedFundingPool:
                         "short_interval_h": short_l.interval_h,
                         "long_mark_price": long_l.mark_price,
                         "short_mark_price": short_l.mark_price,
-                        "next_funding_ts": max(long_l.next_funding_ts, short_l.next_funding_ts),
+                        "next_funding_ts": max(
+                            long_l.next_funding_ts, short_l.next_funding_ts
+                        ),
                     }
         return best
 
     def funding_spread_matrix_pure(self, base: str) -> list[dict[str, Any]]:
-        """构建纯永续资金费差矩阵（所有交易所对，含净边际）。
+        """Build pure perp funding spread matrix (all venue pairs, including net edge).
 
         Returns list sorted by net_edge descending. Each item has the same
         shape as best_pure_futures_spread().
@@ -520,7 +547,7 @@ class UnifiedFundingPool:
 
         pairs: list[dict[str, Any]] = []
         for i, long_leg in enumerate(legs):
-            for short_leg in legs[i + 1:]:
+            for short_leg in legs[i + 1 :]:
                 if long_leg.rate_pct >= short_leg.rate_pct:
                     long_l, short_l = short_leg, long_leg
                 else:
@@ -536,22 +563,26 @@ class UnifiedFundingPool:
                 interval_h = max(long_l.interval_h, short_l.interval_h)
                 annual = (net_edge / 100.0) * (24.0 / interval_h) * 365.0 * 100.0
 
-                pairs.append({
-                    "base": base,
-                    "long_venue": long_l.venue,
-                    "short_venue": short_l.venue,
-                    "long_rate_pct": long_l.rate_pct,
-                    "short_rate_pct": short_l.rate_pct,
-                    "spread_pct": round(spread, 4),
-                    "total_fee_pct": round(fee, 4),
-                    "net_edge_pct": round(net_edge, 4),
-                    "annual_pct": round(annual, 1),
-                    "long_interval_h": long_l.interval_h,
-                    "short_interval_h": short_l.interval_h,
-                    "long_mark_price": long_l.mark_price,
-                    "short_mark_price": short_l.mark_price,
-                    "next_funding_ts": max(long_leg.next_funding_ts, short_leg.next_funding_ts),
-                })
+                pairs.append(
+                    {
+                        "base": base,
+                        "long_venue": long_l.venue,
+                        "short_venue": short_l.venue,
+                        "long_rate_pct": long_l.rate_pct,
+                        "short_rate_pct": short_l.rate_pct,
+                        "spread_pct": round(spread, 4),
+                        "total_fee_pct": round(fee, 4),
+                        "net_edge_pct": round(net_edge, 4),
+                        "annual_pct": round(annual, 1),
+                        "long_interval_h": long_l.interval_h,
+                        "short_interval_h": short_l.interval_h,
+                        "long_mark_price": long_l.mark_price,
+                        "short_mark_price": short_l.mark_price,
+                        "next_funding_ts": max(
+                            long_leg.next_funding_ts, short_leg.next_funding_ts
+                        ),
+                    }
+                )
 
         return sorted(pairs, key=lambda x: -x["net_edge_pct"])
 
@@ -559,7 +590,7 @@ class UnifiedFundingPool:
         self,
         min_spread_pct: float = 0.05,
     ) -> list[dict[str, Any]]:
-        """扫描所有资产的纯永续最优配对。"""
+        """Scan all assets for best pure perp pairs."""
         if not self.legs_by_base:
             self.refresh()
         results: list[dict[str, Any]] = []
@@ -573,7 +604,7 @@ class UnifiedFundingPool:
     def _best_single_net(
         self, legs: list[VenueLeg], direction: Direction, entry: float
     ) -> dict[str, Any] | None:
-        """同所完成两腿的最优净边际。"""
+        """Best net edge for completing both legs on the same venue."""
         best: dict[str, Any] | None = None
         for leg in legs:
             fee = _spot_fee_pct(leg.venue) + self._leg_futures_fee_pct(leg)
@@ -585,8 +616,10 @@ class UnifiedFundingPool:
                 if leg.rate_pct > -entry or not leg.borrowable:
                     continue
                 borrow = _borrow_interval_pct(
-                    leg.borrow_daily_pct, leg.borrow_annual_pct,
-                    leg.interval_h, self.borrow_fallback_annual_pct,
+                    leg.borrow_daily_pct,
+                    leg.borrow_annual_pct,
+                    leg.interval_h,
+                    self.borrow_fallback_annual_pct,
                 )
                 net = abs(leg.rate_pct) - borrow - fee
             if best is None or net > best["net_edge_pct"]:
@@ -594,7 +627,7 @@ class UnifiedFundingPool:
         return best
 
     def compare_single_vs_cross(self, entry: float = 0.05) -> list[dict[str, Any]]:
-        """对比同所 vs 跨所最优净边际。"""
+        """Compare same-venue vs cross-venue best net edge."""
         rows: list[dict[str, Any]] = []
         for base, legs in self.legs_by_base.items():
             for direction, pick_fn in (
@@ -607,16 +640,20 @@ class UnifiedFundingPool:
                 single_best = self._best_single_net(legs, direction, entry)
                 if not single_best:
                     continue
-                rows.append({
-                    "base": base,
-                    "direction": direction,
-                    "single_venue": single_best["venue"],
-                    "single_net_pct": single_best["net_edge_pct"],
-                    "cross_net_pct": cross.net_edge_pct,
-                    "improvement_pct": round(cross.net_edge_pct - single_best["net_edge_pct"], 4),
-                    "cross_futures_venue": cross.futures_venue,
-                    "cross_spot_venue": cross.spot_venue,
-                    "cross_same_venue": cross.same_venue,
-                })
+                rows.append(
+                    {
+                        "base": base,
+                        "direction": direction,
+                        "single_venue": single_best["venue"],
+                        "single_net_pct": single_best["net_edge_pct"],
+                        "cross_net_pct": cross.net_edge_pct,
+                        "improvement_pct": round(
+                            cross.net_edge_pct - single_best["net_edge_pct"], 4
+                        ),
+                        "cross_futures_venue": cross.futures_venue,
+                        "cross_spot_venue": cross.spot_venue,
+                        "cross_same_venue": cross.same_venue,
+                    }
+                )
         rows.sort(key=lambda x: -abs(x["improvement_pct"]))
         return rows

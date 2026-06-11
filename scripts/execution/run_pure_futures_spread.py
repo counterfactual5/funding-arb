@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Pure Futures Spread runner — scan → decide → execute → journal.
+"""Pure Futures Spread runner — scan -> decide -> execute -> journal.
 
-MVP runner，默认 dry-run：
+MVP runner, defaults to dry-run:
   python3 scripts/execution/run_pure_futures_spread.py \
     --config templates/config.pure_futures.spread.json --once --verbose
 
-Live 需配置 dry_run=false 或 DCA_LIVE=1。建议先用 scanner/watch + report 确认机会持续性。
+Live requires dry_run=false or DCA_LIVE=1. Recommend using scanner/watch + report to confirm spread persistence first.
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ def run_once(cfg: dict[str, Any], *, verbose: bool = False) -> dict[str, Any]:
     workers = int(pfa.get("workers", 4))
     dry_run = _dry_run(cfg)
 
-    # 用宽松阈值扫描，保证 held position 即使跌破入场阈值也能被看见并用于退出判断。
+    # Use relaxed thresholds to ensure held positions are visible even if below entry threshold, for exit decisions.
     scan = scan_pure_futures_spreads(
         venues=venues,
         min_spread=0.0,

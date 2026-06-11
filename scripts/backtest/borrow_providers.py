@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""多交易所借币/杠杆可借性与利率查询（用于负资金费率反向套利）。"""
+"""Multi-exchange borrow/lending availability and rate query (for negative funding rate reverse arbitrage)."""
+
 from __future__ import annotations
 
 import json
@@ -46,9 +47,7 @@ def _parallel_coin_fetch(
     def _wrap(coin: str) -> tuple[str, BorrowInfo]:
         return coin, fetch_one(coin)
 
-    fetched = run_io_parallel(
-        uniq, _wrap, max_workers=max_workers, swallow_errors=True
-    )
+    fetched = run_io_parallel(uniq, _wrap, max_workers=max_workers, swallow_errors=True)
     out.update(fetched)
     return out
 
@@ -134,7 +133,7 @@ _reverse_capability_cache: dict[str, bool] = {}
 
 
 def _venue_reverse_executable(venue: str) -> bool:
-    """探测 venue 反向能力（带进程级缓存：每所最多探测一次）。"""
+    """Probe venue reverse capability (with process-level cache: at most once per venue)."""
     if venue in _reverse_capability_cache:
         return _reverse_capability_cache[venue]
     try:
@@ -179,7 +178,7 @@ class OkxBorrowProvider(BorrowProvider):
             return set()
 
     def _loan_rates(self) -> dict[str, tuple[float, str]]:
-        """单次批量获取全币种日利率 {coin: (daily_rate_decimal, quota)}。"""
+        """Single bulk fetch of all-coin daily rates {coin: (daily_rate_decimal, quota)}."""
         try:
             payload = self._http_get("/api/v5/public/interest-rate-loan-quota")
             data = payload.get("data") or []
@@ -198,7 +197,7 @@ class OkxBorrowProvider(BorrowProvider):
     def fetch_borrow_info(
         self, coins: list[str], *, max_workers: int | None = None
     ) -> dict[str, BorrowInfo]:
-        # 两个公共端点均为批量返回，无需 per-coin 并行
+        # Both public endpoints return batch data; no per-coin parallelism needed
         margin_bases = self._margin_bases()
         loan_rates = self._loan_rates()
         okx_can_reverse = _venue_reverse_executable("okx")
@@ -237,7 +236,7 @@ class BinanceBorrowProvider(BorrowProvider):
                 annual = float(item.get("yearlyInterest", 0) or 0) * 100
                 if annual <= 0 and daily > 0:
                     annual = daily * 365
-                # crossMarginData 自带 borrowable 字段；缺失时默认可借
+                # crossMarginData includes borrowable field; default to borrowable if missing
                 borrowable = bool(item.get("borrowable", True))
                 out[c] = {
                     "borrowable": borrowable,
@@ -262,12 +261,14 @@ def get_borrow_provider(venue: str) -> BorrowProvider:
     v = str(venue or "binance").strip().lower()
     provider = _PROVIDERS.get(v)
     if provider is None:
-        raise ValueError(f"不支持的 borrow venue={v!r}，可选: {', '.join(sorted(_PROVIDERS))}")
+        raise ValueError(
+            f"Unsupported borrow venue={v!r}, available: {', '.join(sorted(_PROVIDERS))}"
+        )
     return provider
 
 
 def borrow_cost_per_period(daily_rate_pct: float, interval_h: float) -> float:
-    """将日借币利率换算为单个 funding 周期的成本（百分比）。"""
+    """Convert daily borrow rate to per-funding-period cost (percentage)."""
     if daily_rate_pct <= 0 or interval_h <= 0:
         return 0.0
     return daily_rate_pct * (interval_h / 24.0)

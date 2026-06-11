@@ -50,7 +50,7 @@ class CexVenue(Protocol):
         return False
 
     def supports_reverse_arbitrage(self) -> bool:
-        """Whether the venue can margin-borrow-sell / buy-repay (Reverse C&C 现货腿)."""
+        """Whether the venue can margin-borrow-sell / buy-repay (Reverse C&C spot leg)."""
         return False
 
     def fetch_margin_debt(self, assets: list[str]) -> dict[str, float]:
@@ -74,11 +74,12 @@ class CexVenue(Protocol):
         return {}
 
     def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
-        """USDT 永续持仓列表（watcher/executor 腿校验用）。
+        """USDT perpetual position list (for watcher/executor leg verification).
 
-        返回 [{symbol, side, qty, entry_price, liq_price, leverage, unrealized_pnl}]。
-        默认实现从 fetch_live_state 提取；各 venue 可覆写为单端点查询。
-        失败时抛异常（调用方据此区分「查询失败」与「确实无持仓」）。
+        Returns [{symbol, side, qty, entry_price, liq_price, leverage, unrealized_pnl}].
+        Default implementation extracts from fetch_live_state; each venue can override
+        with a single-endpoint query. Raises on failure (caller distinguishes
+        "query failed" vs "truly no position").
         """
         state = self.fetch_live_state(["USDT"]) or {}
         out: list[dict[str, Any]] = []

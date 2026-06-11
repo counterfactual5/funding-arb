@@ -331,9 +331,9 @@ class TestHyperliquidVenue:
             results = v.execute_trades(trades, market, dry_run=True)
             assert results[0]["status"] == "simulated", f"{typ} should simulate"
 
-    @patch("venues.hyperliquid.hl_get_positions")
-    def test_fetch_futures_positions_format(self, mock_positions):
-        mock_positions.return_value = [
+    @patch("venues.hyperliquid._hl_skill")
+    def test_fetch_futures_positions_format(self, mock_skill):
+        raw_positions = [
             {
                 "coin": "BTC",
                 "size": "0.5",
@@ -353,6 +353,7 @@ class TestHyperliquidVenue:
                 "liquidationPrice": "5000.0",
             },
         ]
+        mock_skill.return_value = {"get_positions": lambda: raw_positions}
         from venues.hyperliquid import HyperliquidVenue
 
         v = HyperliquidVenue()
@@ -369,11 +370,13 @@ class TestHyperliquidVenue:
         assert eth["qty"] == 2.0
         assert eth["liq_price"] == 5000.0
 
-    @patch("venues.hyperliquid.hl_get_account_value")
-    def test_fetch_usdt_account_balances(self, mock_acct):
-        mock_acct.return_value = {
-            "totalAccountValue": "5000.0",
-            "totalMarginUsed": "1000.0",
+    @patch("venues.hyperliquid._hl_skill")
+    def test_fetch_usdt_account_balances(self, mock_skill):
+        mock_skill.return_value = {
+            "get_account_value": lambda: {
+                "totalAccountValue": "5000.0",
+                "totalMarginUsed": "1000.0",
+            }
         }
         from venues.hyperliquid import HyperliquidVenue
 
@@ -530,8 +533,10 @@ class TestRegistration:
     """Verify Hyperliquid is registered in all the right places."""
 
     def test_venue_registry(self):
-        from venues import _REGISTRY
+        from venues import _REGISTRY, get_venue
 
+        v = get_venue({"venue": {"type": "hyperliquid"}})
+        assert v.venue_id == "hyperliquid"
         assert "hyperliquid" in _REGISTRY
 
     def test_fee_defaults(self):

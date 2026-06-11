@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""纯永续资金费差套利决策引擎。
+"""Pure perpetual futures funding rate spread arbitrage decision engine.
 
-策略核心:
-  对同资产在不同交易所的永续合约资金费率进行价差套利，
-  无需现货、无需借贷、无需跨所转账。
+Strategy core:
+  Exploits funding rate spreads for the same asset across different exchanges
+  via perpetual contracts — no spot, no borrowing, no cross-venue transfers needed.
 
-  在 rate 高的交易所做多（收到 funding），rate 低的交易所做空（少付 funding）。
-  两侧头寸完全 delta-neutral，利润来自 funding rate 差异。
+  Go long at the exchange with the higher rate (receive funding), go short at the
+  exchange with the lower rate (pay less funding). Both sides are fully delta-neutral;
+  profit comes from the funding rate difference.
 
-用法（通常由 runner / orchestrator 调用，不直接运行）:
+Usage (typically called by runner / orchestrator, not run directly):
 
   from strategies.futures.pure_futures_spread import decide_pure_futures_spread
   trades, meta = decide_pure_futures_spread(state, prices, cfg, funding_rates)
@@ -30,17 +31,17 @@ def decide_pure_futures_spread(
     fee_cache: dict[tuple[str, str], dict[str, float]] | None = None,
     mark_prices: dict[str, dict[str, float]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """纯永续资金费差套利决策。
+    """Pure perpetual futures funding rate spread arbitrage decision.
 
     Args:
-        futures_state: 当前持仓状态 {"positions": {symbol: {amount, entry_price, side}}}
+        futures_state: Current position state {"positions": {symbol: {amount, entry_price, side}}}
         prices: {asset: current_price}  e.g. {"BTC": 100000.0}
-        cfg: 全局配置，需含 pureFuturesArbitrage 子键
+        cfg: Global config, must contain pureFuturesArbitrage sub-key
         funding_rates: {venue: {symbol: rate_pct}}
             e.g. {"binance": {"BTCUSDT": 0.05, "ETHUSDT": 0.02},
                   "okx":     {"BTCUSDT": -0.10}}
-        current_time_ms: 当前时间戳
-        mark_prices: 可选，{venue: {symbol: mark_price}}，用于过滤标记价差过大的候选
+        current_time_ms: Current timestamp
+        mark_prices: Optional, {venue: {symbol: mark_price}}, used to filter candidates with large mark price spreads
 
     Returns:
         (trades, meta) tuple:
@@ -169,7 +170,7 @@ def decide_pure_futures_spread(
 
                 annual = _annual_pct(net_edge, 8.0)
 
-                # 标记价差过滤：如果提供了 mark_prices，计算并过滤
+                # Mark price spread filter: if mark_prices are provided, compute and filter
                 mark_spread_pct = 0.0
                 if mark_prices is not None:
                     long_sym = f"{asset}USDT"
@@ -264,7 +265,7 @@ def _fee_pct(
     fee_rates: dict[str, float],
     fee_cache: dict[tuple[str, str], dict[str, float]] | None = None,
 ) -> float:
-    """获取交易所永续合约 taker 费率（按 symbol，可缓存/配置覆盖）。"""
+    """Get exchange perpetual futures taker fee rate (per symbol, cacheable/config-overridable)."""
     return taker_fee_pct(
         venue,
         symbol,
@@ -283,7 +284,7 @@ def _annual_pct(rate_pct_per_8h: float, interval_h: float = 8.0) -> float:
 def _extract_existing_pairs(
     futures_state: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
-    """从持仓状态中提取已有的配对头寸。
+    """Extract existing paired positions from position state.
 
     Pure futures pairs are tracked by pair_id convention:
     pair_id = "BASE:long_venue:short_venue"

@@ -1,19 +1,19 @@
 # Funding Rate Arbitrage Engine
 
-跨交易所永续资金费率套利引擎（Cash-and-Carry + Cross-Asset Funding Arbitrage + Pure Futures Spread）。
+Cross-exchange perpetual funding rate arbitrage engine (Cash-and-Carry + Cross-Asset Funding Arbitrage + Pure Futures Spread).
 
-支持 **Bitget / Binance / OKX / Bybit**（现货 + U本位永续），跨所拆分现货腿与合约腿追求全局最优价差。
+Supports **Bitget / Binance / OKX / Bybit** (spot + USDT-margined perpetuals), splitting spot and futures legs across venues for globally optimal spreads.
 
-## 策略
+## Strategies
 
-| 策略 | 入口 | 说明 |
+| Strategy | Entry Point | Description |
 |---|---|---|
-| **Cash and Carry（单资产）** | `run_cash_and_carry.py` | 单资产 spot long + perp short，吃正资金费。单对冲腿。 |
-| **Cross-Asset Arbitrage（多资产）** | `run_cash_and_carry.py` (配置 `crossAssetArbitrage.maxConcurrentPairs > 1`) | 多资产槽位抢占，只持仓最优价差对。 |
-| **Reverse C&C** | via `reverse*` 参数 | 负费率时 margin borrow 卖出现货 + perp long。 |
-| **Pure Futures Spread** ⭐ | `run_pure_futures_spread.py` / `orchestrate_funding.py --pure-futures` | 跨所 perp long + perp short，吃资金费差。无需现货/借贷/转账。 |
+| **Cash and Carry (Single Asset)** | `run_cash_and_carry.py` | Single asset spot long + perp short, collecting positive funding. Single hedge leg. |
+| **Cross-Asset Arbitrage (Multi Asset)** | `run_cash_and_carry.py` (set `crossAssetArbitrage.maxConcurrentPairs > 1`) | Multi-asset slot contention, only holding the best spread pair. |
+| **Reverse C&C** | via `reverse*` parameters | Margin borrow to sell spot + perp long when funding is negative. |
+| **Pure Futures Spread** ⭐ | `run_pure_futures_spread.py` / `orchestrate_funding.py --pure-futures` | Perp long on one venue + perp short on another, capturing funding rate differential. No spot/borrow/transfer needed. |
 
-## 快速开始
+## Quick Start
 
 ```bash
 git clone <this-repo>
@@ -21,19 +21,47 @@ cd funding-arb
 bash setup.sh
 ```
 
-### 扫描机会
+### Visual Dashboard
 
 ```bash
-# Cash-and-Carry 扫描
-python3 scripts/cli/scan_funding_arbitrage.py --venues bitget,bybit,okx
-python3 scripts/cli/scan_unified_funding.py --verbose   # 跨所拆分视图
+# Browser mode (macOS/Linux/Windows, simplest)
+bash start.sh              # Auto-build frontend + start server → open http://localhost:8787
 
-# Pure Futures Spread 扫描
-python3 scripts/cli/scan_pure_futures_spreads.py --verbose
-python3 scripts/cli/scan_pure_futures_spreads.py --watch 5  # 持续监控写入 JSONL
+# Desktop app mode (requires Rust)
+bash start.sh --desktop    # Launch Tauri native window
+
+# Windows
+.\start.ps1                # Browser mode
+.\start.ps1 -Desktop       # Desktop app mode
 ```
 
-### 纸面套利（dry-run）
+```mermaid
+graph LR
+    A[start.sh / start.ps1] -->|--desktop| B[Tauri Native Window]
+    A -->|Default / browser| C[Browser Access]
+
+    B --> D[FastAPI Backend :8787]
+    C --> D
+    D --> E[scripts/ Trading Modules]
+
+    style B fill:#4ade80,stroke:#166534,color:#000
+    style C fill:#60a5fa,stroke:#1e40af,color:#000
+    style D fill:#fbbf24,stroke:#92400e,color:#000
+```
+
+### CLI Scanning
+
+```bash
+# Cash-and-Carry scan
+python3 scripts/cli/scan_funding_arbitrage.py --venues bitget,bybit,okx
+python3 scripts/cli/scan_unified_funding.py --verbose   # Cross-venue split view
+
+# Pure Futures Spread scan
+python3 scripts/cli/scan_pure_futures_spreads.py --verbose
+python3 scripts/cli/scan_pure_futures_spreads.py --watch 5  # Continuous monitoring, writes to JSONL
+```
+
+### Paper Arbitrage (dry-run)
 
 ```bash
 # Cash-and-Carry
@@ -45,130 +73,188 @@ python3 scripts/execution/run_pure_futures_spread.py \
   --config templates/config.pure_futures.spread.json --once --verbose
 ```
 
-### 实盘运行
+### Live Trading
 
 ```bash
-# Pure Futures Spread 持续运行
+# Pure Futures Spread continuous run
 python3 scripts/execution/run_pure_futures_spread.py \
   --config templates/config.pure_futures.spread.json --watch 5 --verbose
 
-# 独立 Watcher（常驻监控已有持仓）
+# Standalone Watcher (persistent monitoring of existing positions)
 python3 scripts/execution/pure_futures_watcher.py \
   --config templates/config.pure_futures.spread.json --interval 30 --verbose
 
-# 通过编排器一键运行
+# One-click run via orchestrator
 python3 scripts/cli/orchestrate_funding.py --pure-futures --run-executor --verbose
 ```
 
-### 报告与回测
+### Reports & Backtesting
 
 ```bash
-# 汇总最近 24 小时 Pure Futures 机会质量
+# Summarize last 24 hours of Pure Futures opportunity quality
 python3 scripts/cli/report_pure_futures_spreads.py \
   --jsonl-file data/pure_futures_spreads.jsonl --since-hours 24 --min-samples 3
 
-# 回测
+# Backtesting
 python3 scripts/backtest/backtest_pure_futures_spread.py \
   --jsonl-file data/pure_futures_spreads.jsonl --capital 100000 --json
 
-# 手动开/平仓
+# Manual open/close positions
 python3 scripts/cli/pure_futures_trade.py open BTC \
   --long-venue okx --short-venue bybit --trade-usd 500 --dry-run
 python3 scripts/cli/pure_futures_trade.py list
 python3 scripts/pure_futures_trade.py close <position_id> --dry-run
 ```
 
-### 跨所编排
+### Cross-Venue Orchestration
 
 ```bash
 python3 scripts/cli/orchestrate_funding.py --venues bitget,bybit
-python3 scripts/cli/orchestrate_funding.py --pure-futures  # 纯永续模式
+python3 scripts/cli/orchestrate_funding.py --pure-futures  # Pure perpetuals mode
 ```
 
-### 验证
+### Testing
 
 ```bash
 pip install pytest
-python3 -m pytest scripts/tests/ -q   # 118 tests, 全部 pass
+python3 -m pytest scripts/tests/ -q   # 118 tests, all passing
 ```
 
-## 配置
+## Configuration
 
-1. 复制 `.env.example` → `.env`
-2. **Paper** 无需 API Key（`dry_run: true` 默认开启）
-3. **Live** 填写对应交易所变量：
+1. Copy `.env.example` → `.env`
+2. **Paper** mode requires no API keys (`dry_run: true` is enabled by default)
+3. **Live** mode requires filling in the corresponding exchange variables:
 
-| 交易所 | 环境变量 |
+| Exchange | Environment Variables |
 |--------|----------|
 | Bitget | `BITGET_API_KEY`, `BITGET_SECRET_KEY`, `BITGET_PASSPHRASE` |
 | Binance | `BINANCE_API_KEY`, `BINANCE_API_SECRET` |
 | OKX | `OKX_API_KEY`, `OKX_SECRET_KEY`, `OKX_PASSPHRASE` |
 | Bybit | `BYBIT_API_KEY`, `BYBIT_SECRET_KEY` |
 
-API Key 需勾选 **现货 + U本位合约** 读写/交易，禁止提币。
+API keys need **Spot + USDT-Margined Futures** read/trade permissions enabled; withdrawals must be disabled.
 
-| 变量 | 含义 |
+### Credential Management
+
+Run the one-time import tool before first use:
+
+```bash
+python3 scripts/cli/setup_credentials.py              # Interactive setup wizard
+python3 scripts/cli/setup_credentials.py --check       # View status
+python3 scripts/cli/setup_credentials.py --migrate     # Migrate from funding-arb.json
+python3 scripts/cli/setup_credentials.py --backend age # Force specific backend
+```
+
+The system automatically selects the most secure backend available for the current platform:
+
+```mermaid
+graph TD
+    A[ensure_env] --> B{Detect Platform Backend}
+    B -->|macOS| C[keyring → Keychain]
+    B -->|Windows| D[keyring → Credential Manager]
+    B -->|Linux Desktop| E[keyring → Secret Service]
+    B -->|Linux headless| F[systemd-creds → TPM2 / machine-id]
+    B -->|Universal fallback| G[age encrypted file]
+    B -->|Backward compat| H[funding-arb.json plaintext]
+
+    C --> I[os.environ]
+    D --> I
+    E --> I
+    F --> I
+    G --> I
+    H --> I
+
+    style C fill:#4ade80,stroke:#166534,color:#000
+    style D fill:#4ade80,stroke:#166534,color:#000
+    style E fill:#4ade80,stroke:#166534,color:#000
+    style F fill:#4ade80,stroke:#166534,color:#000
+    style G fill:#fbbf24,stroke:#92400e,color:#000
+    style H fill:#f87171,stroke:#991b1b,color:#000
+```
+
+| Backend | Platform | Security | Description |
+|------|------|:------:|------|
+| **keyring** | macOS / Windows / Linux Desktop | ✅ Highest | Keys stored in system keychain, no files on disk |
+| **systemd-creds** | Linux headless | ✅ High | Bound to TPM2 or machine-id, undecryptable across machines |
+| **age** | All platforms | ⚠️ Medium | Encrypted file, prevents accidental access, not isolated from same-user processes |
+| **funding-arb.json** | All platforms | ❌ Low | Plaintext JSON, backward compatibility only |
+
+| Variable | Description |
 |------|------|
-| `DCA_HOME` | 运行时数据根目录（state、journal、回测输出） |
-| `DCA_RUNS_NAMESPACE` | 子目录名，默认 `cex-bitget` |
-| `DCA_DRY_RUN=1` / `DCA_LIVE=1` | 强制模拟 / 实盘 |
+| `DCA_HOME` | Runtime data root directory (state, journal, backtest output) |
+| `DCA_RUNS_NAMESPACE` | Subdirectory name, default `cex-bitget` |
+| `DCA_DRY_RUN=1` / `DCA_LIVE=1` | Force paper / live mode |
 
-## 目录结构
+## Directory Structure
 
 ```
 funding-arb/
-├── templates/              # 策略配置模板
-│   ├── config.cash_and_carry.*.json   # 各交易所 C&C 配置
-│   └── config.pure_futures.spread.json # 纯永续资金费差配置
+├── templates/              # Strategy config templates
+│   ├── config.cash_and_carry.*.json   # C&C config per exchange
+│   └── config.pure_futures.spread.json # Pure perp funding spread config
 ├── scripts/
 │   ├── execution/
 │   │   ├── run_cash_and_carry.py           # C&C runner
 │   │   ├── run_pure_futures_spread.py      # Pure Futures runner
-│   │   ├── pure_futures_executor.py        # 纯永续执行器（开/平/回滚）
-│   │   ├── pure_futures_watcher.py         # 独立常驻监控进程
-│   │   ├── settle_mismatch_planner.py      # 结算周期错配分析
-│   │   ├── cross_venue_executor.py         # 跨所执行器
-│   │   └── delta_neutral_executor.py       # 单所 delta-neutral 执行
+│   │   ├── pure_futures_executor.py        # Pure perp executor (open/close/rollback)
+│   │   ├── pure_futures_watcher.py         # Standalone persistent monitoring process
+│   │   ├── settle_mismatch_planner.py      # Settlement cycle mismatch analysis
+│   │   ├── cross_venue_executor.py         # Cross-venue executor
+│   │   └── delta_neutral_executor.py       # Single-venue delta-neutral executor
 │   ├── strategies/futures/
-│   │   ├── pure_futures_spread.py          # 纯永续决策引擎
-│   │   ├── cash_and_carry.py               # C&C 策略
-│   │   └── cross_asset_arbitrage.py        # 跨资产策略
+│   │   ├── pure_futures_spread.py          # Pure perp decision engine
+│   │   ├── cash_and_carry.py               # C&C strategy
+│   │   └── cross_asset_arbitrage.py        # Cross-asset strategy
 │   ├── backtest/
-│   │   ├── unified_funding_pool.py         # 资金费统一池
-│   │   ├── backtest_pure_futures_spread.py # 纯永续回测
-│   │   ├── funding_providers.py            # 资金费提供者
-│   │   └── borrow_providers.py             # 借贷提供者
+│   │   ├── unified_funding_pool.py         # Unified funding pool
+│   │   ├── backtest_pure_futures_spread.py # Pure perp backtesting
+│   │   ├── funding_providers.py            # Funding rate providers
+│   │   └── borrow_providers.py             # Borrow providers
 │   ├── cli/
-│   │   ├── orchestrate_funding.py          # 编排器（含 --pure-futures）
-│   │   ├── scan_pure_futures_spreads.py    # 纯永续扫描 CLI
-│   │   ├── report_pure_futures_spreads.py  # 持续性报告
-│   │   ├── pure_futures_trade.py           # 手动交易 CLI
-│   │   ├── scan_funding_arbitrage.py       # C&C 扫描 CLI
-│   │   └── scan_unified_funding.py         # 跨所视图 CLI
+│   │   ├── orchestrate_funding.py          # Orchestrator (includes --pure-futures)
+│   │   ├── scan_pure_futures_spreads.py    # Pure perp scan CLI
+│   │   ├── report_pure_futures_spreads.py  # Persistence report
+│   │   ├── pure_futures_trade.py           # Manual trading CLI
+│   │   ├── scan_funding_arbitrage.py       # C&C scan CLI
+│   │   ├── scan_unified_funding.py         # Cross-venue view CLI
+│   │   └── setup_credentials.py            # Credential management tool
 │   ├── market/             # funding_batch, price_oracle, parallel_fetch
 │   ├── accounting/futures/ # delta_neutral_portfolio
 │   ├── venues/             # bitget / binance / okx / bybit
-│   ├── core/               # config, notify
+│   ├── core/               # config, notify, credentials
 │   └── transfer/           # cross_venue_router, transfer_providers
-├── docs/
-│   ├── TODO_INDEX.md                          # 任务总览
-│   ├── TODO_PURE_FUTURES_SPREAD.md            # 纯永续任务追踪
-│   ├── PURE_FUTURES_SPREAD_ANALYSIS.md        # 深度架构分析
-│   └── PURE_FUTURES_IMPLEMENTATION_GUIDE.md   # 实现指南
+├── server/                 # FastAPI backend (API + Web UI)
+│   ├── main.py            # Entry: API routes + static file serving + WebSocket
+│   └── routes/            # scanner, positions, backtest, settings
+├── web/                    # Vue 3 + Tauri frontend
+│   ├── src/               # Vue source (Scanner, Positions, Backtest, Settings)
+│   ├── src-tauri/         # Tauri/Rust desktop shell
+│   └── dist/              # Build output (served by FastAPI in browser mode)
+├── SKILL.md                # AI agent CLI playbook (this repo only)
+├── ROADMAP.md              # Completed work + future direction (Perp DEX, etc.)
+├── start.sh                # Unified startup script (macOS/Linux)
+├── start.ps1               # Unified startup script (Windows)
 └── setup.sh
 ```
 
-## 运行测试
+## AI / CLI Skill
+
+For agent-driven workflows without the web UI, see [`SKILL.md`](SKILL.md) at the repo root. In Cursor, use `@SKILL.md` or ask the agent to follow it.
+
+Future work and venue expansion (Perp DEX, etc.): [`ROADMAP.md`](ROADMAP.md).
+
+## Running Tests
 
 ```bash
 pip install pytest
 python3 -m pytest scripts/tests/ -q
-# 78 tests — 覆盖 C&C、Reverse Margin、Pure Futures、Transfer Chain
+# 147+ tests — C&C, Reverse Margin, Pure Futures, Transfer Chain
 ```
 
-## 来源
+## Origin
 
-本项目从 [cex-adaptive-dca](https://github.com/counterfactual5/cex-adaptive-dca) 独立拆分而来。详见 [MIGRATION_FROM_DCA.md](MIGRATION_FROM_DCA.md)。
+This project was independently spun off from [cex-adaptive-dca](https://github.com/counterfactual5/cex-adaptive-dca). See [MIGRATION_FROM_DCA.md](MIGRATION_FROM_DCA.md) for details.
 
 ## License
 

@@ -19,6 +19,8 @@ DEFAULT_TAKER_PCT: dict[str, float] = {
     "okx": 0.05,
     "bybit": 0.055,
     "hyperliquid": 0.035,
+    "aster": 0.035,  # Aster perp taker VIP0
+    "lighter": 0.0,  # Lighter currently zero-fee (orderBookDetails taker_fee=0)
 }
 
 DEFAULT_MAKER_PCT: dict[str, float] = {
@@ -27,6 +29,8 @@ DEFAULT_MAKER_PCT: dict[str, float] = {
     "okx": 0.02,
     "bybit": 0.02,
     "hyperliquid": 0.01,
+    "aster": 0.01,
+    "lighter": 0.0,
 }
 
 # Backward-compatible alias used by scanners / history backfill

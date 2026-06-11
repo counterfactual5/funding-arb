@@ -86,20 +86,20 @@ def _api_call(
 ) -> Any:
     base_params = dict(params or {})
     if signed:
-        # 凭证校验：缺失立即报错，绝不用空凭证发私有请求
+        # Credential validation: fail immediately on missing credentials; never send private requests with empty credentials
         key, secret = _get_key(), _get_secret()
         if not (key and secret):
             raise RuntimeError(
-                "Binance API 凭证缺失：请设置环境变量 BINANCE_API_KEY / BINANCE_API_SECRET，"
-                "或在 ~/.funding-arb/funding-arb.json 的 env 中配置。"
+                "Binance API credentials missing: please set BINANCE_API_KEY / BINANCE_API_SECRET, "
+                "or configure them in ~/.funding-arb/funding-arb.json under env."
             )
-    # GET 可安全重试；POST(下单) 不重试，避免重复下单
+    # GET can be safely retried; POST (orders) are not retried to avoid duplicate orders
     retries = 3 if method == "GET" else 1
     last_err: Optional[Exception] = None
     for attempt in range(retries):
         if signed:
             params2 = dict(base_params)
-            params2["timestamp"] = int(time.time() * 1000)  # 重试刷新时间戳
+            params2["timestamp"] = int(time.time() * 1000)  # Refresh timestamp on retry
             query = urllib.parse.urlencode(params2)
             sig = _sign(query)
             base_url = "https://fapi.binance.com" if path.startswith("/fapi/") else BASE
@@ -134,7 +134,7 @@ class BinanceSpotVenue:
             return 0.0
 
     def get_futures_ticker(self, pair: str) -> float:
-        """USDT-M 永续合约最新价。pair 格式如 BTCUSDT。"""
+        """USDT-M perpetual last price. pair format e.g. BTCUSDT."""
         try:
             data = _api_call("GET", "/fapi/v1/ticker/price", {"symbol": pair})
             return float(data.get("price", 0))
@@ -414,7 +414,8 @@ class BinanceSpotVenue:
         }
 
     def fetch_balances(self, coins: list[str]) -> dict[str, float]:
-        # 不吞异常：拉余额失败必须让上层 abort，绝不返回全 0（否则策略误判账户为空、只用现金下单）
+        # Do not swallow exceptions: balance fetch failure must propagate to abort, never return all zeros
+        # (otherwise strategy misjudges account as empty and only uses cash orders)
         balances: dict[str, float] = {c: 0.0 for c in coins}
 
         data = _api_call("GET", "/api/v3/account", signed=True)
@@ -551,7 +552,7 @@ class BinanceSpotVenue:
         return {"balances": combined_balances, "futures_positions": positions}
 
     def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
-        """USDT 永续持仓列表（单端点，失败抛异常）。"""
+        """USDT perpetual position list (single endpoint, raises on failure)."""
         pos_data = _api_call("GET", "/fapi/v2/positionRisk", signed=True)
         out: list[dict[str, Any]] = []
         for pos in pos_data if isinstance(pos_data, list) else []:
@@ -588,10 +589,10 @@ class BinanceSpotVenue:
             pass  # Fall back to static config defaults
         return rates
 
-    # ── cross margin（Reverse C&C：借币卖出 / 买回还币） ──────────────────────
+    # ── cross margin (Reverse C&C: borrow-sell / buy-repay) ──────────────────────
 
     def supports_reverse_arbitrage(self) -> bool:
-        """Cross margin 借还币能力：无 API 密钥时假定代码路径可用；有密钥则探测账户。"""
+        """Cross margin borrow/repay capability: assumed available without API keys; probes account when keys are present."""
         if not (_get_key() and _get_secret()):
             return True
         try:
@@ -603,7 +604,7 @@ class BinanceSpotVenue:
         return False
 
     def fetch_margin_debt(self, assets: list[str]) -> dict[str, float]:
-        """Cross margin 各资产未偿债务（borrowed + interest），单位为币本位数量。"""
+        """Cross margin per-asset outstanding debt (borrowed + interest), in base coin units."""
         debt: dict[str, float] = {a.upper(): 0.0 for a in assets}
         data = _api_call("GET", "/sapi/v1/margin/account", signed=True)
         for item in data.get("userAssets", []):
@@ -647,11 +648,11 @@ class BinanceSpotVenue:
         ref_price: float = 0.0,
         side_effect: str = "NO_SIDE_EFFECT",
     ) -> tuple[bool, dict[str, Any]]:
-        """Cross margin 市价单。
+        """Cross margin market order.
 
         side_effect:
-          - MARGIN_BUY : 自动借入缺口资产（SELL 时即借币卖出）
-          - AUTO_REPAY : 成交后自动偿还该资产的借款（BUY 时即买回还币）
+          - MARGIN_BUY : auto-borrow missing assets (SELL = borrow to sell)
+          - AUTO_REPAY : auto-repay debt after execution (BUY = buy back to repay)
         """
         client_oid = f"qmgn{int(time.time())}{random.randint(0, 9999)}"
         qty = f"{amount_base:.{quantity_precision}f}".rstrip("0").rstrip(".")
@@ -872,7 +873,7 @@ class BinanceSpotVenue:
             latency_ms = round((fill_ts - submit_ts) * 1000)
             order_id = str(result.get("orderId", "?"))
             exec_qty = float(result.get("executedQty", 0))
-            # fapi /order 返回 avgPrice，如果没有则退化为 ref_price
+            # fapi /order returns avgPrice; falls back to ref_price if absent
             exec_price = float(result.get("avgPrice", 0)) or ref_price
             exec_quote = exec_price * exec_qty
 
@@ -927,8 +928,8 @@ class BinanceSpotVenue:
                 continue
             is_margin = str(trade.get("account", "")).lower() == "margin"
             if trade["type"] in ("buy", "sell") and is_margin:
-                # Reverse C&C 的现货腿走 cross margin：
-                # sell + auto_borrow = 借币卖出；buy + auto_repay = 买回自动还币。
+                # Reverse C&C spot leg uses cross margin:
+                # sell + auto_borrow = borrow to sell; buy + auto_repay = buy back to auto-repay.
                 effect_map = {"auto_borrow": "MARGIN_BUY", "auto_repay": "AUTO_REPAY"}
                 side_effect = effect_map.get(
                     str(trade.get("side_effect", "")).lower(), "NO_SIDE_EFFECT"
@@ -956,7 +957,7 @@ class BinanceSpotVenue:
                     ref_price=ref_price,
                 )
             elif trade["type"] in ("open_short", "close_long"):
-                # 永续卖出 (开空单或平多单)
+                # Perp sell (open short or close long)
                 f_rules = self.fetch_futures_symbol_rules(pair)
                 f_prec = int(f_rules.get("quantity_precision", 3)) if f_rules else 3
                 ok, detail = self.place_futures_order(
@@ -968,7 +969,7 @@ class BinanceSpotVenue:
                     reduce_only=(trade["type"] == "close_long"),
                 )
             elif trade["type"] in ("close_short", "open_long"):
-                # 永续买入 (开多单或平空单)
+                # Perp buy (open long or close short)
                 f_rules = self.fetch_futures_symbol_rules(pair)
                 f_prec = int(f_rules.get("quantity_precision", 3)) if f_rules else 3
                 ok, detail = self.place_futures_order(

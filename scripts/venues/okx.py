@@ -76,8 +76,8 @@ def _api_call(
     key, secret, passp = _get_key(), _get_secret(), _get_pass()
     if not (key and secret and passp):
         raise RuntimeError(
-            "OKX API 凭证缺失：请设置 OKX_API_KEY / OKX_SECRET_KEY / OKX_PASSPHRASE，"
-            "或在 ~/.funding-arb/funding-arb.json 的 env 中配置。"
+            "OKX API credentials missing: please set OKX_API_KEY / OKX_SECRET_KEY / OKX_PASSPHRASE, "
+            "or configure them in ~/.funding-arb/funding-arb.json under env."
         )
 
     query = urllib.parse.urlencode(params) if params else ""
@@ -123,7 +123,7 @@ def _inst_id(asset: str, quote: str = "USDT") -> str:
 
 
 def _sz_precision(val: float) -> int:
-    """lotSz/tickSz 小数位；避免 str(1e-06) 无小数点导致精度为 0。"""
+    """Decimal places for lotSz/tickSz; avoids str(1e-06) having no decimal point, which would give precision 0."""
     s = f"{val:.12f}".rstrip("0")
     if "." in s:
         return len(s.split(".")[1])
@@ -164,7 +164,7 @@ class OkxSpotVenue:
             return 0.0
 
     def get_futures_ticker(self, pair: str) -> float:
-        """永续合约最新价。pair 格式可以是 BTCUSDT（自动转为 BTC-USDT-SWAP）或完整 instId。"""
+        """Perpetual last price. pair can be BTCUSDT (auto-converted to BTC-USDT-SWAP) or a full instId."""
         inst = pair
         if "-" not in pair:
             # BTCUSDT → BTC-USDT-SWAP
@@ -285,7 +285,7 @@ class OkxSpotVenue:
         return dict(rules)
 
     def _get_account_config(self, cache_sec: int = 300) -> dict[str, Any]:
-        """GET /api/v5/account/config — acctLv / autoLoan / enableSpotBorrow 等（带 TTL 缓存）。"""
+        """GET /api/v5/account/config — acctLv / autoLoan / enableSpotBorrow etc. (with TTL cache)."""
         global _acct_config_cache
         now = time.time()
         if _acct_config_cache and (now - _acct_config_cache[0]) < cache_sec:
@@ -301,14 +301,14 @@ class OkxSpotVenue:
         return dict(cfg)
 
     def _is_unified_margin_account(self, cfg: dict[str, Any] | None = None) -> bool:
-        """多币种/组合保证金模式下 spot+margin+derivatives 共用交易账户，无需独立划转。"""
+        """Under multi-currency/portfolio margin mode, spot+margin+derivatives share the trading account; no separate transfer needed."""
         cfg = cfg if cfg is not None else self._get_account_config()
         return str(cfg.get("acctLv", "")) in ("3", "4")
 
     def transfer_asset(
         self, asset: str, amount: float, from_account: str, to_account: str
     ) -> bool:
-        # OKX 各账户模式下 margin 都在交易账户（18）内，spot↔margin 无需划转
+        # Under all OKX account modes, margin lives in the trading account (18); spot↔margin needs no transfer
         if "margin" in (from_account, to_account):
             return True
 
@@ -416,7 +416,7 @@ class OkxSpotVenue:
         return {"balances": balances, "futures_positions": positions}
 
     def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
-        """USDT 永续持仓列表（单端点，失败抛异常）。"""
+        """USDT perpetual position list (single endpoint, raises on failure)."""
         pos_data = _api_call("GET", "/api/v5/account/positions")
         quote_u = quote.upper()
         out: list[dict[str, Any]] = []
@@ -468,7 +468,7 @@ class OkxSpotVenue:
             pass
         _initialized_symbols.add(pair)
 
-    # ── cross margin（Reverse C&C：借币卖出 / 买回还币） ──────────────────────
+    # ── cross margin (Reverse C&C: borrow-sell / buy-repay) ──────────────────────
 
     def _quote_ccy(self, pair: str) -> str:
         if "-" in pair:
@@ -485,7 +485,7 @@ class OkxSpotVenue:
         return pair.upper()
 
     def _can_borrow_for_sell(self, pair: str) -> bool:
-        """合约模式：交易对级 cross margin，max-loan side=sell 可借则支持 reverse。"""
+        """Simple account mode: pair-level cross margin, supports reverse if max-loan side=sell has available borrow."""
         try:
             data = _api_call(
                 "GET",
@@ -507,11 +507,11 @@ class OkxSpotVenue:
         return False
 
     def supports_reverse_arbitrage(self) -> bool:
-        """Reverse 现货腿能力：按账户实测 max-loan / 借币开关，不单靠 acctLv 推断。
+        """Reverse spot leg capability: tests via actual max-loan / borrow toggle rather than inferring from acctLv alone.
 
-        合约模式 acctLv=2：交易对级 cross margin 下单隐式借币（与网页杠杆一致）；
-        多币种 acctLv=3/4：账户级 autoLoan oversell；Spot+enableSpotBorrow 亦支持。
-        无 API 密钥时假定代码路径可用（供 paper/dry-run 扫描）。
+        Simple mode acctLv=2: pair-level cross margin orders implicitly borrow (consistent with web margin);
+        Multi-currency acctLv=3/4: account-level autoLoan oversell; Spot+enableSpotBorrow also supported.
+        Assumes the code path works when no API keys are present (for paper/dry-run scanning).
         """
         if not (_get_key() and _get_secret()):
             return True
@@ -528,7 +528,7 @@ class OkxSpotVenue:
         return False
 
     def _ensure_margin_auto_flags(self, side_effect: str) -> None:
-        """多币种/组合保证金：下单前打开 autoLoan/autoRepay。合约模式走手动借还或 ccy 全仓单。"""
+        """Multi-currency/portfolio margin: enable autoLoan/autoRepay before placing orders. Simple mode uses manual borrow/repay or ccy cross-margin orders."""
         cfg = self._get_account_config()
         if str(cfg.get("acctLv", "")) not in ("3", "4"):
             return
@@ -546,7 +546,7 @@ class OkxSpotVenue:
             pass
 
     def fetch_margin_debt(self, assets: list[str]) -> dict[str, float]:
-        """各币种负债：balance.liab（Spot/多币种/组合）+ MARGIN 持仓 liab（合约模式）。"""
+        """Per-coin liabilities: balance.liab (Spot/Multi-currency/Portfolio) + MARGIN position liab (Simple mode)."""
         debt: dict[str, float] = {a.upper(): 0.0 for a in assets}
         try:
             data = _api_call("GET", "/api/v5/account/balance", params={"ccy": ""})
@@ -557,7 +557,7 @@ class OkxSpotVenue:
                         debt[coin] = abs(float(item.get("liab", 0) or 0))
         except Exception as e:
             print(f"okx fetch_margin_debt balance failed: {e}", file=sys.stderr)
-        # 合约模式下杠杆负债挂在 MARGIN 持仓的 liab/liabCcy 上
+        # In Simple mode, margin liabilities are tracked on MARGIN position's liab/liabCcy
         try:
             pos = _api_call(
                 "GET", "/api/v5/account/positions", params={"instType": "MARGIN"}
@@ -572,7 +572,7 @@ class OkxSpotVenue:
         return debt
 
     def _margin_borrow_repay(self, asset: str, amount: float, side: str) -> bool:
-        """POST /api/v5/account/spot-manual-borrow-repay（官方仅 Spot mode 开通借币时适用）。"""
+        """POST /api/v5/account/spot-manual-borrow-repay (only applicable when Spot mode has borrowing enabled)."""
         try:
             _api_call(
                 "POST",
@@ -592,11 +592,11 @@ class OkxSpotVenue:
         cfg = self._get_account_config()
         lv = str(cfg.get("acctLv", ""))
         if lv in ("3", "4"):
-            # 多币种/组合保证金：借币在下单时由 autoLoan 触发
+            # Multi-currency/portfolio margin: borrowing is triggered by autoLoan at order time
             self._ensure_margin_auto_flags("auto_borrow")
             return True
         if lv == "2":
-            # 合约模式：tdMode=cross 下单时隐式借币，无需也不能手动借
+            # Simple mode: tdMode=cross orders implicitly borrow; no manual borrow needed or allowed
             return True
         return self._margin_borrow_repay(asset, amount, "borrow")
 
@@ -607,7 +607,7 @@ class OkxSpotVenue:
             self._ensure_margin_auto_flags("auto_repay")
             return True
         if lv == "2":
-            # 合约模式：平掉 MARGIN 仓位即自动还币还息（官方帮助文档）
+            # Simple mode: closing MARGIN positions automatically repays principal and interest (per official docs)
             return True
         return self._margin_borrow_repay(asset, amount, "repay")
 
@@ -620,12 +620,12 @@ class OkxSpotVenue:
         ref_price: float = 0.0,
         side_effect: str = "",
     ) -> tuple[bool, dict[str, Any]]:
-        """Cross margin 单（tdMode=cross）。
+        """Cross margin order (tdMode=cross).
 
-        acctLv=2 合约模式：需传 ccy=保证金币；sell 下单时隐式借币，buy 平仓自动还币还息。
-        acctLv=3/4：依赖 set-auto-loan / set-auto-repay。
-        sell 用市价单（sz=base）；buy 用 IOC 限价单（px 上浮 1%），因为
-        MARGIN 市价买的 sz 单位歧义且 tgtCcy 仅适用于 SPOT 市价单。
+        acctLv=2 Simple mode: requires ccy=margin coin; sell orders implicitly borrow, buy closing automatically repays principal and interest.
+        acctLv=3/4: depends on set-auto-loan / set-auto-repay.
+        sell uses market order (sz=base); buy uses IOC limit order (px with 1% buffer), because
+        MARGIN market buy has ambiguous sz unit and tgtCcy only applies to SPOT market orders.
         """
         cfg = self._get_account_config()
         acct_lv = str(cfg.get("acctLv", ""))
@@ -646,7 +646,7 @@ class OkxSpotVenue:
         if acct_lv == "2":
             body["ccy"] = self._quote_ccy(pair)
         if side == "buy":
-            # IOC 限价上浮 1%：精确控制 base 数量，等效市价成交
+            # IOC limit with 1% buffer: precise base quantity control, effectively market execution
             px_ref = ref_price if ref_price and ref_price > 0 else self.get_ticker(pair)
             if not px_ref or px_ref <= 0:
                 return False, {
@@ -702,7 +702,7 @@ class OkxSpotVenue:
             return False, {"error": str(e)}
 
     def fetch_borrow_rates(self, coins: list[str]) -> dict[str, float]:
-        """Fetch annualized borrow rates (decimal). 公共批量端点，rate 为日利率。"""
+        """Fetch annualized borrow rates (decimal). Public bulk endpoint, rate is daily rate."""
         rates: dict[str, float] = {c: 0.0 for c in coins}
         try:
             data = _api_call("GET", "/api/v5/public/interest-rate-loan-quota")

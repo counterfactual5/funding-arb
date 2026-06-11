@@ -76,21 +76,23 @@ def _api_call(
 ) -> dict:
     from urllib.parse import urlencode
 
-    # 凭证校验：缺失立即报错，绝不用空凭证发私有请求（避免静默失败/账实误判）
+    # Credential validation: fail immediately on missing credentials; never send private requests with empty credentials (avoids silent failures / account-state misjudgment)
     key, secret, passp = _get_key(), _get_secret(), _get_pass()
     if not (key and secret and passp):
         raise RuntimeError(
-            "Bitget API 凭证缺失：请设置环境变量 BITGET_API_KEY / BITGET_SECRET_KEY / "
-            "BITGET_PASSPHRASE，或在 ~/.funding-arb/funding-arb.json 的 env 中配置。"
+            "Bitget API credentials missing: please set environment variables BITGET_API_KEY / BITGET_SECRET_KEY / "
+            "BITGET_PASSPHRASE, or configure them in ~/.funding-arb/funding-arb.json under env."
         )
 
     p = "?" + urlencode(params) if params else ""
     body_str = json.dumps(body) if body else ""
-    # GET 可安全重试（含 429/网络抖动）；POST(下单) 不重试，避免重复下单
+    # GET can be safely retried (including 429/network jitter); POST (orders) are not retried to avoid duplicate orders
     retries = 3 if method == "GET" else 1
     last_err: Optional[Exception] = None
     for attempt in range(retries):
-        ts = str(int(time.time() * 1000))  # 每次重试刷新时间戳，避免签名过期
+        ts = str(
+            int(time.time() * 1000)
+        )  # Refresh timestamp on each retry to avoid signature expiration
         sig = _sign(ts, method, path + p, body_str)
         headers = {
             "CONTENT-TYPE": "application/json",
@@ -129,7 +131,7 @@ class BitgetSpotVenue:
         return 0.0
 
     def get_futures_ticker(self, pair: str) -> float:
-        """USDT-M 永续合约最新价。pair 格式同 get_ticker (如 BTCUSDT)。"""
+        """USDT-M perpetual last price. pair format same as get_ticker (e.g. BTCUSDT)."""
         url = f"{BASE}/api/v2/mix/market/ticker?symbol={pair}&productType=USDT-FUTURES"
         try:
             data = http_get_json(url).get("data", [])
@@ -179,7 +181,7 @@ class BitgetSpotVenue:
             pass
         return dict(_futures_ticker_prices)
 
-    # Bitget 接受的 granularity 格式与通用简写的映射
+    # Mapping from common shorthand to Bitget's accepted granularity format
     GRANULARITY_MAP: dict[str, str] = {
         "1m": "1min",
         "3m": "3min",
@@ -284,7 +286,7 @@ class BitgetSpotVenue:
         _futures_rules_cache[pair] = (now, rules)
         return dict(rules)
 
-    # 官方 wallet/transfer 文档：futures 账户类型为 usdt_futures（非 mix_usdt）
+    # Official wallet/transfer docs: futures account type is usdt_futures (not mix_usdt)
     _ACCOUNT_TYPES = {
         "spot": "spot",
         "futures": "usdt_futures",
@@ -395,7 +397,8 @@ class BitgetSpotVenue:
         }
 
     def fetch_balances(self, coins: list[str]) -> dict[str, float]:
-        # 不吞异常：拉余额失败必须让上层 abort，绝不返回全 0（否则策略误判账户为空、只用现金下单）
+        # Do not swallow exceptions: balance fetch failure must propagate to abort, never return all zeros
+        # (otherwise strategy misjudges account as empty and only uses cash orders)
         balances: dict[str, float] = {c: 0.0 for c in coins}
         data = _api_call("GET", "/api/v2/spot/account/assets")
         for asset in data.get("data", []):
@@ -463,7 +466,7 @@ class BitgetSpotVenue:
         return {"balances": balances, "futures_positions": positions}
 
     def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
-        """USDT 永续持仓列表（单端点，失败抛异常）。"""
+        """USDT perpetual position list (single endpoint, raises on failure)."""
         pos_data = _api_call(
             "GET",
             "/api/v2/mix/position/all-position",
@@ -548,10 +551,10 @@ class BitgetSpotVenue:
                 pass
         return rates
 
-    # ── cross margin（Reverse C&C：借币卖出 / 买回还币） ──────────────────────
+    # ── cross margin (Reverse C&C: borrow-sell / buy-repay) ──────────────────────
 
     def supports_reverse_arbitrage(self) -> bool:
-        """Cross margin 借还币能力：无 API 密钥时假定代码路径可用；有密钥则探测账户。"""
+        """Cross margin borrow/repay capability: assumed available without API keys; probes account when keys are present."""
         if not (_get_key() and _get_secret()):
             return True
         try:
@@ -563,7 +566,7 @@ class BitgetSpotVenue:
             return False
 
     def fetch_margin_debt(self, assets: list[str]) -> dict[str, float]:
-        """Cross margin 各资产未偿债务（borrow + interest），单位为币本位数量。"""
+        """Cross margin per-asset outstanding debt (borrow + interest), in base coin units."""
         debt: dict[str, float] = {a.upper(): 0.0 for a in assets}
         try:
             data = _api_call("GET", "/api/v2/margin/crossed/account/assets")
@@ -636,12 +639,12 @@ class BitgetSpotVenue:
         ref_price: float = 0.0,
         side_effect: str = "",
     ) -> tuple[bool, dict[str, Any]]:
-        """Cross margin 市价单。
+        """Cross margin market order.
 
         side_effect:
-          - auto_borrow → loanType=autoLoan : 自动借入缺口资产（SELL 即借币卖出）
-          - auto_repay  → loanType=autoRepay: 成交后自动偿还借款（BUY 即买回还币）
-        市价买以 quote 计量，按 ref_price 加 1% buffer 折算后由 autoRepay 清债。
+          - auto_borrow → loanType=autoLoan : auto-borrow missing assets (SELL = borrow to sell)
+          - auto_repay  → loanType=autoRepay: auto-repay debt after execution (BUY = buy back to repay)
+        Market buy is measured in quote; converted via ref_price + 1% buffer then cleared by autoRepay.
         """
         loan_type = {"auto_borrow": "autoLoan", "auto_repay": "autoRepay"}.get(
             side_effect.lower(), "normal"
@@ -651,7 +654,7 @@ class BitgetSpotVenue:
             "symbol": pair,
             "orderType": "market",
             "side": side,
-            "force": "gtc",  # 官方必填；市价单 force 不参与撮合逻辑
+            "force": "gtc",  # Required by API; force does not affect matching logic for market orders
             "loanType": loan_type,
             "clientOid": client_oid,
         }
@@ -661,7 +664,7 @@ class BitgetSpotVenue:
         else:
             if ref_price <= 0:
                 return False, {
-                    "error": "margin market buy 需要 ref_price 折算 quoteSize"
+                    "error": "margin market buy requires ref_price to compute quoteSize"
                 }
             body["quoteSize"] = f"{amount_base * ref_price * 1.01:.4f}"
         submit_ts = time.time()
@@ -962,8 +965,8 @@ class BitgetSpotVenue:
                 continue
             is_margin = str(trade.get("account", "")).lower() == "margin"
             if trade["type"] in ("buy", "sell") and is_margin:
-                # Reverse C&C 的现货腿走 cross margin：
-                # sell + auto_borrow = 借币卖出；buy + auto_repay = 买回自动还币。
+                # Reverse C&C spot leg uses cross margin:
+                # sell + auto_borrow = borrow to sell; buy + auto_repay = buy back to auto-repay.
                 ok, detail = self.place_margin_order(
                     pair,
                     trade["type"],
@@ -992,7 +995,7 @@ class BitgetSpotVenue:
                 "close_short",
                 "open_long",
             ):
-                # 永续开平
+                # Perp open/close
                 ok, detail = self.place_futures_order(
                     pair,
                     trade["type"],

@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Pure Futures Watcher — 独立常驻进程监控纯永续配对持仓。
+"""Pure Futures Watcher — standalone daemon monitoring pure perp pair positions.
 
-职责:
-  1. 价差收窄退出: 当 funding spread ≤ exitThreshold 时自动平仓
-  2. 重平衡: 两腿名义价值偏斜时告警；autoRebalance=true 时自动
-     裁剪数量错配的超重腿（部分强平/ADL 造成的真实 delta 敞口）
-  3. 单腿清算/强平检测: 一腿被强平或异常关闭时，立即平掉另一腿
+Responsibilities:
+  1. Spread collapse exit: auto-close when funding spread <= exitThreshold
+  2. Rebalance: alert on leg notional value skew; autoRebalance=true trims
+     oversized leg on quantity mismatch (real delta exposure from partial liquidation/ADL)
+  3. Single-leg liquidation detection: when one leg is liquidated or abnormally closed, immediately close the other
 
-用法:
+Usage:
   python3 scripts/execution/pure_futures_watcher.py \
     --config templates/config.pure_futures.spread.json
 
   python3 scripts/execution/pure_futures_watcher.py \
     --config templates/config.pure_futures.spread.json --interval 30 --verbose
 
-与 runner 的区别:
-  - runner 是周期性 scan→decide→execute 循环（开仓+平仓）
-  - watcher 是纯监控进程（只做退出/对冲/告警），适合作为 systemd/launchd 常驻服务
+Difference from runner:
+  - Runner is a periodic scan->decide->execute loop (open + close)
+  - Watcher is a pure monitoring process (only exit/hedge/alert), suitable as a systemd/launchd daemon
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ def _get_current_spread(
     short_venue: str,
     venues_rates: dict[str, dict[str, dict[str, Any]]],
 ) -> float | None:
-    """从扫描数据中获取当前 spread (short_rate - long_rate)。"""
+    """Get current spread from scan data (short_rate - long_rate)."""
     long_info = venues_rates.get(base, {}).get(long_venue)
     short_info = venues_rates.get(base, {}).get(short_venue)
     if not long_info or not short_info:
@@ -94,10 +94,10 @@ def _get_current_spread(
 def _fetch_positions_from_venue(
     venue_id: str, quote: str = "USDT"
 ) -> list[dict[str, Any]] | None:
-    """从交易所 API 获取当前全部永续持仓。
+    """Fetch all current perp positions from exchange API.
 
-    失败返回 None（区别于空列表）：调用方必须跳过腿校验，
-    否则查询故障会被误判为「腿消失」触发误平仓。
+    Returns None on failure (distinct from empty list): caller must skip leg checks,
+    otherwise a query failure would be mistaken for "leg gone" and trigger a wrongful close.
     """
     try:
         v = _get_venue_cached(venue_id)
@@ -108,7 +108,7 @@ def _fetch_positions_from_venue(
 
 
 def _get_mark_price(venue_id: str, base: str, quote: str = "USDT") -> float:
-    """获取单所永续标记价。带短时缓存避免循环内重复调用。"""
+    """Get single-venue perp mark price. Uses short-lived cache to avoid repeated calls within a loop."""
     key = (str(venue_id).lower(), str(base).upper(), quote.upper())
     now = time.monotonic()
     cached = _mark_price_cache.get(key)
@@ -177,7 +177,7 @@ def check_exit(
     scan_rates: dict[str, dict[str, dict[str, Any]]],
     exit_edge: float,
 ) -> tuple[bool, str]:
-    """检查持仓是否应退出（价差收窄）。
+    """Check whether a position should exit (spread has narrowed).
 
     Returns (should_exit, reason).
     """
@@ -187,7 +187,7 @@ def check_exit(
 
     current_spread = _get_current_spread(base, long_venue, short_venue, scan_rates)
     if current_spread is None:
-        # 无法获取当前 rate → 不主动退出（保守策略）
+        # Cannot get current rate → do not actively exit (conservative approach)
         return False, "rate_unavailable"
 
     # For forward: spread = short_rate - long_rate > 0 profitable
@@ -204,10 +204,10 @@ def estimate_spread_pnl(
     current_long_px: float,
     current_short_px: float,
 ) -> dict[str, Any]:
-    """估算持仓的价差损益。
+    """Estimate position spread P&L.
 
-    价格盈亏 = 开仓时两所价差 - 当前两所价差（按数量折算）
-    forward: spread 收窄 → 盈利; reverse: spread 收窄 → 亏损
+    Price P&L = inter-venue spread at open - inter-venue spread now (scaled by quantity)
+    forward: spread narrows -> profit; reverse: spread narrows -> loss
     """
     long_price = float(pos.get("long_price", 0))
     short_price = float(pos.get("short_price", 0))
@@ -237,7 +237,7 @@ def _leg_qty_from_snapshot(
     base: str,
     side: str,
 ) -> float | None:
-    """从已抓取的 venue positions 快照中提取某腿实际数量。"""
+    """Extract actual quantity for a leg from pre-fetched venue position snapshot."""
     rows = venue_positions.get(venue_id)
     if rows is None:
         return None
@@ -254,11 +254,11 @@ def check_rebalance(
     max_skew_pct: float = 1.0,
     venue_positions: dict[str, list[dict[str, Any]]] | None = None,
 ) -> tuple[bool, str, float, float]:
-    """检查两腿名义价值是否偏离，返回 (need_rebalance, reason, long_notional, short_notional)。
+    """Check if leg notional values have diverged. Returns (need_rebalance, reason, long_notional, short_notional).
 
-    max_skew_pct: 两腿名义价值偏离阈值百分比（默认 1%）。
-    venue_positions: 可选的交易所持仓快照；提供时用实际腿数量
-    （能发现部分强平/ADL 造成的数量错配，这才是真正的 delta 敞口）。
+    max_skew_pct: Threshold percentage for leg notional value divergence (default 1%).
+    venue_positions: Optional exchange position snapshot; when provided, actual leg quantities
+    are used (can detect quantity mismatch from partial liquidation/ADL, which is real delta exposure).
     """
     base = str(pos.get("base", ""))
     long_venue = str(pos.get("long_venue", ""))
@@ -305,11 +305,11 @@ def check_leg_alive(
     pos: dict[str, Any],
     venue_positions: dict[str, list[dict[str, Any]]],
 ) -> tuple[bool, str]:
-    """检查两腿是否仍然存活（没被强平/意外关闭）。
+    """Check if both legs are still alive (not liquidated/unexpectedly closed).
 
-    venue_positions: {venue_id: [{symbol, side, qty, ...}]}。
-    注意：调用方必须保证两个 venue 的持仓快照都拉取成功
-    （拉取失败 ≠ 无持仓，混淆会触发误平仓）。
+    venue_positions: {venue_id: [{symbol, side, qty, ...}]}.
+    Note: caller must ensure both venues' position snapshots were fetched successfully
+    (fetch failure != no position; confusing the two triggers wrongful close).
     """
     base = str(pos.get("base", "")).upper()
     qty = float(pos.get("qty", 0))
@@ -353,10 +353,11 @@ def check_margin_distance(
     venue_positions: dict[str, list[dict[str, Any]]],
     alert_distance_pct: float = 20.0,
 ) -> list[dict[str, Any]]:
-    """逐腿检查标记价距强平价的百分比距离，过近则返回告警。
+    """Check mark-price-to-liquidation distance per leg; return alerts if too close.
 
-    跨所对冲两腿盈亏不互通：行情单边走时一腿浮亏积累，
-    距离逼近时必须补保证金或主动减仓，等强平就是裸腿事故。
+    Cross-venue hedged legs do not share P&L: when price moves unilaterally, one leg accumulates
+    floating losses; when distance approaches liquidation, margin must be added or the position
+    reduced proactively — waiting for liquidation causes a naked leg incident.
     """
     alerts: list[dict[str, Any]] = []
     base = str(pos.get("base", "")).upper()
@@ -371,7 +372,7 @@ def check_margin_distance(
                 continue
             liq_px = float(p.get("liq_price", 0) or 0)
             if liq_px <= 0:
-                break  # 交易所未返回强平价（全仓低杠杆时常见）
+                break  # Exchange did not return liquidation price (common for cross-margin low-leverage)
             mark = _get_mark_price(venue_id, base)
             if mark <= 0:
                 break
@@ -397,7 +398,7 @@ def watch_cycle(
     verbose: bool = False,
     log_path: Path = WATCHER_LOG,
 ) -> dict[str, Any]:
-    """单次 watch 循环：检查所有 open 持仓，决定退出/告警。"""
+    """Single watch cycle: check all open positions, decide exit/alert."""
     pfa = cfg.get("pureFuturesArbitrage") or {}
     venues = [
         str(v).lower() for v in pfa.get("venues", ["binance", "bitget", "bybit", "okx"])
@@ -445,7 +446,7 @@ def watch_cycle(
         return cycle_result
 
     # Fetch actual positions from venues (for leg/margin check)
-    # 只保留拉取成功的 venue；失败的记入 failed 集合，跳过其腿校验
+    # Only keep successfully fetched venues; failures go to failed set, skip their leg checks
     venue_positions: dict[str, list[dict[str, Any]]] = {}
     failed_venues: set[str] = set()
     if check_legs and not dry_run:
@@ -519,9 +520,11 @@ def watch_cycle(
             short_px = _get_mark_price(pos_short_v, base)
             if long_px > 0 and short_px > 0:
                 pnl_info = estimate_spread_pnl(pos, long_px, short_px)
-                spread_loss_pct = -pnl_info.get("spread_pnl_pct", 0)  # 正值=亏损
+                spread_loss_pct = -pnl_info.get(
+                    "spread_pnl_pct", 0
+                )  # Positive value = loss
 
-                # 估算累计资金费收益
+                # Estimate cumulative funding income
                 opened_at = int(pos.get("opened_at", 0) or 0)
                 held_hours = (_now_ms() - opened_at) / 3600000.0 if opened_at > 0 else 0
                 interval_h = 8.0
@@ -575,8 +578,8 @@ def watch_cycle(
                     "reason": leg_reason,
                 }
                 if leg_reason == "both_legs_gone":
-                    # 对不存在的腿下平仓单会反向开出新仓——绝不能下单。
-                    # 只告警留待人工核对（可能是外部手动平仓或符号匹配问题）。
+                    # Placing a close order on a vanished leg opens a new position — must not submit.
+                    # Only alert for manual review (may be externally closed or symbol match issue).
                     action["action"] = "manual_review"
                     action["note"] = "both legs gone; no orders placed"
                     send_notification(
@@ -587,7 +590,7 @@ def watch_cycle(
                         cfg,
                     )
                 else:
-                    # 单腿消失：只平仍存活的那条腿（对消失腿下单 = 开新仓）
+                    # Single leg gone: only close the surviving leg (closing a vanished leg = opening new position)
                     alive_leg = "short" if leg_reason.startswith("long_leg") else "long"
                     send_notification(
                         "NAKED LEG DETECTED",
@@ -605,7 +608,7 @@ def watch_cycle(
                 actions.append(action)
                 continue
 
-            # 2b. 逐腿强平距离预警（不自动操作，及时通知补保证金/减仓）
+            # 2b. Per-leg liquidation distance warning (no auto-action, timely notification to add margin/reduce position)
             margin_alerts = check_margin_distance(
                 pos, venue_positions, margin_alert_pct
             )
@@ -647,8 +650,8 @@ def watch_cycle(
                     file=sys.stderr,
                 )
             if auto_rebalance and not pos_dry_run:
-                # 仅裁剪数量错配（部分强平/ADL 造成的真实 delta）。
-                # 纯标记价漂移（数量一致）的偏斜不可交易消除，executor 会返回 balanced。
+                # Only trim quantity mismatch (real delta from partial liquidation/ADL).
+                # Pure mark-price drift (equal quantities) is not tradeable away; executor returns balanced.
                 res = rebalance_pure_futures_pair(pos_id, dry_run=False, config=cfg)
                 action = {
                     "action": "rebalance",

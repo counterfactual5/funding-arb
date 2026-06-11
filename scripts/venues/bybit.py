@@ -78,8 +78,8 @@ def _api_call(
     key, secret = _get_key(), _get_secret()
     if not (key and secret):
         raise RuntimeError(
-            "Bybit API 凭证缺失：请设置 BYBIT_API_KEY / BYBIT_SECRET_KEY，"
-            "或在 ~/.funding-arb/funding-arb.json 的 env 中配置。"
+            "Bybit API credentials missing: please set BYBIT_API_KEY / BYBIT_SECRET_KEY, "
+            "or configure them in ~/.funding-arb/funding-arb.json under env."
         )
 
     recv_window = "5000"
@@ -142,7 +142,7 @@ class BybitSpotVenue:
             return 0.0
 
     def get_futures_ticker(self, pair: str) -> float:
-        """USDT 永续合约最新价。pair 格式如 BTCUSDT。"""
+        """USDT perpetual futures last price. pair format e.g. BTCUSDT."""
         url = f"{BASE}/v5/market/tickers?category=linear&symbol={pair}"
         try:
             data = http_get_json(url)
@@ -399,7 +399,7 @@ class BybitSpotVenue:
         return {"balances": balances, "futures_positions": positions}
 
     def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
-        """USDT 永续持仓列表（单端点，失败抛异常）。"""
+        """USDT perpetual positions list (single endpoint; raises on failure)."""
         pos_data = _api_call(
             "GET",
             "/v5/position/list",
@@ -484,10 +484,10 @@ class BybitSpotVenue:
                 pass
         return rates
 
-    # ── UTA spot margin（Reverse C&C：借币卖出 / 买回还币） ────────────────────
+    # ── UTA spot margin (Reverse C&C: borrow-sell / buy-repay) ────────────────────
 
     def supports_reverse_arbitrage(self) -> bool:
-        """UTA spot margin 能力：无密钥假定可用；有密钥探测开关，未开则尝试开启。"""
+        """UTA spot margin capability: assumed available without keys; with keys, probes toggle and attempts to enable if off."""
         if not (_get_key() and _get_secret()):
             return True
         try:
@@ -505,7 +505,7 @@ class BybitSpotVenue:
             return False
 
     def fetch_margin_debt(self, assets: list[str]) -> dict[str, float]:
-        """UTA 各币种负债（borrowAmount + accruedInterest），单位为币本位数量。"""
+        """UTA per-coin liabilities (borrowAmount + accruedInterest), in base coin units."""
         debt: dict[str, float] = {a.upper(): 0.0 for a in assets}
         try:
             data = _api_call(
@@ -523,11 +523,11 @@ class BybitSpotVenue:
         return debt
 
     def margin_borrow(self, asset: str, amount: float) -> bool:
-        """UTA 借币隐式发生于 isLeverage=1 下单，无独立借币接口。"""
+        """UTA borrowing occurs implicitly under isLeverage=1 orders; no standalone borrow interface."""
         return False
 
     def margin_repay(self, asset: str, amount: float) -> bool:
-        """UTA 手动还币：优先官方 /v5/account/repay，失败再试 quick-repayment。"""
+        """UTA manual repayment: prefers official /v5/account/repay, falls back to quick-repayment on failure."""
         coin = asset.upper()
         amt = f"{amount:.8f}".rstrip("0").rstrip(".")
         try:
@@ -557,10 +557,10 @@ class BybitSpotVenue:
         quantity_precision: int = 6,
         ref_price: float = 0.0,
     ) -> tuple[bool, dict[str, Any]]:
-        """UTA spot margin 市价单（isLeverage=1）。
+        """UTA spot margin market order (isLeverage=1).
 
-        sell: 余额不足自动借币卖出；buy: 买回的币自动冲销负债。
-        买卖均以 base 数量计量（buy 用 marketUnit=baseCoin）。
+        sell: insufficient balance auto-borrows and sells; buy: bought coins auto-offset liabilities.
+        Both sides measured in base quantity (buy uses marketUnit=baseCoin).
         """
         client_oid = f"qmgn{int(time.time())}{random.randint(0, 9999)}"
         sz = f"{amount_base:.{quantity_precision}f}".rstrip("0").rstrip(".")
@@ -809,7 +809,7 @@ class BybitSpotVenue:
                 continue
             is_margin = str(trade.get("account", "")).lower() == "margin"
             if trade["type"] in ("buy", "sell") and is_margin:
-                # Reverse C&C 现货腿走 UTA spot margin（isLeverage=1 自动借/还）。
+                # Reverse C&C spot leg uses UTA spot margin (isLeverage=1 auto borrow/repay).
                 ok, detail = self.place_margin_order(
                     pair,
                     trade["type"],

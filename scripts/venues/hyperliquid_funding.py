@@ -7,6 +7,7 @@ more volatile funding rates — ideal for cross-venue arbitrage.
 
 API docs: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint
 """
+
 from __future__ import annotations
 
 import math
@@ -84,13 +85,23 @@ class HyperliquidFundingProvider:
             except (ValueError, TypeError):
                 mark = 0.0
 
-            out.append({
-                "symbol": _coin_to_symbol(coin),
-                "rate_pct": rate_float * 100,  # decimal → percentage
-                "next_funding_ts": next_ts,
-                "mark_price": mark,
-            })
+            out.append(
+                {
+                    "symbol": _coin_to_symbol(coin),
+                    "rate_pct": rate_float * 100,  # decimal → percentage
+                    "next_funding_ts": next_ts,
+                    "mark_price": mark,
+                }
+            )
         return out
+
+    def fetch_interval_map(self, quote: str = "USDT") -> dict[str, float]:
+        """Hyperliquid uses 1-hour funding intervals for all perps."""
+        return {
+            _coin_to_symbol(entry.get("name", "")): 1.0
+            for entry in _post({"type": "metaAndAssetCtxs"})[0].get("universe", [])
+            if entry.get("name")
+        }
 
     # ------------------------------------------------------------------
     # fetch_current — single coin
@@ -169,7 +180,9 @@ class HyperliquidFundingProvider:
 
         for _ in range(max_pages):
             try:
-                data = _post({"type": "fundingHistory", "coin": coin, "startTime": cursor})
+                data = _post(
+                    {"type": "fundingHistory", "coin": coin, "startTime": cursor}
+                )
             except Exception:
                 break
             if not isinstance(data, list) or not data:
@@ -214,4 +227,8 @@ class HyperliquidFundingProvider:
         if not isinstance(data, list) or len(data) < 2:
             return {}
         universe = data[0].get("universe", [])
-        return {_coin_to_symbol(str(e.get("name", ""))): 1.0 for e in universe if e.get("name")}
+        return {
+            _coin_to_symbol(str(e.get("name", ""))): 1.0
+            for e in universe
+            if e.get("name")
+        }

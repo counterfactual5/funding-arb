@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Manual CLI for pure futures spread pair open/close/list.
 
-示例：
+Examples:
   python3 scripts/cli/pure_futures_trade.py open BTC --long-venue okx --short-venue bybit --trade-usd 500 --dry-run
   python3 scripts/cli/pure_futures_trade.py list
   python3 scripts/cli/pure_futures_trade.py close pf-BTC-okx-bybit-... --dry-run

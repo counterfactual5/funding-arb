@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""资金费率套利编排 — 扫描 → 余额检查 → 跨所划转 → 执行（dry-run 默认）。
+"""Funding rate arbitrage orchestration — scan → balance check → cross-venue transfer → execute (dry-run by default).
 
-流程:
-  1. UnifiedFundingPool 扫描最优路由（含链上提现费估算）
-  2. 检查各所 USDT 余额，不足则规划最低费链划转
-  3. 同所路由：调用 run_cash_and_carry（paper/live）
-  4. 跨所路由：--run-executor 调 cross_venue_executor 自动双腿（--live-trades 实盘）
-  5. --pure-futures: 纯永续资金费差扫描+执行（无现货/借贷/转账）
+Flow:
+  1. UnifiedFundingPool scans for optimal routes (including on-chain withdrawal fee estimation)
+  2. Check USDT balance at each venue; if insufficient, plan minimum-fee chain transfers
+  3. Same-venue routes: run run_cash_and_carry (paper/live)
+  4. Cross-venue routes: --run-executor invokes cross_venue_executor for automatic two-leg execution (--live-trades for live)
+  5. --pure-futures: pure perp funding rate spread scan + execution (no spot/borrow/transfer)
 
-用法:
+Usage:
   python3 scripts/cli/orchestrate_funding.py --venues bitget,bybit
   python3 scripts/cli/orchestrate_funding.py --base BTC --trade-usd 500 --direction forward
-  python3 scripts/cli/orchestrate_funding.py --execute-transfer --poll-deposit   # 真实提现+轮询
+  python3 scripts/cli/orchestrate_funding.py --execute-transfer --poll-deposit   # live withdrawal + polling
   python3 scripts/cli/orchestrate_funding.py --run-executor --config templates/config.cash_and_carry.bitget.json
-  python3 scripts/cli/orchestrate_funding.py --pure-futures                     # 纯永续扫描
-  python3 scripts/cli/orchestrate_funding.py --pure-futures --run-executor      # + 自动开仓
-  python3 scripts/cli/orchestrate_funding.py --pure-futures --run-executor --live-trades  # 实盘
-  python3 scripts/cli/orchestrate_funding.py --pure-futures --auto-spread-watch # + 后台监听
+  python3 scripts/cli/orchestrate_funding.py --pure-futures                     # pure perp scan only
+  python3 scripts/cli/orchestrate_funding.py --pure-futures --run-executor      # + auto open
+  python3 scripts/cli/orchestrate_funding.py --pure-futures --run-executor --live-trades  # live
+  python3 scripts/cli/orchestrate_funding.py --pure-futures --auto-spread-watch # + background watcher
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ def _venue_usdt_balance(venue: str) -> float:
 
 
 def _balance_needs(route: CrossRoute, trade_usd: float) -> list[BalanceNeed]:
-    """估算各所 USDT 需求（保守：每腿 trade_usd + 10% buffer）。"""
+    """Estimate USDT requirements per venue (conservative: each leg needs trade_usd + 10% buffer)."""
     buffer = trade_usd * 0.1
     needs: list[BalanceNeed] = []
     if route.direction == "forward":
@@ -160,7 +160,7 @@ def _plan_transfers(
     *,
     dry_run: bool,
 ) -> list[dict[str, Any]]:
-    """从余额充裕所向不足所规划 USDT 划转。"""
+    """Plan USDT transfers from venues with surplus to those with deficit."""
     plans: list[dict[str, Any]] = []
     donors = sorted(
         [b for b in balances if b.available_usd > b.required_usd + 5],
@@ -237,27 +237,27 @@ def _execution_notes(route: CrossRoute, trade_usd: float) -> list[str]:
     if route.same_venue:
         tpl = VENUE_TEMPLATES.get(route.futures_venue)
         notes.append(
-            f"同所 {route.futures_venue}: 运行 run_cash_and_carry "
+            f"Same-venue {route.futures_venue}: run run_cash_and_carry "
             f"(template={tpl or 'n/a'}) base={route.base} trade_usd≈{trade_usd}"
         )
     else:
         if route.direction == "forward":
             notes.append(
-                f"跨所 FORWARD: {route.futures_venue} 开空 {route.base} perp "
-                f"+ {route.spot_venue} 现货买入 {route.base} (~{trade_usd} USD)"
+                f"Cross-venue FORWARD: {route.futures_venue} open short {route.base} perp "
+                f"+ {route.spot_venue} spot buy {route.base} (~{trade_usd} USD)"
             )
         else:
             notes.append(
-                f"跨所 REVERSE: {route.futures_venue} 开多 {route.base} perp "
-                f"+ {route.spot_venue} margin 借卖 {route.base}"
+                f"Cross-venue REVERSE: {route.futures_venue} open long {route.base} perp "
+                f"+ {route.spot_venue} margin borrow-sell {route.base}"
             )
         if route.transfer_chain:
             notes.append(
-                f"资金路由: 优先 {route.transfer_chain.upper()} "
+                f"Funding route: prefer {route.transfer_chain.upper()} "
                 f"(est fee {route.transfer_fee_usdt:.4f} USDT / {route.transfer_fee_pct:.3f}%)"
             )
         notes.append(
-            "跨所自动下单: --run-executor 模拟双腿，--run-executor --live-trades 实盘开仓"
+            "Cross-venue auto-trade: --run-executor simulates both legs, --run-executor --live-trades opens live"
         )
     return notes
 
@@ -294,7 +294,7 @@ def _print_plan(plan: OrchestrationPlan) -> None:
     print(f"ORCHESTRATION  {r.direction.upper()}  {r.base}  trade_usd={plan.trade_usd}")
     print(f"{'=' * 72}")
     legs = f"fut={r.futures_venue}  spot/margin={r.spot_venue}"
-    same = "同所" if r.same_venue else "跨所"
+    same = "same-venue" if r.same_venue else "cross-venue"
     print(
         f"  route: {same}  {legs}\n"
         f"  funding={r.funding_rate_pct:+.4f}%  net={r.net_edge_pct:+.4f}%  "
@@ -327,14 +327,14 @@ def _print_plan(plan: OrchestrationPlan) -> None:
     for line in plan.execution_notes:
         print(f"    · {line}")
     if plan.dry_run:
-        print("\n  [DRY-RUN] 未发起划转或下单")
+        print("\n  [DRY-RUN] No transfers or orders submitted")
 
 
 def _print_pure_futures_plan(
     scan_result: dict[str, Any],
     top: int = 10,
 ) -> None:
-    """打印纯永续扫描结果。"""
+    """Print pure futures scan results."""
     now = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
     all_rows = list(scan_result.get("forward", [])) + list(
         scan_result.get("reverse", [])
@@ -420,7 +420,7 @@ def _run_executor(config_path: Path, verbose: bool) -> int:
 
 
 def _run_pure_futures_mode(args: argparse.Namespace) -> None:
-    """--pure-futures 模式：扫描永续价差 → 可选开仓 → 可选启动 watcher。"""
+    """--pure-futures mode: scan perp spreads → optional open → optional watcher start."""
     from cli.scan_pure_futures_spreads import scan_pure_futures_spreads  # noqa: E402
     from execution.pure_futures_executor import open_pure_futures_pair  # noqa: E402
     from execution.settle_mismatch_planner import (  # noqa: E402
@@ -542,16 +542,18 @@ def _run_pure_futures_mode(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="资金费率套利编排 scan→transfer→execute"
+        description="Funding rate arbitrage orchestration scan→transfer→execute"
     )
     parser.add_argument("--venues", default=",".join(DEFAULT_VENUES))
     parser.add_argument("--entry", "-e", type=float, default=0.05)
     parser.add_argument("--universe-min", "-u", type=float, default=0.03)
     parser.add_argument("--trade-usd", type=float, default=DEFAULT_REFERENCE_TRADE_USD)
     parser.add_argument(
-        "--min-all-in", type=float, default=0.0, help="最低 all-in 净边际 (%%)"
+        "--min-all-in", type=float, default=0.0, help="Minimum all-in net edge (%%)"
     )
-    parser.add_argument("--base", default="", help="指定标的，默认自动选最优")
+    parser.add_argument(
+        "--base", default="", help="Specify asset; defaults to auto-select best"
+    )
     parser.add_argument(
         "--direction",
         choices=("auto", "forward", "reverse"),
@@ -562,65 +564,69 @@ def main() -> None:
     parser.add_argument(
         "--execute-transfer",
         action="store_true",
-        help="真实发起链上提现（默认仅展示计划）",
+        help="Initiate live on-chain withdrawal (default: show plan only)",
     )
     parser.add_argument(
-        "--poll-deposit", action="store_true", help="提现后轮询充值到账"
+        "--poll-deposit",
+        action="store_true",
+        help="Poll for deposit arrival after withdrawal",
     )
     parser.add_argument("--poll-timeout", type=int, default=600)
     parser.add_argument(
         "--run-executor",
         action="store_true",
-        help="同所路由运行 run_cash_and_carry；跨所路由运行 cross_venue_executor；"
-        " --pure-futures 时自动开仓 top-N 对",
+        help="Same-venue routes run run_cash_and_carry; cross-venue routes run cross_venue_executor; "
+        "with --pure-futures, auto-opens top-N pairs",
     )
     parser.add_argument(
         "--live-trades",
         action="store_true",
-        help="跨所执行真实下单（默认双腿 dry-run 模拟）",
+        help="Cross-venue live order execution (default: both legs dry-run simulated)",
     )
-    parser.add_argument("--config", default="", help="配置文件路径")
+    parser.add_argument("--config", default="", help="Config file path")
     parser.add_argument("--verbose", "-V", action="store_true")
 
-    # ── Pure Futures 选项 ────────────────────────────────────────────────
-    pf = parser.add_argument_group("pure-futures", "纯永续资金费差套利选项")
+    # ── Pure Futures options ────────────────────────────────────────────────
+    pf = parser.add_argument_group(
+        "pure-futures", "Pure perp funding rate spread arbitrage options"
+    )
     pf.add_argument(
         "--pure-futures",
         action="store_true",
-        help="仅扫描纯永续资金费差机会（无现货/借贷/转账），配合 --run-executor 开仓",
+        help="Scan pure perp funding rate spread opportunities only (no spot/borrow/transfer), use with --run-executor to open",
     )
     pf.add_argument(
         "--pf-min-spread",
         type=float,
         default=0.05,
-        help="最小 spread %% (default 0.05)",
+        help="Min spread %% (default 0.05)",
     )
     pf.add_argument(
         "--pf-min-edge",
         type=float,
         default=0.01,
-        help="最小 net edge %% (default 0.01)",
+        help="Min net edge %% (default 0.01)",
     )
     pf.add_argument(
         "--auto-spread-watch",
         action="store_true",
-        help="--pure-futures 模式下启动后台监听（watcher 进程）",
+        help="--pure-futures mode starts a background watcher process",
     )
     pf.add_argument(
         "--watch-interval",
         type=float,
         default=60,
-        help="watcher 检查间隔秒数 (default 60)",
+        help="Watcher check interval seconds (default 60)",
     )
 
     args = parser.parse_args()
 
-    # ── Pure Futures 快速路径 ────────────────────────────────────────────
+    # ── Pure Futures fast path ────────────────────────────────────────────
     if args.pure_futures:
         _run_pure_futures_mode(args)
         return
 
-    # ── 以下为原有 cash-and-carry 逻辑 ──────────────────────────────────
+    # ── Original cash-and-carry logic below ──────────────────────────────────
     venues = tuple(v.strip().lower() for v in args.venues.split(",") if v.strip())
     dry_run = not args.execute_transfer
     base = args.base.strip().upper() or None
@@ -646,7 +652,7 @@ def main() -> None:
         dry_run=dry_run,
     )
     if plan is None:
-        print("无满足条件的路由", file=sys.stderr)
+        print("No qualifying routes found", file=sys.stderr)
         sys.exit(1)
 
     if args.json:
@@ -670,7 +676,7 @@ def main() -> None:
         if not cfg:
             cfg = VENUE_TEMPLATES.get(plan.route.futures_venue, "")
         if not cfg:
-            print("未找到 venue 模板，请 --config 指定", file=sys.stderr)
+            print("Venue template not found, please specify --config", file=sys.stderr)
         else:
             cfg_path = Path(cfg)
             if not cfg_path.is_absolute():
@@ -688,7 +694,10 @@ def main() -> None:
             blockers = [b for b in plan.balances if not b.sufficient]
             if blockers:
                 names = ", ".join(f"{b.venue}(-{b.deficit_usd:.2f})" for b in blockers)
-                print(f"余额不足，拒绝实盘开仓: {names}", file=sys.stderr)
+                print(
+                    f"Insufficient balance, rejecting live open: {names}",
+                    file=sys.stderr,
+                )
                 sys.exit(2)
         result = open_cross_venue_position(
             r.base,
@@ -703,7 +712,7 @@ def main() -> None:
             print(f"    · {line}")
         if result.position_id:
             print(
-                f"    position_id={result.position_id}  (平仓: cross_venue_trade.py close {result.position_id})"
+                f"    position_id={result.position_id}  (close: cross_venue_trade.py close {result.position_id})"
             )
         sys.exit(0 if result.ok else 1)
 
