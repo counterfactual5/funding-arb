@@ -19,27 +19,23 @@ const strategy = getStrategy()
 const feeTiers = getFeeTiers()
 const resolvedFees = getResolvedFees()
 
-const SCAN_VENUE_OPTIONS = [
-  { label: 'Binance', value: 'binance' },
-  { label: 'Bitget', value: 'bitget' },
-  { label: 'Bybit', value: 'bybit' },
-  { label: 'OKX', value: 'okx' },
-  { label: 'Hyperliquid (DEX)', value: 'hyperliquid' },
-  { label: 'Aster (DEX)', value: 'aster' },
-  { label: 'Lighter (DEX)', value: 'lighter' },
-]
+const scanVenueOptions = computed(
+  () => (venues.data.value ?? []).map((v) => ({ label: v.name, value: v.id }))
+)
 
-const FEE_VENUE_ORDER = ['binance', 'bitget', 'bybit', 'okx', 'hyperliquid', 'aster', 'lighter']
+const FEE_VENUE_ORDER = computed(
+  () => (venues.data.value ?? []).map((v) => v.id)
+)
 
 const strategyForm = reactive({
-  min_spread_annual: 0.04,
-  min_edge_annual: 0.02,
-  max_mark_spread_pct: 1.0,
-  trade_usd: 5000,
-  max_positions: 3,
-  scan_interval_sec: 300,
-  scan_venues: ['binance', 'bitget', 'bybit', 'okx', 'hyperliquid'] as string[],
-  min_edge_1h: 0.01,
+  min_spread_annual: 0,
+  min_edge_annual: 0,
+  max_mark_spread_pct: 0,
+  trade_usd: 0,
+  max_positions: 0,
+  scan_interval_sec: 0,
+  scan_venues: [] as string[],
+  min_edge_1h: 0,
   fee_mode: 'auto' as 'auto' | 'api' | 'vip_tier',
   venue_fee_tiers: {} as Record<string, string>,
 })
@@ -59,7 +55,7 @@ function tierOptionsFor(venueId: string) {
 }
 
 function venueDisplayName(venueId: string): string {
-  return SCAN_VENUE_OPTIONS.find((v) => v.value === venueId)?.label ?? venueId
+  return scanVenueOptions.value.find((v) => v.value === venueId)?.label ?? venueId
 }
 
 function feeSourceLabel(source: string | undefined): string {

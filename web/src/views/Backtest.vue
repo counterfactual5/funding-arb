@@ -33,7 +33,6 @@ const maxPositions = ref<number>(3)
 const historyBases = ref<string>('')
 const historyDays = ref<number>(90)
 const historyVenues = ref<string[]>([])
-const selectedVenues = ref<string[]>([])
 const running = ref(false)
 const latestResult = ref<BacktestResult | null>(null)
 
