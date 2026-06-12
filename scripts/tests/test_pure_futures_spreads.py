@@ -70,6 +70,41 @@ def test_scan_spreads_basic_forward():
     assert fwd[0]["annual_apy_pct"] > 0
 
 
+def test_scan_spreads_breakeven_and_net_apy():
+    """Fee-amortized economics: breakeven hours + net APY (fees over 1 cycle)."""
+    by_base = {
+        "BTC": {
+            "bitget": {"symbol": "BTCUSDT", "rate_pct": 0.15, "interval_h": 8.0,
+                       "next_funding_ts": 100000000, "mark_price": 100000.0},
+            "binance": {"symbol": "BTCUSDT", "rate_pct": 0.03, "interval_h": 8.0,
+                        "next_funding_ts": 100000100, "mark_price": 100000.0},
+        },
+    }
+    fwd, _ = _scan(by_base, min_spread=0.01, min_edge=0.001)
+    row = fwd[0]
+    # spread 0.12%/8h → 0.015%/h ; round-trip fee 0.22% ; mark spread ~0
+    # breakeven ≈ 0.22 / 0.015 ≈ 14.7h
+    assert row["breakeven_hours"] is not None
+    assert 14.0 < row["breakeven_hours"] < 15.5
+    # net_apy = gross apy − one-time cost (≈ round-trip fee, mark ~0)
+    assert abs(row["net_apy_pct"] - (row["annual_apy_pct"] - row["round_trip_fee_pct"])) < 0.2
+
+
+def test_scan_spreads_breakeven_none_when_no_funding():
+    """Zero spread → no funding income → breakeven undefined (None)."""
+    by_base = {
+        "BTC": {
+            "bitget": {"symbol": "BTCUSDT", "rate_pct": 0.05, "interval_h": 8.0,
+                       "next_funding_ts": 100000000, "mark_price": 100000.0},
+            "binance": {"symbol": "BTCUSDT", "rate_pct": 0.05, "interval_h": 8.0,
+                        "next_funding_ts": 100000100, "mark_price": 100000.0},
+        },
+    }
+    fwd, rev = _scan(by_base, min_spread=0.0, min_edge=-999)
+    if fwd:
+        assert fwd[0]["breakeven_hours"] is None
+
+
 def test_scan_spreads_basic_reverse():
     """Both negative: short at less-negative (-0.01), long at more-negative (-0.08)."""
     by_base = {
