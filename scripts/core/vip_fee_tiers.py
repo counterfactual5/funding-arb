@@ -72,6 +72,9 @@ PERP_TIERS: dict[str, VenueTiers] = {
     "edgex": {
         "default": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.038},
     },
+    "dydx": {
+        "default": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.05},
+    },
 }
 
 ALL_VENUES = sorted(set(CEX_TIERS) | set(PERP_TIERS))

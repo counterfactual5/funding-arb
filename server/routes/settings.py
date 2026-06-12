@@ -81,6 +81,13 @@ VENUES = {
         "required_keys": [],  # scanning uses public V1 REST, no keys needed
         "trade_keys": ["EDGEX_ACCOUNT_ID", "EDGEX_TRADING_PRIVATE_KEY"],
     },
+    "dydx": {
+        "name": "dYdX v4",
+        "type": "dex",
+        "prefix": "DYDX_",
+        "required_keys": [],  # scan via public indexer; trading not wired yet
+        "trade_keys": [],
+    },
 }
 
 
@@ -114,6 +121,8 @@ def venue_trade_capability(venue_id: str) -> tuple[bool, str]:
         if find_spec("edgex_sdk") is not None:
             return True, ""
         return False, "edgex-python-sdk not installed (pip install edgex-python-sdk>=2.0.0)"
+    if v == "dydx":
+        return False, "scan-only; Cosmos wallet adapter not implemented"
     return False, f"unknown venue {v!r}"
 
 

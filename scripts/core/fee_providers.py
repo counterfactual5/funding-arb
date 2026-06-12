@@ -24,6 +24,7 @@ DEFAULT_TAKER_PCT: dict[str, float] = {
     "aster": 0.04,  # Aster perp taker VIP0 (0.04% per official docs)
     "lighter": 0.0,  # Lighter currently zero-fee (orderBookDetails taker_fee=0)
     "edgex": 0.038,  # EdgeX defaultTakerFeeRate=0.00038 (getMetaData)
+    "dydx": 0.05,  # dYdX v4 default taker ~5 bps (scan-only until wallet adapter)
 }
 
 DEFAULT_MAKER_PCT: dict[str, float] = {
@@ -35,6 +36,7 @@ DEFAULT_MAKER_PCT: dict[str, float] = {
     "aster": 0.0,  # Aster perp maker 0% per official docs
     "lighter": 0.0,
     "edgex": 0.0,
+    "dydx": 0.0,
 }
 
 # Spot VIP0 defaults (percentage points) — cash-and-carry spot leg
@@ -146,7 +148,7 @@ def _fetch_binance(symbol: str) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 
 # Venues whose real fees are fetchable from public endpoints (no API keys).
-_PUBLIC_FEE_VENUES = frozenset({"hyperliquid", "lighter", "edgex"})
+_PUBLIC_FEE_VENUES = frozenset({"hyperliquid", "lighter", "edgex", "dydx"})
 
 _HL_FEE_CACHE: tuple[float, dict[str, float]] | None = None
 _HL_FEE_TTL_SEC = 3600.0

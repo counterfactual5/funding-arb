@@ -33,6 +33,7 @@ VENUE_BASIS_CAP_PCT: dict[str, float] = {
     "hyperliquid": 0.50,
     "lighter": 0.50,
     "edgex": 0.30,
+    "dydx": 0.50,
 }
 DEFAULT_BASIS_CAP_PCT = 0.50
 

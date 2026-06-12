@@ -244,8 +244,8 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 
 const CEX_VENUES = ['binance', 'bitget', 'bybit', 'okx'] as const
-const PERP_DEX_VENUES = ['hyperliquid', 'aster', 'lighter', 'edgex'] as const
-const DEX_VENUES = new Set(['hyperliquid', 'aster', 'lighter', 'edgex'])
+const PERP_DEX_VENUES = ['hyperliquid', 'aster', 'lighter', 'edgex', 'dydx'] as const
+const DEX_VENUES = new Set(['hyperliquid', 'aster', 'lighter', 'edgex', 'dydx'])
 // Carry / Unified need spot + borrow — perp-only DEX venues are excluded server-side
 const CARRY_CAPABLE = new Set(['binance', 'bitget', 'bybit', 'okx'])
 

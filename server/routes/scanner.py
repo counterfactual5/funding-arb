@@ -71,7 +71,13 @@ CARRY_VENUES = ["binance", "bitget", "bybit", "okx"]
 # Pure futures: any venue with a funding provider. Defaults are CEX-only;
 # DEX venues (hyperliquid / aster / lighter / edgex) opt-in via venue selector.
 PURE_DEFAULT_VENUES = ["binance", "bitget", "bybit", "okx"]
-PURE_ALL_VENUES = PURE_DEFAULT_VENUES + ["hyperliquid", "aster", "lighter", "edgex"]
+PURE_ALL_VENUES = PURE_DEFAULT_VENUES + [
+    "hyperliquid",
+    "aster",
+    "lighter",
+    "edgex",
+    "dydx",
+]
 
 
 def _strategy_cfg() -> dict[str, Any]:
