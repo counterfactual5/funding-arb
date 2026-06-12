@@ -2,48 +2,76 @@
   <div class="scanner-page">
     <n-card class="table-card">
       <template #header>
-        <n-space align="center" style="width: 100%; justify-content: space-between;">
-          <n-text style="font-size: 16px; font-weight: 600;">{{ t('scanner.title') }}</n-text>
-          <n-radio-group :value="strategy" @update:value="onStrategyChange" size="small">
-            <n-radio-button value="pure">{{ t('scanner.pureFutures') }}</n-radio-button>
-            <n-radio-button value="carry">{{ t('scanner.cashAndCarry') }}</n-radio-button>
-            <n-radio-button value="unified">{{ t('scanner.unifiedCC') }}</n-radio-button>
-          </n-radio-group>
-        </n-space>
-      </template>
-      <template #header-extra>
-        <n-tag v-if="refreshing" size="small" type="info" :bordered="false">{{ t('scanner.scanningFromExchanges') }}</n-tag>
-        <n-tag v-else-if="lastScanLabel" size="small" type="success" :bordered="false">{{ lastScanLabel }}</n-tag>
-      </template>
+        <div class="filter-toolbar">
+          <!-- 第一行：标题 + 策略切换 | 状态 + 扫描按钮 -->
+          <div class="toolbar-row">
+            <n-text class="toolbar-title">{{ t('scanner.title') }}</n-text>
+            <n-radio-group :value="strategy" @update:value="onStrategyChange" size="small">
+              <n-radio-button value="pure">{{ t('scanner.pureFutures') }}</n-radio-button>
+              <n-radio-button value="carry">{{ t('scanner.cashAndCarry') }}</n-radio-button>
+              <n-radio-button value="unified">{{ t('scanner.unifiedCC') }}</n-radio-button>
+            </n-radio-group>
 
-      <n-space align="center" style="margin-bottom: 12px" wrap>
-        <n-button size="small" @click="handleTriggerScan" :loading="refreshing">
-          <template #icon><n-icon><SearchOutline /></n-icon></template>
-          {{ t('scanner.scanNow') }}
-        </n-button>
-        <n-button size="small" secondary @click="loadData">
-          <template #icon><n-icon><RefreshOutline /></n-icon></template>
-          {{ t('scanner.refresh') }}
-        </n-button>
-        <n-text depth="3" style="font-size:12px">{{ t('scanner.venues') }}</n-text>
-        <n-select
-          v-model:value="selectedVenues"
-          :options="venueOptions"
-          multiple
-          size="small"
-          style="min-width: 220px; max-width: 360px"
-          :placeholder="t('scanner.selectVenues')"
-        />
-        <template v-if="strategy === 'pure'">
-          <n-text depth="3" style="font-size:12px">{{ t('scanner.minNetEdge') }}</n-text>
-          <n-input-number v-model:value="minEdgeFilter" :min="0" :max="100" :step="0.05" size="small" style="width:100px"><template #suffix>%</template></n-input-number>
-          <n-radio-group v-model:value="intervalFilter" size="small">
-            <n-radio-button value="all">{{ t('scanner.all') }}</n-radio-button>
-            <n-radio-button value="same">{{ t('scanner.sameInterval') }}</n-radio-button>
-            <n-radio-button value="cross">{{ t('scanner.cross') }} ⚠</n-radio-button>
-          </n-radio-group>
-        </template>
-      </n-space>
+            <div class="toolbar-spacer" />
+
+            <n-tag v-if="refreshing" size="small" type="info" :bordered="false" class="status-tag">{{ t('scanner.scanningFromExchanges') }}</n-tag>
+            <n-tag v-else-if="lastScanLabel" size="small" type="success" :bordered="false" class="status-tag">{{ lastScanLabel }}</n-tag>
+            <n-button size="small" type="primary" ghost @click="handleTriggerScan" :loading="refreshing" class="action-btn">
+              <template #icon><n-icon size="14"><SearchOutline /></n-icon></template>
+              {{ t('scanner.scanNow') }}
+            </n-button>
+          </div>
+
+          <!-- 第二行：筛选条件（可换行） -->
+          <div class="toolbar-row toolbar-filters">
+            <div class="filter-group">
+              <n-text depth="3" class="filter-label">{{ t('scanner.venues') }}</n-text>
+              <n-select
+                :value="selectedVenues"
+                :options="venueOptions"
+                :render-label="renderVenueOptionLabel"
+                :render-tag="renderVenueTag"
+                :style="venueSelectStyle"
+                multiple
+                size="small"
+                class="venue-filter"
+                :placeholder="t('scanner.selectVenues')"
+                @update:value="handleVenuesChange"
+              />
+            </div>
+
+            <template v-if="strategy === 'pure'">
+              <div class="filter-group filter-group-bordered">
+                <n-text depth="3" class="filter-label">{{ t('scanner.minNetEdge') }}</n-text>
+                <n-input-number
+                  v-model:value="minEdgeFilter"
+                  :min="0"
+                  :max="100"
+                  :step="0.05"
+                  :show-button="false"
+                  size="small"
+                  class="edge-input"
+                  :style="edgeInputStyle"
+                  @input="onEdgeInput"
+                >
+                  <template #suffix>%</template>
+                </n-input-number>
+              </div>
+
+              <div class="filter-group filter-group-bordered">
+                <n-radio-group v-model:value="intervalFilter" size="small" class="interval-group">
+                  <n-radio-button value="all" class="interval-btn">{{ t('scanner.all') }}</n-radio-button>
+                  <n-radio-button value="same" class="interval-btn">{{ t('scanner.sameInterval') }}</n-radio-button>
+                  <n-radio-button value="cross" class="interval-btn">
+                    {{ t('scanner.cross') }}
+                    <span class="cross-badge">⚠</span>
+                  </n-radio-button>
+                </n-radio-group>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
 
       <n-spin :show="loading || refreshing">
         <!-- PURE FUTURES -->
@@ -148,15 +176,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, h } from 'vue'
-import { NCard, NGrid, NGi, NDataTable, NButton, NSpace, NText, NIcon, NSpin, NTag, NEmpty, NInputNumber, NRadioGroup, NRadioButton, NModal, NForm, NFormItem, NSwitch, NSelect, useMessage, type DataTableColumns, type SelectOption } from 'naive-ui'
-import { RefreshOutline, SearchOutline, TrendingUpOutline, FlashOutline, AnalyticsOutline } from '@vicons/ionicons5'
+import { ref, onMounted, onUnmounted, computed, h, watch } from 'vue'
+import { NCard, NGrid, NGi, NDataTable, NButton, NSpace, NText, NIcon, NSpin, NTag, NEmpty, NInputNumber, NRadioGroup, NRadioButton, NModal, NForm, NFormItem, NSwitch, NSelect, useMessage, type DataTableColumns, type SelectOption, type SelectGroupOption } from 'naive-ui'
+import { SearchOutline, TrendingUpOutline, FlashOutline, AnalyticsOutline } from '@vicons/ionicons5'
 import { post, useWebSocket, type ScannerOpportunities, type CarryVenue, type CarryCand, type UnifiedCarryCand, type WsMessage } from '@/composables/useApi'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 
-const ALL_VENUES = ['binance', 'bitget', 'bybit', 'okx', 'hyperliquid', 'aster', 'lighter', 'edgex'] as const
+const CEX_VENUES = ['binance', 'bitget', 'bybit', 'okx'] as const
+const PERP_DEX_VENUES = ['hyperliquid', 'aster', 'lighter', 'edgex'] as const
 const DEX_VENUES = new Set(['hyperliquid', 'aster', 'lighter', 'edgex'])
 // Carry / Unified need spot + borrow — perp-only DEX venues are excluded server-side
 const CARRY_CAPABLE = new Set(['binance', 'bitget', 'bybit', 'okx'])
@@ -176,12 +205,85 @@ const unifiedData = ref<UnifiedCarryCand[]>([])
 
 const minEdgeFilter = ref<number>(0)
 const intervalFilter = ref<'all' | 'same' | 'cross'>('all')
-const selectedVenues = ref<string[]>(['binance', 'bitget', 'bybit', 'okx', 'hyperliquid'])
-const venueOptions = computed<SelectOption[]>(() => ALL_VENUES.map((v) => ({
-  label: v.charAt(0).toUpperCase() + v.slice(1) + (DEX_VENUES.has(v) ? ' (DEX)' : ''),
-  value: v,
-  disabled: strategy.value !== 'pure' && !CARRY_CAPABLE.has(v),
-})))
+// Default to CEX only — DEX venues (hyperliquid/aster/lighter/edgex) are opt-in
+const selectedVenues = ref<string[]>(['binance', 'bitget', 'bybit', 'okx'])
+
+// Track raw input text so the width adapts while typing (e.g. "0." before it becomes a valid number)
+const edgeInputText = ref('0')
+
+function onEdgeInput(val: string | null) {
+  edgeInputText.value = val || '0'
+}
+
+// Keep text in sync when the value changes via +/- buttons or programmatic updates
+watch(minEdgeFilter, (v) => {
+  edgeInputText.value = (v ?? 0).toString()
+})
+
+// Adaptive width: ch units track digit count; no stepper buttons (show-button=false)
+// so the inner vertical divider cannot overlap the typed number.
+const edgeInputStyle = computed(() => {
+  const chars = Math.max(edgeInputText.value.length, 1)
+  const widthCh = chars + 3 // room for "%" suffix + padding
+  return {
+    width: `max(4.5rem, ${widthCh}ch)`,
+    minWidth: '4.5rem',
+    maxWidth: '12rem',
+  }
+})
+
+const venueOptions = computed<Array<SelectOption | SelectGroupOption>>(() => [
+  {
+    label: 'CEX',
+    type: 'group',
+    children: CEX_VENUES.map((v) => ({
+      label: v.charAt(0).toUpperCase() + v.slice(1),
+      value: v,
+      disabled: strategy.value !== 'pure' && !CARRY_CAPABLE.has(v),
+    })),
+  },
+  {
+    label: 'DEX',
+    type: 'group',
+    children: PERP_DEX_VENUES.map((v) => ({
+      label: v.charAt(0).toUpperCase() + v.slice(1),
+      value: v,
+      disabled: strategy.value !== 'pure' && !CARRY_CAPABLE.has(v),
+    })),
+  },
+])
+
+// Dynamically resize the venue select based on selected labels so every chip is visible and easy to close
+const venueSelectStyle = computed(() => {
+  const labels = selectedVenues.value.map((v) => v.charAt(0).toUpperCase() + v.slice(1))
+  const charW = 7 // approximate per-char width at 11px font
+  const chipW = labels.reduce((sum, l) => sum + l.length * charW + 32, 0) // 32 = close button + padding
+  const gap = Math.max(labels.length - 1, 0) * 4
+  const width = labels.length === 0 ? 180 : Math.min(560, Math.max(180, chipW + gap + 34)) // 34 = arrow + inner padding
+  return { width: `${width}px`, maxWidth: '100%' }
+})
+
+// Render option label inside the dropdown — group headers are styled differently
+function renderVenueOptionLabel(option: SelectOption | SelectGroupOption) {
+  if ('type' in option && option.type === 'group') {
+    return h('div', { class: 'venue-section-label' }, String(option.label))
+  }
+  return h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } }, [
+    option.label as string,
+    DEX_VENUES.has(option.value as string)
+      ? h('span', { class: 'dex-mini-tag' }, 'DEX')
+      : null,
+  ])
+}
+
+// Compact tag renderer for the selected chips in the input
+function renderVenueTag({ option, handleClose }: { option: SelectOption; handleClose: () => void }) {
+  const isDex = DEX_VENUES.has(option.value as string)
+  return h('div', { class: 'venue-chip' }, [
+    h('span', { class: isDex ? 'venue-chip-name dex' : 'venue-chip-name' }, option.label as string),
+    h('span', { class: 'venue-chip-close', onClick: handleClose }, '×'),
+  ])
+}
 
 async function loadStrategyVenues() {
   try {
@@ -192,6 +294,20 @@ async function loadStrategyVenues() {
       selectedVenues.value = venues
     }
   } catch { /* ignore */ }
+}
+
+let _venuesWatchTimer: ReturnType<typeof setTimeout> | null = null
+
+// Handles manual changes in the venue dropdown (both selection and removal of tags)
+function handleVenuesChange(val: string[]) {
+  selectedVenues.value = val
+
+  // Trigger auto-scan with the new selection (debounced)
+  if (refreshing.value) return
+  if (_venuesWatchTimer) clearTimeout(_venuesWatchTimer)
+  _venuesWatchTimer = setTimeout(() => {
+    handleTriggerScan()
+  }, 400)
 }
 
 // venue id → trade_capable (scan-only venues get a disabled Open button)
@@ -401,6 +517,10 @@ const pureRows = computed<PureRow[]>(() => {
     ...(d.forward || []).map((i) => toPureRow(i, 'Forward')),
     ...(d.reverse || []).map((i) => toPureRow(i, 'Reverse')),
   ]
+  // Filter by selected venues
+  const venues = selectedVenues.value
+  if (venues.length === 0) return []
+  all = all.filter((r) => venues.includes(r.long_venue) && venues.includes(r.short_venue))
   if (minEdgeFilter.value > 0) all = all.filter((r) => r.net_edge_pct >= minEdgeFilter.value)
   if (intervalFilter.value === 'same') all = all.filter((r) => !r.settle_mismatch)
   else if (intervalFilter.value === 'cross') all = all.filter((r) => r.settle_mismatch)
@@ -459,7 +579,11 @@ const pureColumns = computed<DataTableColumns<PureRow>>(() => [
 ])
 
 // ---- Cash & Carry ----
-const carryVenues = computed(() => carryData.value)
+const carryVenues = computed(() => {
+  const venues = selectedVenues.value
+  if (venues.length === 0) return []
+  return carryData.value.filter((v) => venues.includes(v.venue))
+})
 const carryTotalFwd = computed(() => carryVenues.value.reduce((s, v) => s + (v.forward?.length ?? 0), 0))
 const carryTotalRev = computed(() => carryVenues.value.reduce((s, v) => s + (v.reverse?.length ?? 0), 0))
 const carryStatCards = computed(() => [
@@ -480,7 +604,11 @@ const carryColumns = computed<DataTableColumns<CarryCand>>(() => [
 ])
 
 // ---- Unified C&C ----
-const unifiedRows = computed(() => unifiedData.value)
+const unifiedRows = computed(() => {
+  const venues = selectedVenues.value
+  if (venues.length === 0) return []
+  return unifiedData.value.filter((r) => venues.includes(r.futures_venue) && venues.includes(r.spot_venue))
+})
 const unifiedCrossVenue = computed(() => unifiedRows.value.filter((u) => !u.same_venue).length)
 const unifiedSameVenue = computed(() => unifiedRows.value.filter((u) => u.same_venue).length)
 const unifiedStatCards = computed(() => [
@@ -508,7 +636,10 @@ onMounted(() => {
   loadData()
   ws.connect()
 })
-onUnmounted(() => ws.disconnect())
+onUnmounted(() => {
+  ws.disconnect()
+  if (_venuesWatchTimer) clearTimeout(_venuesWatchTimer)
+})
 </script>
 
 <style scoped>
@@ -519,4 +650,226 @@ onUnmounted(() => ws.disconnect())
 .stat-info :deep(.n-text) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .table-card { flex: 1; min-height: 0; }
 .table-card :deep(.n-card__content) { padding: 16px 20px; }
+.table-card :deep(.n-card-header) { padding: 12px 20px; }
+
+/* ---- Filter toolbar layout ---- */
+.filter-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  row-gap: 8px;
+  flex-wrap: wrap;
+  min-height: 32px;
+}
+
+.toolbar-title {
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 把状态/按钮推到行尾；空间不足时允许换行而不是挤压 */
+.toolbar-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.status-tag {
+  flex-shrink: 0;
+  max-width: 260px;
+}
+.status-tag :deep(.n-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.45);
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  line-height: 1;
+}
+
+/* 用左边框代替竖线分隔符，避免 flex 换行时竖线叠在输入框上 */
+.filter-group-bordered {
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.action-btn {
+  font-weight: 500;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.action-btn :deep(.n-button) {
+  min-height: 32px;
+}
+
+/* ---- Venue select ---- */
+.venue-filter {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.venue-filter:hover {
+  border-color: rgba(24, 160, 88, 0.4) !important;
+}
+.venue-filter :deep(.n-base-selection) {
+  border-radius: 6px;
+  min-height: 32px;
+}
+/* Force single-line tags; don't let long names wrap the whole input */
+.venue-filter :deep(.n-base-selection-tags) {
+  flex-wrap: nowrap;
+  overflow: hidden;
+  gap: 3px;
+}
+.venue-filter :deep(.n-base-selection-tag-wrapper) {
+  flex-shrink: 0;
+}
+/* Hide the default tag border, use our own chip */
+.venue-filter :deep(.n-tag) {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  height: 22px !important;
+}
+
+/* Custom compact chip — width adapts to label length */
+:deep(.venue-chip) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 4px 0 8px;
+  border-radius: 4px;
+  background: rgba(24, 160, 88, 0.15);
+  border: 1px solid rgba(24, 160, 88, 0.3);
+  font-size: 11px;
+  line-height: 1;
+  color: #18a058;
+  white-space: nowrap;
+  overflow: visible;
+}
+:deep(.venue-chip-name) {
+  white-space: nowrap;
+}
+:deep(.venue-chip-name.dex) {
+  font-style: italic;
+  opacity: 0.9;
+}
+:deep(.venue-chip-close) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  font-size: 14px;
+  line-height: 1;
+  color: rgba(24, 160, 88, 0.6);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+:deep(.venue-chip-close:hover) {
+  background: rgba(24, 160, 88, 0.2);
+  color: #18a058;
+}
+
+/* DEX mini tag in dropdown options */
+:deep(.dex-mini-tag) {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  border-radius: 3px;
+  background: rgba(64, 158, 255, 0.15);
+  color: #409eff;
+  line-height: 1;
+}
+
+/* Edge input — width via ch units; show-button=false removes stepper divider */
+.edge-input {
+  flex-shrink: 0;
+}
+.edge-input :deep(.n-input__suffix) {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  padding-left: 2px;
+}
+.edge-input :deep(.n-input-wrapper) {
+  min-height: 32px;
+}
+.edge-input :deep(.n-input__input-el) {
+  min-width: 1.5ch;
+  text-align: left;
+}
+
+/* Interval radio group */
+.interval-group :deep(.n-radio-button) {
+  font-size: 12px;
+  padding: 0 12px;
+  line-height: 30px;
+  height: 32px;
+}
+.interval-group :deep(.n-radio-button--checked) {
+  font-weight: 500;
+}
+
+.cross-badge {
+  margin-left: 3px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* ---- Dropdown panel ---- */
+:deep(.n-base-select-menu) {
+  border-radius: 10px;
+  margin-top: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+:deep(.n-base-select-option) {
+  border-radius: 6px;
+  margin: 2px 4px;
+  padding: 8px 10px;
+  font-size: 13px;
+  transition: background-color 0.15s ease;
+}
+:deep(.n-base-select-option:hover) {
+  background-color: rgba(24, 160, 88, 0.08);
+}
+:deep(.n-base-select-option--selected) {
+  background-color: rgba(24, 160, 88, 0.15) !important;
+  color: #18a058 !important;
+  font-weight: 500;
+}
+
+/* Section divider inside the dropdown */
+.venue-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.35);
+  font-weight: 600;
+  padding: 4px 10px 2px;
+  pointer-events: none;
+}
 </style>

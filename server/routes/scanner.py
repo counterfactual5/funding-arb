@@ -59,7 +59,8 @@ _carry_results: list[dict[str, Any]] = []
 _carry_ts: float = 0.0
 _unified_results: list[dict[str, Any]] = []
 _unified_ts: float = 0.0
-_scanning = False
+# Per-strategy locks so a slow carry/unified scan never blocks pure (and vice versa)
+_scanning_strategies: set[str] = set()
 
 # ---------------------------------------------------------------------------
 # Strategy config helpers (thresholds + venues from Settings)
@@ -67,10 +68,10 @@ _scanning = False
 
 # Carry / Unified need spot + borrow → CEX only.
 CARRY_VENUES = ["binance", "bitget", "bybit", "okx"]
-# Pure futures: any venue with a funding provider. HL is a first-class citizen;
-# aster / lighter are available but off by default (enable via venue selector).
-PURE_DEFAULT_VENUES = ["binance", "bitget", "bybit", "okx", "hyperliquid"]
-PURE_ALL_VENUES = PURE_DEFAULT_VENUES + ["aster", "lighter", "edgex"]
+# Pure futures: any venue with a funding provider. Defaults are CEX-only;
+# DEX venues (hyperliquid / aster / lighter / edgex) opt-in via venue selector.
+PURE_DEFAULT_VENUES = ["binance", "bitget", "bybit", "okx"]
+PURE_ALL_VENUES = PURE_DEFAULT_VENUES + ["hyperliquid", "aster", "lighter", "edgex"]
 
 
 def _strategy_cfg() -> dict[str, Any]:
@@ -315,7 +316,7 @@ async def scanner_status(
 ):
     """Return current scanner status for the requested strategy."""
     live = False
-    scanning = _scanning
+    scanning = strategy in _scanning_strategies
     has_data = False
     last_ts = 0.0
 
@@ -406,13 +407,19 @@ async def scanner_trigger(
         _carry_results, \
         _carry_ts, \
         _unified_results, \
-        _unified_ts, \
-        _scanning
+        _unified_ts
 
-    if _scanning:
+    # When called directly from Python (background loop / scan-all) instead of
+    # via HTTP, unsupplied params arrive as FastAPI Query objects — normalize.
+    if not isinstance(strategy, str):
+        strategy = "pure"
+    if not isinstance(venues, str):
+        venues = None
+
+    if strategy in _scanning_strategies:
         return {"success": False, "error": "Scan already in progress"}
 
-    _scanning = True
+    _scanning_strategies.add(strategy)
     try:
         loop = asyncio.get_event_loop()
 
@@ -464,37 +471,37 @@ async def scanner_trigger(
                 if v in CARRY_VENUES
             ] or list(CARRY_VENUES)
 
+            def _scan_one_carry(v: str) -> dict[str, Any]:
+                try:
+                    r = _scan_carry_fn(
+                        venue=v,
+                        entry=min_spread,
+                        exit_rate=min_edge,
+                        universe_min=min_edge,
+                        max_workers=8,
+                        fee_policy=_fee_policy(),
+                    )
+                    # Simplify: keep only forward/reverse candidates + metadata
+                    return {
+                        "venue": v,
+                        "total_pairs": r.get("total_pairs", 0),
+                        "forward": r.get("forward_candidates", []),
+                        "reverse": r.get("reverse_candidates", []),
+                        "spot_fee_pct": r.get("spot_fee_pct", 0),
+                        "futures_fee_pct": r.get("futures_fee_pct", 0),
+                        "two_leg_fee_pct": r.get("two_leg_fee_pct", 0),
+                        "fee_source": r.get("fee_source"),
+                        "fee_tier": r.get("fee_tier"),
+                    }
+                except Exception as e:
+                    return {"venue": v, "error": str(e), "forward": [], "reverse": []}
+
             def _scan_all_carry() -> list[dict[str, Any]]:
-                results = []
-                for v in carry_venues:
-                    try:
-                        r = _scan_carry_fn(
-                            venue=v,
-                            entry=min_spread,
-                            exit_rate=min_edge,
-                            universe_min=min_edge,
-                            max_workers=8,
-                            fee_policy=_fee_policy(),
-                        )
-                        # Simplify: keep only forward/reverse candidates + metadata
-                        results.append(
-                            {
-                                "venue": v,
-                                "total_pairs": r.get("total_pairs", 0),
-                                "forward": r.get("forward_candidates", []),
-                                "reverse": r.get("reverse_candidates", []),
-                                "spot_fee_pct": r.get("spot_fee_pct", 0),
-                                "futures_fee_pct": r.get("futures_fee_pct", 0),
-                                "two_leg_fee_pct": r.get("two_leg_fee_pct", 0),
-                                "fee_source": r.get("fee_source"),
-                                "fee_tier": r.get("fee_tier"),
-                            }
-                        )
-                    except Exception as e:
-                        results.append(
-                            {"venue": v, "error": str(e), "forward": [], "reverse": []}
-                        )
-                return results
+                # Venues scan concurrently — each one already parallelizes its own IO
+                from concurrent.futures import ThreadPoolExecutor
+
+                with ThreadPoolExecutor(max_workers=len(carry_venues)) as pool:
+                    return list(pool.map(_scan_one_carry, carry_venues))
 
             result = await loop.run_in_executor(None, _scan_all_carry)
             _carry_results = result
@@ -553,7 +560,7 @@ async def scanner_trigger(
     except Exception as e:
         return {"success": False, "error": f"Scan failed: {e}"}
     finally:
-        _scanning = False
+        _scanning_strategies.discard(strategy)
 
 
 @router.post("/scanner/scan-all")

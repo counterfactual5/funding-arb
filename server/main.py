@@ -75,21 +75,40 @@ async def _background_scanner_loop() -> None:
     from server.routes.settings import _strategy_config  # noqa: E402
 
     if _scan_pure_fn is None:
-        print("[scanner] pure futures scanner unavailable, background loop disabled")
+        print(
+            "[scanner] pure futures scanner unavailable, background loop disabled",
+            flush=True,
+        )
         return
 
-    # Run an initial scan at startup so clients have data on first connect
-    try:
-        await scanner_trigger(strategy="pure")
-    except Exception as e:
-        print(f"[scanner] initial scan failed: {e}")
+    print("[scanner] background loop started", flush=True)
 
+    async def _warm(strategy: str) -> None:
+        try:
+            r = await scanner_trigger(strategy=strategy)
+            if not r.get("success"):
+                print(f"[scanner] {strategy} scan: {r.get('error')}", flush=True)
+        except Exception as e:
+            print(f"[scanner] {strategy} scan failed: {e}", flush=True)
+
+    # Run initial scans at startup so all three tabs have data on first connect.
+    # Pure first (fast, most viewed), then carry/unified warm up concurrently.
+    await _warm("pure")
+    warmup = asyncio.create_task(asyncio.gather(_warm("carry"), _warm("unified")))
+
+    cycle = 0
     while True:
         try:
             interval = int(_strategy_config.get("scan_interval_sec", 300) or 300)
             await asyncio.sleep(max(30, interval))
-            await scanner_trigger(strategy="pure")
+            await _warm("pure")
+            # Carry/unified are heavier — refresh them every other cycle
+            cycle += 1
+            if cycle % 2 == 0:
+                asyncio.create_task(_warm("carry"))
+                asyncio.create_task(_warm("unified"))
         except asyncio.CancelledError:
+            warmup.cancel()
             break
         except Exception as e:
             print(f"[scanner] background scan failed: {e}")
@@ -107,6 +126,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[credentials] ensure_env failed: {e}")
     task = asyncio.create_task(_background_scanner_loop())
+
+    def _log_task_crash(t: asyncio.Task) -> None:
+        if not t.cancelled() and t.exception() is not None:
+            print(f"[scanner] background loop crashed: {t.exception()!r}", flush=True)
+
+    task.add_done_callback(_log_task_crash)
     try:
         yield
     finally:

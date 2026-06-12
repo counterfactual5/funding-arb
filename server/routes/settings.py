@@ -205,7 +205,7 @@ _DEFAULT_STRATEGY: dict[str, Any] = {
     "trade_usd": 5000,
     "max_positions": 3,
     "scan_interval_sec": 300,
-    "scan_venues": ["binance", "bitget", "bybit", "okx", "hyperliquid"],
+    "scan_venues": ["binance", "bitget", "bybit", "okx"],
     "min_edge_1h": 0.01,
     "min_edge_mismatch": None,
     "fee_mode": "auto",
