@@ -6,5 +6,6 @@ keyring>=23.0  # macOS Keychain / Linux Secret Service (optional, recommended fo
 lighter-sdk>=1.0  # Lighter perp-DEX trading (scan works without it)
 edgex-python-sdk>=2.0.0  # EdgeX perp-DEX V2 trading (scan works without it)
 dydx-v4-client>=1.1.5  # dYdX v4 perp-DEX trading (scan works without it)
+hyperliquid-python-sdk>=0.22.0  # Hyperliquid perp-DEX trading (scan works without it)
 # Dev/testing dependencies below:
 pytest>=7.0

@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""Hyperliquid venue adapter for funding-arb pure futures execution.
+"""Hyperliquid perp-DEX venue adapter for funding-arb.
 
-Implements the subset of the CexVenue interface needed by
-pure_futures_executor.py.  Spot / margin / transfer methods use the
-Protocol's default no-op implementations.
+Implements the CexVenue interface subset used by pure_futures_executor /
+pure_futures_watcher.
 
-Read operations (prices, meta, funding) use direct HTTP POST to avoid
-the hyperliquid-python-sdk spot_meta IndexError bug on mainnet.
-Write operations (orders, leverage) reuse the hyperliquid skill's
-functions which handle trade-signer / local-key signing.
+Read path (prices, meta, funding) uses direct HTTP POST to avoid the
+hyperliquid-python-sdk spot_meta IndexError bug on mainnet.
+Write path (orders, leverage, positions) uses the hyperliquid-python-sdk
+with trade-signer or local-key signing.
+
+The SDK is optional: scanning and dry-run execution work without it.
+Live order placement raises a clear error if the SDK is not installed.
 """
 from __future__ import annotations
 
-import sys
+import os
 import time
 from decimal import Decimal
 from pathlib import Path
@@ -21,43 +23,192 @@ from typing import Any
 import requests
 
 # ---------------------------------------------------------------------------
-# Bootstrap: lazy import from the hyperliquid skill (write-path only).
-# Read paths (prices, meta, rules) work without the sibling repo, so the
-# adapter stays importable for scanning and dry-run execution.
+# SDK imports — optional, only needed for live order execution
 # ---------------------------------------------------------------------------
-_HL_DIR = (
-    Path(__file__).resolve().parent.parent.parent.parent / "hyperliquid" / "scripts"
-)
 
-_hl_skill_cache: dict[str, Any] | None = None
+_sdk_cache: dict[str, Any] | None = None
 
 
-def _hl_skill() -> dict[str, Any]:
-    """Import write-path functions from the sibling hyperliquid skill repo."""
-    global _hl_skill_cache
-    if _hl_skill_cache is not None:
-        return _hl_skill_cache
-    if str(_HL_DIR) not in sys.path:
-        sys.path.insert(0, str(_HL_DIR))
+def _get_sdk() -> dict[str, Any]:
+    """Lazy-load hyperliquid-python-sdk components for write-path."""
+    global _sdk_cache
+    if _sdk_cache is not None:
+        return _sdk_cache
     try:
-        from hyperliquid_order import (  # noqa: E402
-            get_account_value,
-            get_positions,
-            place_market_order,
-            set_leverage,
-        )
+        from hyperliquid.info import Info
+        from hyperliquid.exchange import Exchange
     except ImportError as e:
         raise RuntimeError(
-            f"Hyperliquid order signing requires the sibling repo at {_HL_DIR} "
-            "(clone the hyperliquid skill repo next to funding-arb)"
+            "Hyperliquid live execution requires 'hyperliquid-python-sdk'. "
+            "Install with: pip install hyperliquid-python-sdk"
         ) from e
-    _hl_skill_cache = {
-        "get_account_value": get_account_value,
-        "get_positions": get_positions,
-        "place_market_order": place_market_order,
-        "set_leverage": set_leverage,
-    }
-    return _hl_skill_cache
+    _sdk_cache = {"Info": Info, "Exchange": Exchange}
+    return _sdk_cache
+
+
+def _get_base_url() -> str:
+    """Return API URL based on HYPERLIQUID_TESTNET env var."""
+    if os.environ.get("HYPERLIQUID_TESTNET", "").strip() in ("1", "true", "yes"):
+        return "https://api.hyperliquid-testnet.xyz"
+    return "https://api.hyperliquid.xyz"
+
+
+def _get_wallet_address() -> str:
+    """Read wallet address from environment."""
+    env = os.environ.get
+    addr = (
+        env("HYPERLIQUID_WALLET_ADDRESS_MAINNET")
+        or env("HYPERLIQUID_WALLET_ADDRESS")
+        or env("HYPERLIQUID_WALLET_ADDRESS_TESTNET")
+        or ""
+    ).strip()
+    if addr and not addr.startswith("0x"):
+        addr = "0x" + addr
+    return addr
+
+
+def _make_info_client() -> Any:
+    """Create Info client with spot_meta workaround (avoids IndexError)."""
+    sdk = _get_sdk()
+    url = _get_base_url()
+    # Workaround: fetch spot_meta manually to fix token array misalignment
+    try:
+        spot_meta = requests.post(
+            f"{url}/info", json={"type": "spotMeta"}, timeout=15
+        ).json()
+        tokens = spot_meta.get("tokens", [])
+        if tokens:
+            max_index = max(t.get("index", 0) for t in tokens)
+            fixed = [None] * (max_index + 1)
+            for t in tokens:
+                idx = t.get("index", 0)
+                if idx < len(fixed):
+                    fixed[idx] = t
+            spot_meta = dict(spot_meta, tokens=fixed)
+        return sdk["Info"](url, skip_ws=True, spot_meta=spot_meta)
+    except Exception:
+        return sdk["Info"](url, skip_ws=True)
+
+
+def _make_exchange_client() -> Any:
+    """Create Exchange client with local key or trade-signer."""
+    sdk = _get_sdk()
+    url = _get_base_url()
+    wallet = _get_wallet_address()
+    if not wallet:
+        raise RuntimeError(
+            "HYPERLIQUID_WALLET_ADDRESS not set. "
+            "Set it in .env or environment."
+        )
+    key = (os.environ.get("HYPERLIQUID_PRIVATE_KEY") or "").strip()
+    if key:
+        if not key.startswith("0x"):
+            key = "0x" + key
+        return sdk["Exchange"](url, wallet=wallet, account=wallet, secret=key)
+    # Try trade-signer
+    signer_url = os.environ.get("TRADE_SIGNER_URL", "").strip()
+    if signer_url:
+        return _make_exchange_with_tradesigner(url, wallet, signer_url)
+    raise RuntimeError(
+        "Hyperliquid signing requires HYPERLIQUID_PRIVATE_KEY or "
+        "TRADE_SIGNER_URL to be set."
+    )
+
+
+def _make_exchange_with_tradesigner(
+    base_url: str, wallet: str, signer_url: str
+) -> Any:
+    """Create Exchange client that delegates signing to trade-signer."""
+    import hyperliquid.utils.signing as hl_signing
+
+    sdk = _get_sdk()
+    api_token = os.environ.get("TRADE_SIGNER_API_TOKEN", "")
+
+    # Monkey-patch sign_inner to redirect to trade-signer
+    _original_sign = hl_signing.sign_inner
+
+    def _patched_sign(wallet_obj: Any, data: dict[str, Any]) -> dict[str, str]:
+        import json as _json
+
+        import requests as _requests
+
+        domain = data.get("domain", {})
+        types = data.get("types", {})
+        primary_type = data.get("primaryType", "")
+        message = data.get("message", {})
+        payload = {
+            "context": {
+                "service": "hyperliquid",
+                "chain": "arbitrum",
+                "tokenIn": "USDC",
+                "tokenOut": "USDC",
+                "amount": "1000000",
+                "kind": "hyperliquid_perp_order",
+                "domain": domain,
+            },
+            "typedData": {
+                "domain": domain,
+                "types": types,
+                "primaryType": primary_type,
+                "message": message,
+            },
+        }
+        headers = {"Content-Type": "application/json"}
+        if api_token:
+            headers["Authorization"] = f"Bearer {api_token}"
+        resp = _requests.post(
+            f"{signer_url}/sign-typed-data",
+            json=payload,
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code == 403:
+            raise PermissionError(f"trade-signer denied: {resp.json()}")
+        if resp.status_code != 200:
+            raise RuntimeError(f"trade-signer error: {resp.status_code} {resp.text}")
+        result = resp.json()
+        return {"r": result["r"], "s": result["s"], "v": result["v"]}
+
+    hl_signing.sign_inner = _patched_sign
+
+    class _DummyWallet:
+        def __init__(self, address: str):
+            self._address = address.lower()
+
+        @property
+        def address(self) -> str:
+            return self._address
+
+        @property
+        def key(self) -> str:
+            return self._address
+
+    return sdk["Exchange"](_DummyWallet(wallet), base_url)
+
+
+# ---------------------------------------------------------------------------
+# Load .env.local if present (mirrors hyperliquid skill's pattern)
+# ---------------------------------------------------------------------------
+
+
+def _load_env() -> None:
+    env_path = (
+        Path(__file__).resolve().parent.parent.parent / ".env.local"
+    )
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip("\"'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_env()
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -65,12 +216,11 @@ def _hl_skill() -> dict[str, Any]:
 
 _BASE_URL = "https://api.hyperliquid.xyz"
 
-# Trade type → buy/sell direction mapping for Hyperliquid
 _DIRECTION_MAP: dict[str, bool] = {
-    "open_long": True,    # buy  = go long
-    "close_long": False,  # sell = close long
-    "open_short": False,  # sell = go short
-    "close_short": True,  # buy  = close short
+    "open_long": True,
+    "close_long": False,
+    "open_short": False,
+    "close_short": True,
 }
 
 
@@ -78,19 +228,17 @@ _DIRECTION_MAP: dict[str, bool] = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _coin_from_pair(pair: str) -> str:
-    """CEX pair → HL coin name.  'BTCUSDT' → 'BTC'."""
     s = pair.upper()
     return s[:-4] if s.endswith("USDT") else s
 
 
 def _pair_from_coin(coin: str) -> str:
-    """HL coin name → CEX pair.  'BTC' → 'BTCUSDT'."""
     return f"{coin.upper()}USDT"
 
 
 def _info_post(body: dict[str, Any]) -> Any:
-    """Direct HTTP POST to Hyperliquid Info endpoint (bypasses SDK bugs)."""
     r = requests.post(f"{_BASE_URL}/info", json=body, timeout=20)
     r.raise_for_status()
     return r.json()
@@ -100,11 +248,12 @@ def _info_post(body: dict[str, Any]) -> Any:
 # Venue implementation
 # ---------------------------------------------------------------------------
 
+
 class HyperliquidVenue:
     """Hyperliquid perp-DEX adapter — pure futures only (no spot).
 
-    Read path: direct HTTP (avoids SDK spot_meta IndexError on mainnet).
-    Write path: reuses hyperliquid skill functions (trade-signer support).
+    Read path: direct HTTP (no SDK needed).
+    Write path: hyperliquid-python-sdk (lazy-loaded, optional for dry-run).
     """
 
     venue_id: str = "hyperliquid"
@@ -114,17 +263,15 @@ class HyperliquidVenue:
         self._meta_cache: dict[str, Any] | None = None
         self._leverage_set: set[str] = set()
 
-    # ── meta cache (shared by ticker + rules) ───────────────────────
+    # ── meta cache ─────────────────────────────────────────────────────
 
     def _get_meta(self) -> dict[str, Any]:
-        """Cached universe metadata from metaAndAssetCtxs."""
         if self._meta_cache is not None:
             return self._meta_cache
         try:
             data = _info_post({"type": "metaAndAssetCtxs"})
             if isinstance(data, list) and len(data) >= 2:
                 universe = data[0].get("universe", [])
-                # Build name → {szDecimals, ...} map
                 meta = {}
                 for entry in universe:
                     name = str(entry.get("name", "")).upper()
@@ -136,10 +283,9 @@ class HyperliquidVenue:
             pass
         return {}
 
-    # ── market data ────────────────────────────────────────────────────
+    # ── market data (HTTP, no SDK) ────────────────────────────────────
 
     def get_futures_ticker(self, pair: str) -> float:
-        """Return mid price for a coin via all_mids HTTP endpoint."""
         coin = _coin_from_pair(pair)
         try:
             mids = _info_post({"type": "allMids"})
@@ -152,13 +298,11 @@ class HyperliquidVenue:
         return 0.0
 
     def get_ticker(self, pair: str) -> float:
-        """Same as get_futures_ticker (HL is perps-only)."""
         return self.get_futures_ticker(pair)
 
     def fetch_futures_symbol_rules(
         self, pair: str, cache_sec: int = 3600
     ) -> dict[str, Any] | None:
-        """Return quantity precision and min-trade info from HL meta."""
         coin = _coin_from_pair(pair).upper()
         if coin in self._rules_cache:
             return self._rules_cache[coin]
@@ -169,7 +313,7 @@ class HyperliquidVenue:
             "symbol": pair,
             "quantity_precision": sz_dec,
             "quote_precision": 2,
-            "min_trade_usdt": 10.0,  # HL minimum ~$10
+            "min_trade_usdt": 10.0,
             "min_trade_base": 0.0,
         }
         self._rules_cache[coin] = rules
@@ -180,66 +324,65 @@ class HyperliquidVenue:
     ) -> dict[str, Any] | None:
         return self.fetch_futures_symbol_rules(pair, cache_sec)
 
-    # ── account / positions ────────────────────────────────────────────
+    # ── account / positions (SDK) ─────────────────────────────────────
 
     def fetch_usdt_account_balances(self) -> dict[str, float]:
-        """Return {'spot': 0, 'futures': <USDC_account_value>}.
-
-        HL uses USDC margin, but the numeric value is compatible with
-        margin checks (USDC ≈ USDT 1:1).
-        """
         try:
-            acct = _hl_skill()["get_account_value"]()
-            val = float(acct.get("totalAccountValue", 0) or 0)
+            info = _make_info_client()
+            wallet = _get_wallet_address()
+            if not wallet:
+                return {"spot": 0.0, "futures": 0.0}
+            state = info.user_state(wallet)
+            margin = state.get("marginSummary", {})
+            val = float(margin.get("accountValue", 0) or 0)
             return {"spot": 0.0, "futures": val}
         except Exception:
             return {"spot": 0.0, "futures": 0.0}
 
     def fetch_futures_positions(self, quote: str = "USDT") -> list[dict[str, Any]]:
-        """Return standardised position list.
-
-        Output: [{symbol, side, qty, entry_price, liq_price, leverage, unrealized_pnl}]
-        """
         try:
-            raw_positions = _hl_skill()["get_positions"]()
+            info = _make_info_client()
+            wallet = _get_wallet_address()
+            if not wallet:
+                return []
+            state = info.user_state(wallet)
+            positions = []
+            for p in state.get("assetPositions", []):
+                pos = p.get("position", {})
+                szi = str(pos.get("szi", "0"))
+                try:
+                    size = float(Decimal(szi))
+                except Exception:
+                    continue
+                if size == 0:
+                    continue
+                coin = str(pos.get("coin", ""))
+                side = "long" if size > 0 else "short"
+                positions.append({
+                    "symbol": _pair_from_coin(coin),
+                    "side": side,
+                    "qty": abs(size),
+                    "entry_price": float(pos.get("entryPx", 0) or 0),
+                    "liq_price": float(pos.get("liquidationPx", 0) or 0),
+                    "leverage": float(p.get("leverage", {}).get("value", 1) or 1),
+                    "unrealized_pnl": float(pos.get("unrealizedPnl", 0) or 0),
+                })
+            return positions
         except Exception:
             return []
-        out: list[dict[str, Any]] = []
-        for p in raw_positions:
-            coin = str(p.get("coin", ""))
-            if not coin:
-                continue
-            size_str = str(p.get("size", "0"))
-            try:
-                size = float(Decimal(size_str))
-            except Exception:
-                continue
-            if size == 0:
-                continue
-            side = "long" if size > 0 else "short"
-            out.append({
-                "symbol": _pair_from_coin(coin),
-                "side": side,
-                "qty": abs(size),
-                "entry_price": float(p.get("entryPrice", 0) or 0),
-                "liq_price": float(p.get("liquidationPrice", 0) or 0),
-                "leverage": float(p.get("leverage", 1) or 1),
-                "unrealized_pnl": float(p.get("unrealizedPnl", 0) or 0),
-            })
-        return out
 
-    # ── setup ──────────────────────────────────────────────────────────
+    # ── setup (SDK) ───────────────────────────────────────────────────
 
     def initialize_futures_symbol(self, pair: str) -> None:
-        """Set 1× cross margin leverage for a coin (idempotent)."""
         coin = _coin_from_pair(pair)
         if coin in self._leverage_set:
             return
         try:
-            _hl_skill()["set_leverage"](coin=coin, leverage=1, is_cross=True)
+            exchange = _make_exchange_client()
+            exchange.leverage_update(coin=coin, leverage=1, is_cross=True)
             self._leverage_set.add(coin)
         except Exception:
-            pass  # Non-fatal: executor catches failures downstream
+            pass
 
     # ── execution ──────────────────────────────────────────────────────
 
@@ -249,14 +392,6 @@ class HyperliquidVenue:
         market: dict[str, dict[str, Any]],
         dry_run: bool,
     ) -> list[dict[str, Any]]:
-        """Execute pure-futures trades via Hyperliquid.
-
-        Trade type mapping:
-            open_long   → place_market_order(is_buy=True)
-            open_short  → place_market_order(is_buy=False)
-            close_long  → place_market_order(is_buy=False)
-            close_short → place_market_order(is_buy=True)
-        """
         results: list[dict[str, Any]] = []
         for trade in trades:
             symbol = trade["symbol"]
@@ -279,7 +414,7 @@ class HyperliquidVenue:
                 results.append(record)
                 continue
 
-            # Live execution
+            # Live execution via SDK
             is_buy = _DIRECTION_MAP.get(typ)
             if is_buy is None:
                 record["status"] = "failed"
@@ -293,28 +428,41 @@ class HyperliquidVenue:
             submit_ts = time.time()
 
             try:
-                res = _hl_skill()["place_market_order"](
+                exchange = _make_exchange_client()
+                info = _make_info_client()
+                # Get mid price for slippage calc
+                all_mids = info.all_mids()
+                mid = Decimal(str(all_mids[coin]))
+                slippage_dec = Decimal("0.01")
+                if is_buy:
+                    limit_px = mid * (1 + slippage_dec)
+                else:
+                    limit_px = mid * (1 - slippage_dec)
+
+                result = exchange.order(
                     coin=coin,
                     is_buy=is_buy,
-                    size=size,
-                    slippage=0.01,
+                    sz=size,
+                    limit_px=float(limit_px),
+                    order_type={"limit": {"tif": "IOC"}},
                 )
                 fill_ts = time.time()
                 latency_ms = round((fill_ts - submit_ts) * 1000)
-                status_str = str(res.get("status", ""))
+
+                status_str = str(result.get("status", ""))
                 if status_str == "ok":
-                    fill_price = float(res.get("price", ref_price))
-                    slippage = (
+                    fill_price = float(limit_px)
+                    slippage_val = (
                         round((fill_price - ref_price) / ref_price, 6)
                         if ref_price and fill_price
                         else 0.0
                     )
                     record["status"] = "filled"
-                    record["order_id"] = None  # HL doesn't return simple oid
+                    record["order_id"] = None
                     record["exec_price"] = fill_price
                     record["exec_qty"] = size
                     record["exec_quote_usd"] = round(size * fill_price, 4)
-                    record["slippage"] = slippage
+                    record["slippage"] = slippage_val
                     record["latency_ms"] = latency_ms
                     record["error"] = None
                 else:

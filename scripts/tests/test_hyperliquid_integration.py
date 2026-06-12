@@ -331,33 +331,41 @@ class TestHyperliquidVenue:
             results = v.execute_trades(trades, market, dry_run=True)
             assert results[0]["status"] == "simulated", f"{typ} should simulate"
 
-    @patch("venues.hyperliquid._hl_skill")
-    def test_fetch_futures_positions_format(self, mock_skill):
-        raw_positions = [
-            {
-                "coin": "BTC",
-                "size": "0.5",
-                "entryPrice": "60000.0",
-                "unrealizedPnl": "100.0",
-                "leverage": "1",
-                "marginUsed": "30000.0",
-                "liquidationPrice": "0.0",
-            },
-            {
-                "coin": "ETH",
-                "size": "-2.0",
-                "entryPrice": "3000.0",
-                "unrealizedPnl": "-50.0",
-                "leverage": "1",
-                "marginUsed": "6000.0",
-                "liquidationPrice": "5000.0",
-            },
-        ]
-        mock_skill.return_value = {"get_positions": lambda: raw_positions}
-        from venues.hyperliquid import HyperliquidVenue
+    @patch("venues.hyperliquid._make_info_client")
+    def test_fetch_futures_positions_format(self, mock_info):
+        # Mock the SDK Info client's user_state response
+        mock_client = MagicMock()
+        mock_client.user_state.return_value = {
+            "assetPositions": [
+                {
+                    "position": {
+                        "coin": "BTC",
+                        "szi": "0.5",
+                        "entryPx": "60000.0",
+                        "unrealizedPnl": "100.0",
+                        "liquidationPx": "0.0",
+                    },
+                    "leverage": {"value": "1"},
+                },
+                {
+                    "position": {
+                        "coin": "ETH",
+                        "szi": "-2.0",
+                        "entryPx": "3000.0",
+                        "unrealizedPnl": "-50.0",
+                        "liquidationPx": "5000.0",
+                    },
+                    "leverage": {"value": "1"},
+                },
+            ]
+        }
+        mock_info.return_value = mock_client
+        # Mock wallet address
+        with patch("venues.hyperliquid._get_wallet_address", return_value="0xabc"):
+            from venues.hyperliquid import HyperliquidVenue
 
-        v = HyperliquidVenue()
-        positions = v.fetch_futures_positions()
+            v = HyperliquidVenue()
+            positions = v.fetch_futures_positions()
 
         assert len(positions) == 2
         btc = next(p for p in positions if p["symbol"] == "BTCUSDT")
@@ -370,18 +378,21 @@ class TestHyperliquidVenue:
         assert eth["qty"] == 2.0
         assert eth["liq_price"] == 5000.0
 
-    @patch("venues.hyperliquid._hl_skill")
-    def test_fetch_usdt_account_balances(self, mock_skill):
-        mock_skill.return_value = {
-            "get_account_value": lambda: {
-                "totalAccountValue": "5000.0",
+    @patch("venues.hyperliquid._make_info_client")
+    def test_fetch_usdt_account_balances(self, mock_info):
+        mock_client = MagicMock()
+        mock_client.user_state.return_value = {
+            "marginSummary": {
+                "accountValue": "5000.0",
                 "totalMarginUsed": "1000.0",
             }
         }
-        from venues.hyperliquid import HyperliquidVenue
+        mock_info.return_value = mock_client
+        with patch("venues.hyperliquid._get_wallet_address", return_value="0xabc"):
+            from venues.hyperliquid import HyperliquidVenue
 
-        v = HyperliquidVenue()
-        bal = v.fetch_usdt_account_balances()
+            v = HyperliquidVenue()
+            bal = v.fetch_usdt_account_balances()
         assert bal["spot"] == 0.0
         assert bal["futures"] == 5000.0
 
