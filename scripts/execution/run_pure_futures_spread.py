@@ -24,6 +24,13 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from cli.scan_pure_futures_spreads import scan_pure_futures_spreads  # noqa: E402
+from core.strategy_config import (  # noqa: E402
+    apply_strategy_to_pure_futures_cfg,
+    load_strategy_config,
+    min_edge_for_row_factory,
+    strategy_edge_thresholds,
+    strategy_fee_policy,
+)
 from execution.pure_futures_executor import (  # noqa: E402
     close_pure_futures_pair,
     load_pure_futures_positions,
@@ -84,6 +91,8 @@ def _open_positions() -> list[dict[str, Any]]:
 
 
 def run_once(cfg: dict[str, Any], *, verbose: bool = False) -> dict[str, Any]:
+    cfg = apply_strategy_to_pure_futures_cfg(cfg)
+    strat = load_strategy_config()
     pfa = cfg.get("pureFuturesArbitrage") or {}
     venues = [
         str(v).lower() for v in pfa.get("venues", ["binance", "bitget", "bybit", "okx"])
@@ -97,6 +106,9 @@ def run_once(cfg: dict[str, Any], *, verbose: bool = False) -> dict[str, Any]:
     allow_mismatch = bool(pfa.get("allowSettleMismatch", False))
     workers = int(pfa.get("workers", 4))
     dry_run = _dry_run(cfg)
+    min_edge, min_edge_1h, min_edge_mismatch = strategy_edge_thresholds(strat)
+    row_min_edge = min_edge_for_row_factory(min_edge, min_edge_1h, min_edge_mismatch)
+    fee_policy = strategy_fee_policy(strat)
 
     # Use relaxed thresholds to ensure held positions are visible even if below entry threshold, for exit decisions.
     scan = scan_pure_futures_spreads(
@@ -105,6 +117,7 @@ def run_once(cfg: dict[str, Any], *, verbose: bool = False) -> dict[str, Any]:
         min_edge=-999.0,
         max_mark_spread_pct=max_mark_spread,
         workers=workers,
+        fee_policy=fee_policy,
     )
     all_rows = list(scan.get("forward", [])) + list(scan.get("reverse", []))
     row_by_key = {_candidate_key(r): r for r in all_rows}
@@ -140,7 +153,7 @@ def run_once(cfg: dict[str, Any], *, verbose: bool = False) -> dict[str, Any]:
     for row in all_rows:
         if float(row.get("spread_pct", 0.0) or 0.0) < min_spread:
             continue
-        if float(row.get("net_edge_pct", 0.0) or 0.0) < min_edge:
+        if float(row.get("net_edge_pct", 0.0) or 0.0) < row_min_edge(row):
             continue
         key = _candidate_key(row)
         if key in active_keys:
@@ -153,6 +166,7 @@ def run_once(cfg: dict[str, Any], *, verbose: bool = False) -> dict[str, Any]:
         allow_mismatch=allow_mismatch,
         max_cumulative_outflow_pct=0.5,
         min_adjusted_edge_pct=min_edge,
+        min_edge_for_row=row_min_edge,
     )
 
     candidates.sort(
@@ -193,8 +207,11 @@ def run_once(cfg: dict[str, Any], *, verbose: bool = False) -> dict[str, Any]:
         "thresholds": {
             "minSpreadPct": min_spread,
             "minNetEdgePct": min_edge,
+            "minEdge1h": min_edge_1h,
+            "minEdgeMismatch": min_edge_mismatch,
             "exitThresholdPct": exit_edge,
             "allowSettleMismatch": allow_mismatch,
+            "feePolicy": fee_policy,
         },
     }
     _append_jsonl(JOURNAL_PATH, summary)
@@ -215,7 +232,7 @@ def main() -> int:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    cfg = _load_json(args.config)
+    cfg = apply_strategy_to_pure_futures_cfg(_load_json(args.config))
     if not args.once and not args.watch:
         args.once = True
 

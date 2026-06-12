@@ -188,52 +188,12 @@ class StrategyParams(BaseModel):
 # ---------------------------------------------------------------------------
 # Strategy config, persisted to scripts/data/strategy_config.json
 # ---------------------------------------------------------------------------
-import json
-from pathlib import Path
-
-_CONFIG_PATH = (
-    Path(__file__).resolve().parent.parent.parent
-    / "scripts"
-    / "data"
-    / "strategy_config.json"
+from core.strategy_config import (  # noqa: E402
+    DEFAULT_STRATEGY as _DEFAULT_STRATEGY,
+    STRATEGY_CONFIG_PATH as _CONFIG_PATH,
+    load_strategy_config as _load_strategy_config,
+    save_strategy_config as _save_strategy_config,
 )
-
-_DEFAULT_STRATEGY: dict[str, Any] = {
-    "min_spread_annual": 0.04,
-    "min_edge_annual": 0.02,
-    "max_mark_spread_pct": 1.0,
-    "trade_usd": 5000,
-    "max_positions": 3,
-    "scan_interval_sec": 300,
-    "scan_venues": ["binance", "bitget", "bybit", "okx"],
-    "min_edge_1h": 0.01,
-    "min_edge_mismatch": None,
-    "fee_mode": "auto",
-    "venue_fee_tiers": {},
-}
-
-
-def _load_strategy_config() -> dict[str, Any]:
-    cfg = dict(_DEFAULT_STRATEGY)
-    try:
-        if _CONFIG_PATH.exists():
-            saved = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-            if isinstance(saved, dict):
-                cfg.update({k: v for k, v in saved.items() if k in _DEFAULT_STRATEGY})
-    except Exception:
-        pass
-    return cfg
-
-
-def _save_strategy_config(cfg: dict[str, Any]) -> None:
-    try:
-        _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _CONFIG_PATH.write_text(
-            json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-    except Exception:
-        pass
-
 
 _strategy_config: dict[str, Any] = _load_strategy_config()
 

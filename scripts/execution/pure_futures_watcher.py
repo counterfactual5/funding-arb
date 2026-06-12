@@ -36,6 +36,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from cli.scan_pure_futures_spreads import fetch_all_fee_rate_rows_by_base  # noqa: E402
 from core.notify import send_notification  # noqa: E402
+from core.strategy_config import apply_strategy_to_pure_futures_cfg  # noqa: E402
 from execution.pure_futures_executor import (  # noqa: E402
     close_pure_futures_leg,
     close_pure_futures_pair,
@@ -703,7 +704,9 @@ def main() -> int:
     args = parser.parse_args()
 
     cfg_path = Path(args.config)
-    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg = apply_strategy_to_pure_futures_cfg(
+        json.loads(cfg_path.read_text(encoding="utf-8"))
+    )
 
     # Determine dry-run: explicit flag > env > config
     if args.dry_run:

@@ -277,6 +277,7 @@ def filter_candidates_with_mismatch(
     allow_mismatch: bool = False,
     max_cumulative_outflow_pct: float = 0.5,
     min_adjusted_edge_pct: float = 0.0,
+    min_edge_for_row: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Filter settle-mismatch candidates from scan results and add analysis data.
 
@@ -315,7 +316,12 @@ def filter_candidates_with_mismatch(
             continue
         if analysis.max_cumulative_outflow_pct > max_cumulative_outflow_pct:
             continue
-        if analysis.adjusted_net_edge_pct < min_adjusted_edge_pct:
+        row_min = (
+            float(min_edge_for_row(row))
+            if min_edge_for_row is not None
+            else min_adjusted_edge_pct
+        )
+        if analysis.adjusted_net_edge_pct < row_min:
             continue
 
         # Add analysis data to the row

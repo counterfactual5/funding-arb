@@ -422,15 +422,21 @@ def _run_executor(config_path: Path, verbose: bool) -> int:
 def _run_pure_futures_mode(args: argparse.Namespace) -> None:
     """--pure-futures mode: scan perp spreads → optional open → optional watcher start."""
     from cli.scan_pure_futures_spreads import scan_pure_futures_spreads  # noqa: E402
+    from core.strategy_config import (  # noqa: E402
+        apply_strategy_to_pure_futures_cfg,
+        load_strategy_config,
+        min_edge_for_row_factory,
+        strategy_edge_thresholds,
+        strategy_fee_policy,
+    )
     from execution.pure_futures_executor import open_pure_futures_pair  # noqa: E402
     from execution.settle_mismatch_planner import (  # noqa: E402
         effective_trade_usd,
         filter_candidates_with_mismatch,
     )
 
-    venues = [v.strip().lower() for v in args.venues.split(",") if v.strip()]
-    min_spread = float(getattr(args, "pf_min_spread", 0.05))
-    min_edge = float(getattr(args, "pf_min_edge", 0.01))
+    strat = load_strategy_config()
+    cli_venues = [v.strip().lower() for v in args.venues.split(",") if v.strip()]
 
     # Load config for pure-futures if available
     cfg: dict[str, Any] = {}
@@ -442,11 +448,20 @@ def _run_pure_futures_mode(args: argparse.Namespace) -> None:
         if default_cfg.exists():
             cfg = json.loads(default_cfg.read_text(encoding="utf-8"))
 
+    cfg = apply_strategy_to_pure_futures_cfg(cfg)
     pfa = cfg.get("pureFuturesArbitrage") or {}
-    if not args.config:
-        # Allow CLI flags to override config
-        pfa.setdefault("venues", venues)
-        pfa.setdefault("tradeUsdPerPair", args.trade_usd)
+    if cli_venues:
+        pfa["venues"] = cli_venues
+        cfg = {**cfg, "pureFuturesArbitrage": pfa}
+    if args.trade_usd:
+        pfa["tradeUsdPerPair"] = float(args.trade_usd)
+        cfg = {**cfg, "pureFuturesArbitrage": pfa}
+
+    venues = [str(v).lower() for v in pfa.get("venues", cli_venues or DEFAULT_VENUES)]
+    min_spread = float(pfa.get("minSpreadPct", strat.get("min_spread_annual", 0.04)))
+    min_edge, min_edge_1h, min_edge_mismatch = strategy_edge_thresholds(strat)
+    row_min_edge = min_edge_for_row_factory(min_edge, min_edge_1h, min_edge_mismatch)
+    fee_policy = strategy_fee_policy(strat)
 
     trade_usd = float(pfa.get("tradeUsdPerPair", args.trade_usd))
     max_pairs = int(pfa.get("maxConcurrentPairs", 3))
@@ -456,12 +471,16 @@ def _run_pure_futures_mode(args: argparse.Namespace) -> None:
 
     t0 = time.time()
     print(f"Scanning {len(venues)} venues for pure-futures spreads...", file=sys.stderr)
+    scan_loose_edge = min_edge
+    if min_edge_1h is not None:
+        scan_loose_edge = min(min_edge, min_edge_1h)
     scan = scan_pure_futures_spreads(
         venues=venues,
         min_spread=min_spread,
-        min_edge=min_edge,
+        min_edge=scan_loose_edge,
         max_mark_spread_pct=max_mark_spread,
         workers=args.workers,
+        fee_policy=fee_policy,
     )
     elapsed = time.time() - t0
     print(f"Scan done in {elapsed:.1f}s", file=sys.stderr)
@@ -475,11 +494,17 @@ def _run_pure_futures_mode(args: argparse.Namespace) -> None:
     # Run executor: open top-N pairs
     if args.run_executor:
         all_rows = list(scan.get("forward", [])) + list(scan.get("reverse", []))
+        candidates = [
+            r
+            for r in all_rows
+            if float(r.get("net_edge_pct", 0) or 0) >= row_min_edge(r)
+        ]
         candidates = filter_candidates_with_mismatch(
-            all_rows,
+            candidates,
             allow_mismatch=allow_mismatch,
             max_cumulative_outflow_pct=0.5,
             min_adjusted_edge_pct=min_edge,
+            min_edge_for_row=row_min_edge,
         )
         candidates.sort(
             key=lambda x: (

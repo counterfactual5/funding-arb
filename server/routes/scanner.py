@@ -291,22 +291,10 @@ def _row_edge_threshold(
     min_edge_1h: float | None,
     min_edge_mismatch: float | None,
 ) -> float:
-    """Per-row net-edge bar by settlement-interval group.
+    """Per-row net-edge bar by settlement-interval group."""
+    from core.strategy_config import row_edge_threshold  # noqa: E402
 
-    Precedence:
-      both legs ≤1h        → min_edge_1h   (fast turnover, lower bar)
-      legs differ (mismatch) → min_edge_mismatch (timing risk, higher bar)
-      same interval, >1h   → min_edge      (baseline)
-    """
-    long_h = float(row.get("long_interval_h", 8) or 8)
-    short_h = float(row.get("short_interval_h", 8) or 8)
-    if min_edge_1h is not None and long_h <= 1.0 and short_h <= 1.0:
-        return min_edge_1h
-    if min_edge_mismatch is not None and (
-        row.get("settle_mismatch") or abs(long_h - short_h) > 0.5
-    ):
-        return min_edge_mismatch
-    return min_edge
+    return row_edge_threshold(row, min_edge, min_edge_1h, min_edge_mismatch)
 
 
 def _apply_group_thresholds(
