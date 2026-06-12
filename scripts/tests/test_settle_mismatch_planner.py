@@ -144,3 +144,22 @@ def test_effective_trade_usd_no_buffer():
 def test_effective_trade_usd_with_buffer():
     row = {"capital_buffer_pct": 0.5}
     assert effective_trade_usd(5000.0, row) == 4975.0
+
+
+def test_mismatch_uses_scanner_net_edge_when_provided():
+    """Planner should not re-derive edge from linear rates when net_edge_pct is given."""
+    a = analyze_settle_mismatch(
+        base="BTC",
+        long_venue="binance",
+        short_venue="hyperliquid",
+        long_rate_pct=0.08,
+        short_rate_pct=0.04,
+        long_interval_h=8.0,
+        short_interval_h=1.0,
+        total_fee_pct=0.11,
+        net_edge_pct=0.20,
+    )
+    assert a.is_mismatch is True
+    # 0.20 - penalty (max_cumulative * 0.3); penalty > 0 for 1h vs 8h
+    assert a.adjusted_net_edge_pct < 0.20
+    assert a.adjusted_net_edge_pct > 0.20 - 0.11

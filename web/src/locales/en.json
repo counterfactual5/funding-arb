@@ -27,9 +27,31 @@
         "desc": "Scan, trade, backtest command reference",
         "tag": "CLI"
       },
+      "fundingBasics": {
+        "title": "Funding Rate Basics",
+        "desc": "Funding mechanics, delta-neutral hedging, strategy map",
+        "tag": "Basics"
+      },
+      "cashAndCarry": {
+        "title": "Forward & Reverse Cash & Carry",
+        "desc": "Spot+perp hedge, borrow reverse, thresholds"
+      },
+      "unifiedCarry": {
+        "title": "Unified Cross-Venue Carry",
+        "desc": "Split-leg routing and transfer costs"
+      },
+      "pureFutures": {
+        "title": "Pure Futures Spread",
+        "desc": "Perp-perp rate differential, net / real edge"
+      },
       "crossInterval": {
         "title": "Cross-Interval Funding Arbitrage",
         "desc": "Basis blend, real_edge, and implementation"
+      },
+      "feesAndEdge": {
+        "title": "Fees & Edge Calculation",
+        "desc": "fee_mode, VIP tiers, and edge fields",
+        "tag": "Reference"
       }
     }
   },
@@ -55,6 +77,9 @@
     "sameInterval": "Same Interval",
     "cross": "Cross",
     "crossIntervalDocs": "Cross-interval model",
+    "scanOnlyStrategy": "Scan-only in the dashboard — use the CLI to open positions.",
+    "strategyDocsLink": "Algorithm docs",
+    "columnDocsLink": "Docs",
     "scannedPairs": "Scanned Pairs",
     "opportunities": "Opportunities",
     "genuineArb": "Genuine Arb",

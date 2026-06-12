@@ -27,9 +27,31 @@
         "desc": "掃描、交易、回測命令速查",
         "tag": "CLI"
       },
+      "fundingBasics": {
+        "title": "資金費率基礎",
+        "desc": "費率機制、Delta 中性與策略總覽",
+        "tag": "基礎"
+      },
+      "cashAndCarry": {
+        "title": "正向與反向 Cash & Carry",
+        "desc": "現貨+永續對沖、借幣反向與門檻"
+      },
+      "unifiedCarry": {
+        "title": "Unified 跨所套利",
+        "desc": "兩腿拆所路由與轉帳成本"
+      },
+      "pureFutures": {
+        "title": "Pure Futures 永續套利",
+        "desc": "雙永續費率差、net / real edge"
+      },
       "crossInterval": {
         "title": "跨週期資金費率套利",
         "desc": "basis blend、real_edge 與程式實作"
+      },
+      "feesAndEdge": {
+        "title": "費率與邊際計算",
+        "desc": "fee_mode、VIP 等級與各類邊際欄位",
+        "tag": "參考"
       }
     }
   },
@@ -55,6 +77,9 @@
     "sameInterval": "同週期",
     "cross": "跨週期",
     "crossIntervalDocs": "跨週期演算法說明",
+    "scanOnlyStrategy": "本策略僅掃描展示，開倉請使用 CLI。",
+    "strategyDocsLink": "查看演算法說明",
+    "columnDocsLink": "文件",
     "scannedPairs": "掃描交易對",
     "opportunities": "套利機會",
     "genuineArb": "真實套利",

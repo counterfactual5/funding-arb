@@ -63,7 +63,7 @@ graph LR
     D --> F[WebSocket scanner updates]
 ```
 
-**Dashboard pages:** Scanner · Positions · Backtest · Settings  
+**Dashboard pages:** Scanner · Positions · Backtest · Docs · Settings  
 
 **Scanner highlights:**
 - Three strategy tabs with background warm-up for pure / carry / unified
@@ -211,7 +211,9 @@ Strategy JSON: `scripts/data/strategy_config.json` (also editable in Settings UI
 ```
 funding-arb/
 ├── docs/
-│   └── cross-interval-funding-model.md   # Cross-interval basis-blend model
+│   ├── README.md                         # Doc index (zh-CN / en / zh-TW)
+│   ├── zh-CN/ en/ zh-TW/                 # Strategy & algorithm docs (from web UI)
+│   └── cross-interval-funding-model.md   # Legacy cross-interval reference
 ├── plans/
 │   └── edgex-integration-plan.md
 ├── templates/                 # Strategy config templates
@@ -251,10 +253,18 @@ pip install -r requirements.txt   # or: bash setup.sh
 
 | Doc | Contents |
 |-----|----------|
-| [`docs/cross-interval-funding-model.md`](docs/cross-interval-funding-model.md) | Basis-blend funding model for mismatched settlement intervals |
+| [`docs/README.md`](docs/README.md) | **Algorithm docs index** — zh-CN / en / zh-TW (funding basics, C&C, Pure Futures, fees, cross-interval) |
+| [`docs/cross-interval-funding-model.md`](docs/cross-interval-funding-model.md) | Cross-interval basis-blend model (legacy path; synced copy: `docs/zh-CN/cross-interval.md`) |
 | [`SKILL.md`](SKILL.md) | CLI-first workflow for AI agents (`@SKILL.md` in Cursor) |
 | [`ROADMAP.md`](ROADMAP.md) | Shipped features, Perp DEX status, planned work |
 | [`plans/edgex-integration-plan.md`](plans/edgex-integration-plan.md) | EdgeX scan + trade integration notes |
+
+In-app **Docs** page mirrors `docs/{locale}/`. After editing `web/src/content/docs/articles/*.ts`, regenerate Markdown:
+
+```bash
+.venv/bin/python scripts/tools/gen_zh_tw_docs.py   # zh-TW sections
+npx tsx scripts/tools/export_docs_md.mts           # docs/zh-CN, en, zh-TW
+```
 
 ---
 

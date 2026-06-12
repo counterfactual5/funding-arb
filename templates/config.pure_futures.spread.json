@@ -32,6 +32,9 @@
     "depthCheckFailOpen": false,
     "_depthNote": "depthCheckFailOpen=false blocks opens when the order book fetch fails (recommended for thin DEX books)",
 
+    "parallelLegs": true,
+    "_parallelLegsNote": "open/close both perp legs concurrently to reduce mark_spread skew",
+
     "workers": 4
   }
 }

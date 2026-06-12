@@ -143,3 +143,80 @@ def spread_source_for_pair(
     if long_meta.get("used_basis") or short_meta.get("used_basis"):
         return "basis_blend"
     return "rate_linear"
+
+
+def leg_info_from_fields(
+    *,
+    rate_pct: float,
+    interval_h: float,
+    mark_price: float = 0.0,
+    index_price: float = 0.0,
+    next_funding_ts: int = 0,
+    last_settle_ts: int = 0,
+    symbol: str = "",
+) -> dict[str, Any]:
+    """Normalize per-leg funding fields into the dict expected by blended_hourly_rate."""
+    info: dict[str, Any] = {
+        "rate_pct": rate_pct,
+        "interval_h": interval_h,
+        "mark_price": mark_price,
+        "index_price": index_price,
+        "next_funding_ts": next_funding_ts,
+        "symbol": symbol,
+    }
+    if last_settle_ts > 0:
+        info["last_settle_ts"] = last_settle_ts
+    elif next_funding_ts > 0 and interval_h > 0:
+        info["last_settle_ts"] = infer_last_settle_ts(next_funding_ts, interval_h)
+    return info
+
+
+def pair_pure_futures_spread(
+    *,
+    long_rate_pct: float,
+    long_interval_h: float,
+    long_info: dict[str, Any],
+    long_venue: str,
+    short_rate_pct: float,
+    short_interval_h: float,
+    short_info: dict[str, Any],
+    short_venue: str,
+    now_ms: int,
+) -> dict[str, Any]:
+    """Compute perp-perp funding spread using the same model as the scanner.
+
+    Returns spread_pct over eff_interval (= min interval), hourly rates, blend
+    metadata, and spread_source.
+    """
+    is_mismatch = abs(long_interval_h - short_interval_h) > 0.5
+    long_rate_hourly, long_blend = blended_hourly_rate(
+        long_rate_pct,
+        long_interval_h,
+        long_info,
+        now_ms=now_ms,
+        venue=long_venue,
+        use_basis_blend=is_mismatch,
+    )
+    short_rate_hourly, short_blend = blended_hourly_rate(
+        short_rate_pct,
+        short_interval_h,
+        short_info,
+        now_ms=now_ms,
+        venue=short_venue,
+        use_basis_blend=is_mismatch,
+    )
+    eff_interval = min(long_interval_h, short_interval_h)
+    spread_pct = (short_rate_hourly - long_rate_hourly) * eff_interval
+    return {
+        "spread_pct": spread_pct,
+        "is_mismatch": is_mismatch,
+        "eff_interval_h": eff_interval,
+        "long_rate_hourly": long_rate_hourly,
+        "short_rate_hourly": short_rate_hourly,
+        "long_rate_per_8h_pct": long_rate_hourly * 8.0,
+        "short_rate_per_8h_pct": short_rate_hourly * 8.0,
+        "spread_per_8h_pct": abs(short_rate_hourly * 8.0 - long_rate_hourly * 8.0),
+        "long_blend": long_blend,
+        "short_blend": short_blend,
+        "spread_source": spread_source_for_pair(is_mismatch, long_blend, short_blend),
+    }

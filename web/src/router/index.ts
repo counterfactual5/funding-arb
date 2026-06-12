@@ -3,8 +3,6 @@ import Scanner from "@/views/Scanner.vue";
 import Positions from "@/views/Positions.vue";
 import Backtest from "@/views/Backtest.vue";
 import Settings from "@/views/Settings.vue";
-import Docs from "@/views/Docs.vue";
-
 const routes = [
   {
     path: "/",
@@ -32,12 +30,12 @@ const routes = [
   },
   {
     path: "/docs",
-    redirect: "/docs/cross-interval",
+    redirect: "/docs/readme",
   },
   {
     path: "/docs/:slug",
     name: "Docs",
-    component: Docs,
+    component: () => import("@/views/Docs.vue"),
     meta: { titleKey: "menu.docs" },
   },
 ];

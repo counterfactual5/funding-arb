@@ -1,5 +1,7 @@
 # 跨周期资金费套利模型
 
+> **同步副本：** 与前端 Docs 同步的版本见 [`zh-CN/cross-interval.md`](./zh-CN/cross-interval.md)（英文 / 繁中：`docs/en/cross-interval.md`、`docs/zh-TW/cross-interval.md`）。本文档保留原路径以便旧链接兼容；内容以 `web/src/content/docs/articles/crossInterval.ts` 为准，可用 `npx tsx scripts/tools/export_docs_md.mts` 重新导出。
+
 本文档描述 **Pure Futures（永续对永续）** 策略中，当两条腿的 **资金费结算周期不同** 时，如何估算可比较的 funding spread 与净边际。
 
 典型场景：Hyperliquid **1h** 结算 vs Binance/OKX **8h** 结算，或 Bitget **2h** vs Binance **8h**。

@@ -14,8 +14,11 @@ This module:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
+
+from core.cross_interval_funding import pair_pure_futures_spread
 
 
 @dataclass
@@ -65,6 +68,32 @@ class MismatchAnalysis:
         }
 
 
+def _leg_info_from_row(row: dict[str, Any], side: str) -> dict[str, Any]:
+    """Build leg info dict from a scanner/backtest row."""
+    prefix = "long_" if side == "long" else "short_"
+    interval_h = float(row.get(f"{prefix}interval_h", 8) or 8)
+    next_ts = int(
+        row.get(f"{side}_settle_ms", 0)
+        or row.get(f"{prefix}next_funding_ts", 0)
+        or row.get("next_funding_ts", 0)
+        or 0
+    )
+    info: dict[str, Any] = {
+        "rate_pct": float(row.get(f"{prefix}rate_pct", 0) or 0),
+        "interval_h": interval_h,
+        "mark_price": float(
+            row.get(f"{prefix}mark")
+            or row.get(f"{prefix}mark_price", 0)
+            or 0
+        ),
+        "index_price": float(row.get(f"{prefix}index_price", 0) or 0),
+        "next_funding_ts": next_ts,
+        "last_settle_ts": int(row.get(f"{prefix}last_settle_ts", 0) or 0),
+        "symbol": str(row.get("symbol") or f"{row.get('base', '')}USDT"),
+    }
+    return info
+
+
 def analyze_settle_mismatch(
     base: str,
     long_venue: str,
@@ -77,6 +106,10 @@ def analyze_settle_mismatch(
     *,
     max_spread_tolerance_pct: float = 0.5,
     min_periods_for_viable: int = 3,
+    now_ms: int | None = None,
+    long_leg_info: dict[str, Any] | None = None,
+    short_leg_info: dict[str, Any] | None = None,
+    net_edge_pct: float | None = None,
 ) -> MismatchAnalysis:
     """Analyze the actual return and risk of settlement period mismatches.
 
@@ -92,15 +125,32 @@ def analyze_settle_mismatch(
         min_periods_for_viable: Require at least N short periods of expected holding to be viable
     """
     is_mismatch = abs(long_interval_h - short_interval_h) > 0.5
+    ts = now_ms if now_ms is not None else int(time.time() * 1000)
 
-    # Normalize to 8h window
-    long_rate_per_8h = (
-        long_rate_pct * (8.0 / long_interval_h) if long_interval_h > 0 else 0.0
-    )
-    short_rate_per_8h = (
-        short_rate_pct * (8.0 / short_interval_h) if short_interval_h > 0 else 0.0
-    )
-    spread_per_8h = abs(short_rate_per_8h - long_rate_per_8h)
+    # Rate normalization: use basis blend when leg snapshots are available
+    if long_leg_info is not None and short_leg_info is not None:
+        spread_model = pair_pure_futures_spread(
+            long_rate_pct=long_rate_pct,
+            long_interval_h=long_interval_h,
+            long_info=long_leg_info,
+            long_venue=long_venue,
+            short_rate_pct=short_rate_pct,
+            short_interval_h=short_interval_h,
+            short_info=short_leg_info,
+            short_venue=short_venue,
+            now_ms=ts,
+        )
+        long_rate_per_8h = spread_model["long_rate_per_8h_pct"]
+        short_rate_per_8h = spread_model["short_rate_per_8h_pct"]
+        spread_per_8h = spread_model["spread_per_8h_pct"]
+    else:
+        long_rate_per_8h = (
+            long_rate_pct * (8.0 / long_interval_h) if long_interval_h > 0 else 0.0
+        )
+        short_rate_per_8h = (
+            short_rate_pct * (8.0 / short_interval_h) if short_interval_h > 0 else 0.0
+        )
+        spread_per_8h = abs(short_rate_per_8h - long_rate_per_8h)
 
     if not is_mismatch:
         # No mismatch, use raw data directly
@@ -162,10 +212,12 @@ def analyze_settle_mismatch(
         per_settlement_rate = short_rate_pct
         max_cumulative = abs(per_settlement_rate) * (settlements_in_longer - 1)
 
-    # Adjusted net edge: account for potential costs from mismatch
-    # Conservative estimate: deduct a portion of max cumulative outflow (assuming spread won't fully reverse)
+    # Adjusted net edge: prefer scanner-computed net_edge when provided (already basis-blended)
     spread_gap_penalty = max_cumulative * 0.3  # 30% buffer for timing risk
-    adjusted_net = spread_per_8h - total_fee_pct - spread_gap_penalty
+    if net_edge_pct is not None:
+        adjusted_net = float(net_edge_pct) - spread_gap_penalty
+    else:
+        adjusted_net = spread_per_8h - total_fee_pct - spread_gap_penalty
 
     # Capital buffer: recommend reserving funds to cover cash flow mismatch
     capital_buffer = max_cumulative * 0.5  # Reserve 50% of max cumulative outflow
@@ -252,6 +304,11 @@ def filter_candidates_with_mismatch(
             long_interval_h=float(row.get("long_interval_h", 8)),
             short_interval_h=float(row.get("short_interval_h", 8)),
             total_fee_pct=float(row.get("fee_pct", 0.11)),
+            net_edge_pct=float(row.get("net_edge_pct"))
+            if row.get("net_edge_pct") is not None
+            else None,
+            long_leg_info=_leg_info_from_row(row, "long"),
+            short_leg_info=_leg_info_from_row(row, "short"),
         )
 
         if not analysis.viable:

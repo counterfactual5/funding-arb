@@ -42,7 +42,10 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from execution.settle_mismatch_planner import analyze_settle_mismatch  # noqa: E402
+from execution.settle_mismatch_planner import (  # noqa: E402
+    _leg_info_from_row,
+    analyze_settle_mismatch,
+)
 
 
 @dataclass
@@ -314,6 +317,11 @@ def run_backtest(
                     long_interval_h=float(row.get("long_interval_h", 8) or 8),
                     short_interval_h=float(row.get("short_interval_h", 8) or 8),
                     total_fee_pct=float(row.get("fee_pct", 0.11) or 0.11),
+                    net_edge_pct=float(row.get("net_edge_pct"))
+                    if row.get("net_edge_pct") is not None
+                    else None,
+                    long_leg_info=_leg_info_from_row(row, "long"),
+                    short_leg_info=_leg_info_from_row(row, "short"),
                 )
                 if not analysis.viable:
                     continue

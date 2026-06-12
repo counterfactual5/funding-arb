@@ -15,6 +15,7 @@ from core.cross_interval_funding import (
     basis_pct,
     blended_hourly_rate,
     infer_last_settle_ts,
+    pair_pure_futures_spread,
     settle_progress,
     spread_source_for_pair,
 )
@@ -127,3 +128,53 @@ def test_spread_source_labels():
         == "basis_blend"
     )
     assert spread_source_for_pair(True, {}, {}) == "rate_linear"
+
+
+def test_pair_pure_futures_spread_same_interval():
+    model = pair_pure_futures_spread(
+        long_rate_pct=0.02,
+        long_interval_h=8.0,
+        long_info={"mark_price": 100, "index_price": 100, "next_funding_ts": 0},
+        long_venue="binance",
+        short_rate_pct=0.10,
+        short_interval_h=8.0,
+        short_info={"mark_price": 100, "index_price": 100, "next_funding_ts": 0},
+        short_venue="okx",
+        now_ms=1_000_000,
+    )
+    assert model["is_mismatch"] is False
+    assert abs(model["spread_pct"] - 0.08) < 1e-9
+    assert model["spread_source"] == "rate"
+
+
+def test_pair_pure_futures_spread_mismatch_uses_basis():
+    now_ms = 2_000_000_000
+    interval_h = 1.0
+    last = now_ms - int(0.9 * interval_h * 3600 * 1000)
+    hl_info = {
+        "mark_price": 100_300.0,
+        "index_price": 100_000.0,
+        "next_funding_ts": last + int(interval_h * 3600 * 1000),
+        "last_settle_ts": last,
+    }
+    cex_info = {
+        "mark_price": 100_050.0,
+        "index_price": 100_000.0,
+        "next_funding_ts": last + int(8 * 3600 * 1000),
+        "last_settle_ts": last,
+    }
+    linear_spread = (0.04 / 1.0 - 0.08 / 8.0) * 1.0
+    model = pair_pure_futures_spread(
+        long_rate_pct=0.08,
+        long_interval_h=8.0,
+        long_info=cex_info,
+        long_venue="binance",
+        short_rate_pct=0.04,
+        short_interval_h=1.0,
+        short_info=hl_info,
+        short_venue="hyperliquid",
+        now_ms=now_ms,
+    )
+    assert model["is_mismatch"] is True
+    assert model["spread_source"] == "basis_blend"
+    assert model["spread_pct"] > linear_spread

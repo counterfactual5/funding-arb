@@ -28,6 +28,7 @@ from core.fee_providers import (
     taker_fee_pct,
     venue_uses_api,
 )
+from core.cross_interval_funding import infer_last_settle_ts, pair_pure_futures_spread
 from market.parallel_fetch import run_io_parallel
 
 Direction = Literal["forward", "reverse"]
@@ -83,6 +84,8 @@ class VenueLeg:
     interval_h: float
     next_funding_ts: int
     mark_price: float
+    index_price: float = 0.0
+    last_settle_ts: int = 0
     has_spot: bool = False
     spot_price: float = 0.0
     borrowable: bool = False
@@ -193,6 +196,37 @@ class UnifiedFundingPool:
             fee_cache=self.fee_cache or None,
         )
 
+    def _pure_spread_pair(
+        self, long_l: VenueLeg, short_l: VenueLeg, *, now_ms: int | None = None
+    ) -> dict[str, Any]:
+        """Perp-perp spread using the same basis-blend model as the scanner."""
+        import time
+
+        ts = now_ms if now_ms is not None else int(time.time() * 1000)
+
+        def _info(leg: VenueLeg) -> dict[str, Any]:
+            return {
+                "rate_pct": leg.rate_pct,
+                "interval_h": leg.interval_h,
+                "mark_price": leg.mark_price,
+                "index_price": leg.index_price,
+                "next_funding_ts": leg.next_funding_ts,
+                "last_settle_ts": leg.last_settle_ts,
+                "symbol": leg.symbol,
+            }
+
+        return pair_pure_futures_spread(
+            long_rate_pct=long_l.rate_pct,
+            long_interval_h=long_l.interval_h,
+            long_info=_info(long_l),
+            long_venue=long_l.venue,
+            short_rate_pct=short_l.rate_pct,
+            short_interval_h=short_l.interval_h,
+            short_info=_info(short_l),
+            short_venue=short_l.venue,
+            now_ms=ts,
+        )
+
     def _apply_transfer_cost(self, route: CrossRoute) -> CrossRoute:
         """Add USDT transfer cost to cross-venue routes (estimated at reference_trade_usd)."""
         if route.same_venue or self.reference_trade_usd <= 0:
@@ -234,15 +268,19 @@ class UnifiedFundingPool:
                 base = sym[:-4]
                 if not base or base in BLACKLIST:
                     continue
+                next_ts = int(row.get("next_funding_ts", 0) or 0)
+                interval_h = float(imap.get(sym, 8.0))
                 legs.append(
                     VenueLeg(
                         venue=venue,
                         base=base,
                         symbol=sym,
                         rate_pct=float(row["rate_pct"]),
-                        interval_h=float(imap.get(sym, 8.0)),
-                        next_funding_ts=int(row.get("next_funding_ts", 0) or 0),
+                        interval_h=interval_h,
+                        next_funding_ts=next_ts,
                         mark_price=float(row.get("mark_price", 0) or 0),
+                        index_price=float(row.get("index_price", 0) or 0),
+                        last_settle_ts=infer_last_settle_ts(next_ts, interval_h),
                     )
                 )
             return venue, legs
@@ -526,7 +564,8 @@ class UnifiedFundingPool:
                 else:
                     long_l, short_l = long_leg, short_leg
 
-                spread = short_l.rate_pct - long_l.rate_pct
+                model = self._pure_spread_pair(long_l, short_l)
+                spread = float(model["spread_pct"])
                 if spread <= min_spread_pct:
                     continue
 
@@ -535,8 +574,8 @@ class UnifiedFundingPool:
                 if net_edge <= 0:
                     continue
 
-                interval_h = max(long_l.interval_h, short_l.interval_h)
-                annual = (net_edge / 100.0) * (24.0 / interval_h) * 365.0 * 100.0
+                eff_interval = float(model["eff_interval_h"])
+                annual = (net_edge / 100.0) * (24.0 / eff_interval) * 365.0 * 100.0
 
                 if best is None or net_edge > best["net_edge_pct"]:
                     best = {
@@ -551,6 +590,8 @@ class UnifiedFundingPool:
                         "annual_pct": round(annual, 1),
                         "long_interval_h": long_l.interval_h,
                         "short_interval_h": short_l.interval_h,
+                        "settle_mismatch": model["is_mismatch"],
+                        "spread_source": model["spread_source"],
                         "long_mark_price": long_l.mark_price,
                         "short_mark_price": short_l.mark_price,
                         "next_funding_ts": max(
@@ -577,15 +618,16 @@ class UnifiedFundingPool:
                 else:
                     long_l, short_l = long_leg, short_leg
 
-                spread = short_l.rate_pct - long_l.rate_pct
+                model = self._pure_spread_pair(long_l, short_l)
+                spread = float(model["spread_pct"])
                 _, _, fee = self._pair_open_fee_pct(long_l, short_l)
                 net_edge = spread - fee
 
                 if net_edge <= 0:
                     continue
 
-                interval_h = max(long_l.interval_h, short_l.interval_h)
-                annual = (net_edge / 100.0) * (24.0 / interval_h) * 365.0 * 100.0
+                eff_interval = float(model["eff_interval_h"])
+                annual = (net_edge / 100.0) * (24.0 / eff_interval) * 365.0 * 100.0
 
                 pairs.append(
                     {
@@ -600,6 +642,8 @@ class UnifiedFundingPool:
                         "annual_pct": round(annual, 1),
                         "long_interval_h": long_l.interval_h,
                         "short_interval_h": short_l.interval_h,
+                        "settle_mismatch": model["is_mismatch"],
+                        "spread_source": model["spread_source"],
                         "long_mark_price": long_l.mark_price,
                         "short_mark_price": short_l.mark_price,
                         "next_funding_ts": max(

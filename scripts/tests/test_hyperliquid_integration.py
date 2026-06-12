@@ -517,11 +517,12 @@ class TestExecutorWithHyperliquid:
             long_venue=lv,
             short_venue=sv,
             positions_path=path,
+            config={"parallelLegs": False},
         )
 
         assert not result.ok
         assert result.state == "aborted"
-        # Short venue should not have received any trades
+        # Short venue should not have received any trades (sequential mode)
         assert len(sv.trades) == 0
 
 

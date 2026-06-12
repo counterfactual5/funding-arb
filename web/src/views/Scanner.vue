@@ -147,6 +147,10 @@
 
         <!-- CASH & CARRY -->
         <template v-if="strategy === 'carry'">
+          <n-alert type="info" :bordered="false" style="margin-bottom: 12px" :show-icon="false">
+            {{ t('scanner.scanOnlyStrategy') }}
+            <router-link to="/docs/cash-and-carry" class="docs-link">{{ t('scanner.strategyDocsLink') }}</router-link>
+          </n-alert>
           <n-grid :cols="4" :x-gap="16" :y-gap="16" style="margin-bottom:16px">
             <n-gi v-for="(card, i) in carryStatCards" :key="i">
               <n-card size="small">
@@ -179,6 +183,10 @@
 
         <!-- UNIFIED C&C -->
         <template v-if="strategy === 'unified'">
+          <n-alert type="info" :bordered="false" style="margin-bottom: 12px" :show-icon="false">
+            {{ t('scanner.scanOnlyStrategy') }}
+            <router-link to="/docs/unified-carry" class="docs-link">{{ t('scanner.strategyDocsLink') }}</router-link>
+          </n-alert>
           <n-grid :cols="4" :x-gap="16" :y-gap="16" style="margin-bottom:16px">
             <n-gi v-for="(card, i) in unifiedStatCards" :key="i">
               <n-card size="small">
@@ -227,7 +235,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, h, watch } from 'vue'
-import { NCard, NGrid, NGi, NDataTable, NButton, NSpace, NText, NIcon, NSpin, NTag, NEmpty, NInputNumber, NModal, NForm, NFormItem, NSwitch, NSelect, NTooltip, NTabs, NTab, useMessage, type DataTableColumns, type SelectOption, type SelectGroupOption } from 'naive-ui'
+import { NCard, NGrid, NGi, NDataTable, NButton, NSpace, NText, NIcon, NSpin, NTag, NEmpty, NInputNumber, NModal, NForm, NFormItem, NSwitch, NSelect, NTooltip, NTabs, NTab, NAlert, useMessage, type DataTableColumns, type SelectOption, type SelectGroupOption } from 'naive-ui'
+import { RouterLink } from 'vue-router'
 import { SearchOutline, TrendingUpOutline, FlashOutline, AnalyticsOutline } from '@vicons/ionicons5'
 import { post, useWebSocket, type ScannerOpportunities, type CarryVenue, type CarryCand, type UnifiedCarryCand, type WsMessage } from '@/composables/useApi'
 import { useI18n } from 'vue-i18n'
@@ -242,10 +251,15 @@ const CARRY_CAPABLE = new Set(['binance', 'bitget', 'bybit', 'okx'])
 
 const message = useMessage()
 
-function colTitle(labelKey: string, tipKey: string) {
+function colTitle(labelKey: string, tipKey: string, docsPath?: string) {
   return () => h(NTooltip, { trigger: 'hover' }, {
     trigger: () => h('span', { class: 'col-title-tip' }, t(labelKey)),
-    default: () => t(tipKey),
+    default: () => [
+      h('span', null, t(tipKey)),
+      docsPath
+        ? h(RouterLink, { to: docsPath, class: 'docs-link', style: 'margin-left: 8px' }, () => t('scanner.columnDocsLink'))
+        : null,
+    ],
   })
 }
 
@@ -736,11 +750,11 @@ const pureColumns = computed<DataTableColumns<PureRow>>(() => [
     return h(NTag, { size: 'small', type: row.settle_mismatch ? 'warning' : 'default', bordered: false },
       { default: () => row.settle_mismatch ? `⚠ ${label}` : label })
   } },
-  { title: colTitle('scanner.fundingEdge', 'scanner.fundingEdgeTip'), key: 'net_edge_pct', width: 105, sorter: (a, b) => a.net_edge_pct - b.net_edge_pct,
+  { title: colTitle('scanner.fundingEdge', 'scanner.fundingEdgeTip', '/docs/fees-and-edge#fe-edges'), key: 'net_edge_pct', width: 105, sorter: (a, b) => a.net_edge_pct - b.net_edge_pct,
     render: (row) => h(NText, { type: row.net_edge_pct > 0 ? 'success' : 'error', strong: true }, { default: () => row.net_edge_pct.toFixed(4) + '%' }) },
-  { title: colTitle('scanner.markSpread', 'scanner.markSpreadTip'), key: 'mark_spread_pct', width: 105, sorter: (a, b) => a.mark_spread_pct - b.mark_spread_pct,
+  { title: colTitle('scanner.markSpread', 'scanner.markSpreadTip', '/docs/pure-futures#pf-mechanics'), key: 'mark_spread_pct', width: 105, sorter: (a, b) => a.mark_spread_pct - b.mark_spread_pct,
     render: (row) => { const v = row.mark_spread_pct; const c = v > row.net_edge_pct ? '#d03050' : v > row.net_edge_pct * 0.5 ? '#f0a020' : undefined; return h('span', { style: { color: c } }, v.toFixed(4) + '%') } },
-  { title: colTitle('scanner.realEdge', 'scanner.realEdgeTip'), key: 'real_edge_pct', width: 105, sorter: (a, b) => a.real_edge_pct - b.real_edge_pct, defaultSortOrder: 'descend',
+  { title: colTitle('scanner.realEdge', 'scanner.realEdgeTip', '/docs/fees-and-edge#fe-edges'), key: 'real_edge_pct', width: 105, sorter: (a, b) => a.real_edge_pct - b.real_edge_pct, defaultSortOrder: 'descend',
     render: (row) => h(NText, { type: row.real_edge_pct > 0.05 ? 'success' : row.real_edge_pct > 0 ? 'warning' : 'error', strong: true }, { default: () => (row.real_edge_pct > 0 ? '+' : '') + row.real_edge_pct.toFixed(4) + '%' }) },
   { title: t('scanner.apy'), key: 'annual_apy_pct', width: 75, sorter: (a, b) => a.annual_apy_pct - b.annual_apy_pct,
     render: (row) => h(NText, { strong: true }, { default: () => row.annual_apy_pct.toFixed(0) + '%' }) },

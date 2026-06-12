@@ -34,7 +34,7 @@ Last updated: 2026-06-12
 | Area | Status | Notes |
 |------|--------|-------|
 | FastAPI backend | Done | `server/` — scanner, positions, backtest, settings, WebSocket |
-| Vue 3 web UI | Done | `web/` — Scanner, Positions, Backtest, Settings |
+| Vue 3 web UI | Done | `web/` — Scanner, Positions, Backtest, Docs, Settings |
 | Startup scripts | Done | `start.sh`, `start.ps1` |
 
 ### AI / CLI skill
@@ -48,6 +48,8 @@ Project CLI skill: [`SKILL.md`](SKILL.md) (repo root)
 | Item | State | Notes |
 |------|-------|-------|
 | **Hyperliquid live keys** | Env-dependent | Dry-run and mocked tests run anywhere; live orders additionally need the sibling `../hyperliquid` checkout and wallet keys |
+| **EdgeX live trade** | Unverified | Scan + dry-run done; live signing needs a funded account |
+| **C&C / Unified dashboard open** | Scan-only | Positions API is Pure Futures only; carry/unified use CLI |
 
 ---
 
@@ -78,7 +80,7 @@ Hyperliquid / Aster / Lighter shipped (see Completed above); remaining candidate
 
 | Item | Priority | Description |
 |------|----------|-------------|
-| Parallel leg execution | Medium | Open/close both legs concurrently to reduce latency skew |
+| Parallel leg execution | Done (default on) | `parallelLegs: true` in template; executor opens both legs concurrently |
 | Triangle / 3-venue arb | Low | Diversify venue-pair risk; needs position graph solver |
 | ML funding prediction | Low | Optional entry timing; not required for core arb |
 | Dynamic position sizing | Low | Kelly / volatility-adjusted `trade_usd` |
@@ -98,8 +100,11 @@ Hyperliquid / Aster / Lighter shipped (see Completed above); remaining candidate
 
 ## Documentation (2026-06-12)
 
-Legacy `docs/` task checklists (`TODO_*`, `PURE_FUTURES_*`) were removed after shipping. Active reference docs:
+In-app **Docs** page (`/docs`) mirrors `docs/{zh-CN,en,zh-TW}/` — funding basics, C&C, Unified, Pure Futures, cross-interval, fees. Regenerate: `npx tsx scripts/tools/export_docs_md.mts`.
 
-- [`docs/cross-interval-funding-model.md`](docs/cross-interval-funding-model.md) — basis-blend model for mismatched funding intervals
+- [`docs/README.md`](docs/README.md) — tri-lingual doc index
+- [`docs/cross-interval-funding-model.md`](docs/cross-interval-funding-model.md) — legacy path (synced: `docs/zh-CN/cross-interval.md`)
 - [`README.md`](README.md) — setup, dashboard, CLI, API
 - [`SKILL.md`](SKILL.md) — agent playbook
+
+**Basis blend alignment (2026-06):** scanner, `settle_mismatch_planner`, `unified_funding_pool`, and backtest share `core.cross_interval_funding.pair_pure_futures_spread()`.

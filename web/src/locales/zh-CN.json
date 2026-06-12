@@ -27,9 +27,31 @@
         "desc": "扫描、交易、回测命令速查",
         "tag": "CLI"
       },
+      "fundingBasics": {
+        "title": "资金费率基础",
+        "desc": "费率机制、Delta 中性与策略总览",
+        "tag": "基础"
+      },
+      "cashAndCarry": {
+        "title": "正向与反向 Cash & Carry",
+        "desc": "现货+永续对冲、借币反向与阈值"
+      },
+      "unifiedCarry": {
+        "title": "Unified 跨所套利",
+        "desc": "两腿拆所路由与转账成本"
+      },
+      "pureFutures": {
+        "title": "Pure Futures 永续套利",
+        "desc": "双永续费率差、net / real edge"
+      },
       "crossInterval": {
         "title": "跨周期资金费率套利",
         "desc": "basis blend、real_edge 与代码实现"
+      },
+      "feesAndEdge": {
+        "title": "费率与边际计算",
+        "desc": "fee_mode、VIP 档位与各类边际字段",
+        "tag": "参考"
       }
     }
   },
@@ -55,6 +77,9 @@
     "sameInterval": "同周期",
     "cross": "跨周期",
     "crossIntervalDocs": "跨周期算法说明",
+    "scanOnlyStrategy": "本策略仅扫描展示，开仓请使用 CLI。",
+    "strategyDocsLink": "查看算法说明",
+    "columnDocsLink": "文档",
     "scannedPairs": "扫描交易对",
     "opportunities": "套利机会",
     "genuineArb": "真实套利",

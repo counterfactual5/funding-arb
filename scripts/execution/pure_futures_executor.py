@@ -393,7 +393,7 @@ def open_pure_futures_pair(
         except Exception:
             pass
 
-    parallel_legs = bool((config or {}).get("parallelLegs", False))
+    parallel_legs = bool((config or {}).get("parallelLegs", True))
 
     if parallel_legs:
         # Submit both legs in parallel — saves ~400ms vs sequential.

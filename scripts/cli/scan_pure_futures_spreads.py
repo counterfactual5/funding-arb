@@ -51,9 +51,8 @@ DEFAULT_JSONL_FILE = "data/pure_futures_spreads.jsonl"
 HOURS_PER_YEAR = 365.0 * 24.0
 
 from core.cross_interval_funding import (
-    blended_hourly_rate,
     infer_last_settle_ts,
-    spread_source_for_pair,
+    pair_pure_futures_spread,
 )
 from core.fee_providers import (
     build_policy_futures_cache,
@@ -237,34 +236,23 @@ def _scan_spreads(
                         interval_a,
                     )
 
-                # Normalize rates to per-hour (HL 1h vs CEX 8h). Cross-interval pairs
-                # blend observed rate with basis-implied hourly funding; see
-                # core.cross_interval_funding for the model.
-                is_mismatch = abs(long_interval - short_interval) > 0.5
                 now_ms = int(time.time() * 1000)
-
-                long_rate_hourly, long_blend = blended_hourly_rate(
-                    long_rate,
-                    long_interval,
-                    long_info,
+                model = pair_pure_futures_spread(
+                    long_rate_pct=long_rate,
+                    long_interval_h=long_interval,
+                    long_info=long_info,
+                    long_venue=long_venue,
+                    short_rate_pct=short_rate,
+                    short_interval_h=short_interval,
+                    short_info=short_info,
+                    short_venue=short_venue,
                     now_ms=now_ms,
-                    venue=long_venue,
-                    use_basis_blend=is_mismatch,
                 )
-                short_rate_hourly, short_blend = blended_hourly_rate(
-                    short_rate,
-                    short_interval,
-                    short_info,
-                    now_ms=now_ms,
-                    venue=short_venue,
-                    use_basis_blend=is_mismatch,
-                )
-
-                # Effective holding period: the shorter interval determines the
-                # minimum cycle (you can exit the shorter side sooner).
-                # Scale hourly spread back to the effective cycle length.
-                eff_interval = min(long_interval, short_interval)
-                spread = (short_rate_hourly - long_rate_hourly) * eff_interval
+                is_mismatch = model["is_mismatch"]
+                long_blend = model["long_blend"]
+                short_blend = model["short_blend"]
+                eff_interval = model["eff_interval_h"]
+                spread = model["spread_pct"]
                 if spread < min_spread:
                     continue
 
@@ -343,9 +331,7 @@ def _scan_spreads(
                     ),
                     "long_settle_progress": long_blend.get("settle_progress"),
                     "short_settle_progress": short_blend.get("settle_progress"),
-                    "spread_source": spread_source_for_pair(
-                        is_mismatch, long_blend, short_blend
-                    ),
+                    "spread_source": model["spread_source"],
                 }
 
                 if direction == "forward":
