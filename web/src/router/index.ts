@@ -3,6 +3,7 @@ import Scanner from "@/views/Scanner.vue";
 import Positions from "@/views/Positions.vue";
 import Backtest from "@/views/Backtest.vue";
 import Settings from "@/views/Settings.vue";
+import Docs from "@/views/Docs.vue";
 
 const routes = [
   {
@@ -28,6 +29,16 @@ const routes = [
     name: "Settings",
     component: Settings,
     meta: { titleKey: "menu.settings" },
+  },
+  {
+    path: "/docs",
+    redirect: "/docs/cross-interval",
+  },
+  {
+    path: "/docs/:slug",
+    name: "Docs",
+    component: Docs,
+    meta: { titleKey: "menu.docs" },
   },
 ];
 

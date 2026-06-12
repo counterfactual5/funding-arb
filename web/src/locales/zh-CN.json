@@ -8,7 +8,30 @@
     "scanner": "扫描器",
     "positions": "持仓",
     "backtest": "回测",
+    "docs": "文档",
     "settings": "设置"
+  },
+  "docs": {
+    "title": "算法文档",
+    "subtitle": "说明扫描器与策略相关的核心算法，可在前端直接查阅。",
+    "articleList": "文档列表",
+    "toc": "本页目录",
+    "articles": {
+      "readme": {
+        "title": "项目概览（README）",
+        "desc": "策略、快速启动、API、配置",
+        "tag": "README"
+      },
+      "skillCli": {
+        "title": "CLI 手册（SKILL.md）",
+        "desc": "扫描、交易、回测命令速查",
+        "tag": "CLI"
+      },
+      "crossInterval": {
+        "title": "跨周期资金费率套利",
+        "desc": "basis blend、real_edge 与代码实现"
+      }
+    }
   },
   "scanner": {
     "title": "套利机会",
@@ -31,6 +54,7 @@
     "all": "全部",
     "sameInterval": "同周期",
     "cross": "跨周期",
+    "crossIntervalDocs": "跨周期算法说明",
     "scannedPairs": "扫描交易对",
     "opportunities": "套利机会",
     "genuineArb": "真实套利",

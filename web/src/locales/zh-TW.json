@@ -8,7 +8,30 @@
     "scanner": "掃描器",
     "positions": "持倉",
     "backtest": "回測",
+    "docs": "文件",
     "settings": "設定"
+  },
+  "docs": {
+    "title": "演算法文件",
+    "subtitle": "說明掃描器與策略相關的核心演算法，可在前端直接查閱。",
+    "articleList": "文件列表",
+    "toc": "本頁目錄",
+    "articles": {
+      "readme": {
+        "title": "專案概覽（README）",
+        "desc": "策略、快速啟動、API、配置",
+        "tag": "README"
+      },
+      "skillCli": {
+        "title": "CLI 手冊（SKILL.md）",
+        "desc": "掃描、交易、回測命令速查",
+        "tag": "CLI"
+      },
+      "crossInterval": {
+        "title": "跨週期資金費率套利",
+        "desc": "basis blend、real_edge 與程式實作"
+      }
+    }
   },
   "scanner": {
     "title": "套利機會",
@@ -31,6 +54,7 @@
     "all": "全部",
     "sameInterval": "同週期",
     "cross": "跨週期",
+    "crossIntervalDocs": "跨週期演算法說明",
     "scannedPairs": "掃描交易對",
     "opportunities": "套利機會",
     "genuineArb": "真實套利",

@@ -3,113 +3,121 @@
     <n-card class="table-card">
       <template #header>
         <div class="filter-toolbar">
-          <!-- 第一行：标题居中 + 策略切换居左 -->
-          <div class="toolbar-row toolbar-header-row">
-            <div class="header-left">
-              <n-radio-group :value="strategy" @update:value="onStrategyChange" size="small">
-                <n-radio-button value="pure">{{ t('scanner.pureFutures') }}</n-radio-button>
-                <n-radio-button value="carry">{{ t('scanner.cashAndCarry') }}</n-radio-button>
-                <n-radio-button value="unified">{{ t('scanner.unifiedCC') }}</n-radio-button>
-              </n-radio-group>
-            </div>
-            <div class="header-center">
-              <n-text class="toolbar-title">{{ t('scanner.title') }}</n-text>
-            </div>
-            <div class="header-right"></div>
+          <!-- 标题独占一行居中 -->
+          <div class="toolbar-title-row">
+            <n-text class="toolbar-title">{{ t('scanner.title') }}</n-text>
           </div>
 
-          <!-- 第二行：筛选条件 + 扫描按钮/状态居右 -->
-          <div class="toolbar-row toolbar-filters">
-            <div class="filter-group">
-              <n-text depth="3" class="filter-label">{{ t('scanner.venues') }}</n-text>
-              <div class="venue-filter-row">
-                <div class="venue-presets">
-                  <n-button
-                    size="tiny"
-                    :type="isVenuePresetActive('cex') ? 'primary' : 'default'"
-                    :ghost="!isVenuePresetActive('cex')"
-                    @click="applyVenuePreset('cex')"
-                  >
-                    {{ t('scanner.venuePresetCex') }}
-                  </n-button>
-                  <n-tooltip :disabled="strategy === 'pure'" trigger="hover">
-                    <template #trigger>
-                      <n-button
-                        size="tiny"
-                        :type="isVenuePresetActive('dex') ? 'primary' : 'default'"
-                        :ghost="!isVenuePresetActive('dex')"
-                        :disabled="strategy !== 'pure'"
-                        @click="applyVenuePreset('dex')"
-                      >
-                        {{ t('scanner.venuePresetDex') }}
-                      </n-button>
-                    </template>
-                    {{ t('scanner.dexPureOnly') }}
-                  </n-tooltip>
-                  <n-button
-                    v-if="strategy === 'pure'"
-                    size="tiny"
-                    :type="isVenuePresetActive('all') ? 'primary' : 'default'"
-                    :ghost="!isVenuePresetActive('all')"
-                    @click="applyVenuePreset('all')"
-                  >
-                    {{ t('scanner.venuePresetAll') }}
-                  </n-button>
+          <!-- 策略：下划线 Tab（主导航，与下方筛选区分） -->
+          <div class="toolbar-tabs-row">
+            <n-tabs
+              :value="strategy"
+              type="line"
+              size="medium"
+              class="strategy-tabs"
+              @update:value="onStrategyChange"
+            >
+              <n-tab name="pure" :tab="t('scanner.pureFutures')" />
+              <n-tab name="carry" :tab="t('scanner.cashAndCarry')" />
+              <n-tab name="unified" :tab="t('scanner.unifiedCC')" />
+            </n-tabs>
+          </div>
+
+          <!-- 筛选区：左侧可换行，右侧固定扫描/状态 -->
+          <div class="toolbar-filters-row">
+            <div class="filters-left">
+              <div class="filter-group">
+                <n-text depth="3" class="filter-label">{{ t('scanner.venues') }}</n-text>
+                <div class="venue-filter-row">
+                  <div class="venue-presets">
+                    <button
+                      type="button"
+                      class="preset-chip"
+                      :class="{ active: isVenuePresetActive('cex') }"
+                      @click="applyVenuePreset('cex')"
+                    >
+                      {{ t('scanner.venuePresetCex') }}
+                    </button>
+                    <n-tooltip :disabled="strategy === 'pure'" trigger="hover">
+                      <template #trigger>
+                        <button
+                          type="button"
+                          class="preset-chip"
+                          :class="{ active: isVenuePresetActive('dex') }"
+                          :disabled="strategy !== 'pure'"
+                          @click="applyVenuePreset('dex')"
+                        >
+                          {{ t('scanner.venuePresetDex') }}
+                        </button>
+                      </template>
+                      {{ t('scanner.dexPureOnly') }}
+                    </n-tooltip>
+                    <button
+                      v-if="strategy === 'pure'"
+                      type="button"
+                      class="preset-chip"
+                      :class="{ active: isVenuePresetActive('all') }"
+                      @click="applyVenuePreset('all')"
+                    >
+                      {{ t('scanner.venuePresetAll') }}
+                    </button>
+                  </div>
+                  <n-select
+                    :value="selectedVenues"
+                    :options="venueOptions"
+                    :render-label="renderVenueOptionLabel"
+                    :render-tag="renderVenueTag"
+                    :style="venueSelectStyle"
+                    multiple
+                    size="small"
+                    class="venue-filter"
+                    :placeholder="t('scanner.selectVenues')"
+                    @update:value="handleVenuesChange"
+                  />
                 </div>
-                <n-select
-                  :value="selectedVenues"
-                  :options="venueOptions"
-                  :render-label="renderVenueOptionLabel"
-                  :render-tag="renderVenueTag"
-                  :style="venueSelectStyle"
-                  multiple
-                  size="small"
-                  class="venue-filter"
-                  :placeholder="t('scanner.selectVenues')"
-                  @update:value="handleVenuesChange"
-                />
-              </div>
-            </div>
-
-            <template v-if="strategy === 'pure'">
-              <div class="filter-group filter-group-bordered">
-                <n-text depth="3" class="filter-label">{{ t('scanner.minRealEdge') }}</n-text>
-                <n-input-number
-                  v-model:value="minEdgeFilter"
-                  :min="0"
-                  :max="100"
-                  :step="0.05"
-                  :show-button="false"
-                  size="small"
-                  class="edge-input"
-                  :style="edgeInputStyle"
-                  @input="onEdgeInput"
-                >
-                  <template #suffix>%</template>
-                </n-input-number>
               </div>
 
-              <div class="filter-group filter-group-bordered">
-                <n-radio-group v-model:value="intervalFilter" size="small" class="interval-group">
-                  <n-radio-button value="all" class="interval-btn">{{ t('scanner.all') }}</n-radio-button>
-                  <n-radio-button value="same" class="interval-btn">{{ t('scanner.sameInterval') }}</n-radio-button>
-                  <n-radio-button value="cross" class="interval-btn">
-                    {{ t('scanner.cross') }}
-                    <span class="cross-badge">⚠</span>
-                  </n-radio-button>
-                </n-radio-group>
+              <template v-if="strategy === 'pure'">
+                <div class="filter-group filter-group-bordered">
+                  <n-text depth="3" class="filter-label">{{ t('scanner.minRealEdge') }}</n-text>
+                  <n-input-number
+                    v-model:value="minEdgeFilter"
+                    :min="0"
+                    :max="100"
+                    :step="0.05"
+                    :show-button="false"
+                    size="small"
+                    class="edge-input"
+                    :style="edgeInputStyle"
+                    @input="onEdgeInput"
+                  >
+                    <template #suffix>%</template>
+                  </n-input-number>
+                </div>
+
+                <div class="filter-group filter-group-bordered">
+                  <n-text depth="3" class="filter-label">{{ t('scanner.interval') }}</n-text>
+                  <div class="interval-row">
+                    <n-select
+                      v-model:value="intervalFilter"
+                      :options="intervalOptions"
+                      size="small"
+                      class="interval-select"
+                      :consistent-menu-width="false"
+                    />
+                    <router-link to="/docs/cross-interval#ci-blend" class="docs-link">{{ t('scanner.crossIntervalDocs') }}</router-link>
+                  </div>
+                </div>
+              </template>
+
+              <div class="filter-group actions-inline">
+                <n-tag v-if="refreshing" size="small" type="info" :bordered="false" class="status-tag">{{ t('scanner.scanningFromExchanges') }}</n-tag>
+                <n-tag v-else-if="lastScanLabel" size="small" type="success" :bordered="false" class="status-tag">{{ lastScanLabel }}</n-tag>
+                <n-button size="small" type="primary" ghost @click="handleTriggerScan" :loading="refreshing" class="action-btn">
+                  <template #icon><n-icon size="14"><SearchOutline /></n-icon></template>
+                  {{ t('scanner.scanNow') }}
+                </n-button>
               </div>
-            </template>
-
-            <div class="toolbar-spacer" />
-
-            <div class="filter-group actions-group">
-              <n-tag v-if="refreshing" size="small" type="info" :bordered="false" class="status-tag">{{ t('scanner.scanningFromExchanges') }}</n-tag>
-              <n-tag v-else-if="lastScanLabel" size="small" type="success" :bordered="false" class="status-tag">{{ lastScanLabel }}</n-tag>
-              <n-button size="small" type="primary" ghost @click="handleTriggerScan" :loading="refreshing" class="action-btn">
-                <template #icon><n-icon size="14"><SearchOutline /></n-icon></template>
-                {{ t('scanner.scanNow') }}
-              </n-button>
             </div>
           </div>
         </div>
@@ -219,7 +227,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, h, watch } from 'vue'
-import { NCard, NGrid, NGi, NDataTable, NButton, NSpace, NText, NIcon, NSpin, NTag, NEmpty, NInputNumber, NRadioGroup, NRadioButton, NModal, NForm, NFormItem, NSwitch, NSelect, NTooltip, useMessage, type DataTableColumns, type SelectOption, type SelectGroupOption } from 'naive-ui'
+import { NCard, NGrid, NGi, NDataTable, NButton, NSpace, NText, NIcon, NSpin, NTag, NEmpty, NInputNumber, NModal, NForm, NFormItem, NSwitch, NSelect, NTooltip, NTabs, NTab, useMessage, type DataTableColumns, type SelectOption, type SelectGroupOption } from 'naive-ui'
 import { SearchOutline, TrendingUpOutline, FlashOutline, AnalyticsOutline } from '@vicons/ionicons5'
 import { post, useWebSocket, type ScannerOpportunities, type CarryVenue, type CarryCand, type UnifiedCarryCand, type WsMessage } from '@/composables/useApi'
 import { useI18n } from 'vue-i18n'
@@ -264,6 +272,12 @@ const unifiedData = ref<UnifiedCarryCand[]>([])
 
 const minEdgeFilter = ref<number>(0)
 const intervalFilter = ref<'all' | 'same' | 'cross'>('all')
+
+const intervalOptions = computed<SelectOption[]>(() => [
+  { label: t('scanner.all'), value: 'all' },
+  { label: t('scanner.sameInterval'), value: 'same' },
+  { label: `${t('scanner.cross')} ⚠`, value: 'cross' },
+])
 // Default to CEX only — DEX venues (hyperliquid/aster/lighter/edgex) are opt-in
 const DEFAULT_VENUES = [...CEX_VENUES]
 const selectedVenues = ref<string[]>([...DEFAULT_VENUES])
@@ -812,86 +826,77 @@ onUnmounted(() => {
 .filter-toolbar {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
-.toolbar-row {
+.toolbar-title-row {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  row-gap: 8px;
-  flex-wrap: wrap;
-  min-height: 32px;
-}
-
-.toolbar-header-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  position: relative;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  flex: 1;
-}
-
-.header-center {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
   justify-content: center;
-  pointer-events: none;
-}
-
-.header-right {
-  display: flex;
   align-items: center;
-  justify-content: flex-end;
-  flex: 1;
+  width: 100%;
 }
 
 .toolbar-title {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
   white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 
-.actions-group {
+.toolbar-tabs-row {
   display: flex;
+  justify-content: center;
   align-items: center;
-  gap: 8px;
+  width: 100%;
+}
+
+/* 策略 Tab：下划线指示，无实心绿块 */
+.strategy-tabs {
+  width: auto;
+  max-width: 100%;
+}
+.strategy-tabs :deep(.n-tabs-nav) {
+  justify-content: center;
+}
+.strategy-tabs :deep(.n-tabs-pane-wrapper) {
+  display: none;
+}
+.strategy-tabs :deep(.n-tabs-tab) {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 16px;
+}
+.strategy-tabs :deep(.n-tabs-tab--active) {
+  font-weight: 600;
+}
+
+.toolbar-filters-row {
+  display: flex;
+  width: 100%;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.filters-left {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  width: 100%;
+}
+
+.actions-inline {
+  margin-left: auto;
   flex-shrink: 0;
 }
 
-@media (max-width: 768px) {
-  .toolbar-header-row {
-    flex-direction: column;
-    gap: 8px;
-    align-items: center;
-  }
-  .header-center {
-    position: static;
-    transform: none;
-    order: -1;
-  }
-  .header-left {
-    justify-content: center;
+@media (max-width: 900px) {
+  .actions-inline {
+    margin-left: 0;
     width: 100%;
+    justify-content: flex-end;
+    padding-top: 4px;
   }
-  .header-right {
-    display: none;
-  }
-}
-
-/* 把状态/按钮推到行尾；空间不足时允许换行而不是挤压 */
-.toolbar-spacer {
-  flex: 1 1 auto;
-  min-width: 8px;
 }
 
 .status-tag {
@@ -920,16 +925,37 @@ onUnmounted(() => {
 .venue-presets {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
-.venue-presets :deep(.n-button) {
-  min-width: 2.75rem;
-  padding: 0 8px;
+/* 交易所预设：圆角轮廓 Chip，与策略 Tab / 周期下拉区分 */
+.preset-chip {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.55);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
+  padding: 4px 11px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.preset-chip:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.85);
+}
+.preset-chip.active {
+  border-color: rgba(24, 160, 88, 0.55);
+  background: rgba(24, 160, 88, 0.1);
+  color: #63e2b7;
+}
+.preset-chip:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .filter-label {
@@ -1057,21 +1083,28 @@ onUnmounted(() => {
   text-align: left;
 }
 
-/* Interval radio group */
-.interval-group :deep(.n-radio-button) {
+/* 周期：下拉选择，与 Tab / Chip 形态区分 */
+.interval-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.docs-link {
   font-size: 12px;
-  padding: 0 12px;
-  line-height: 30px;
-  height: 32px;
+  color: #63e2b7;
+  text-decoration: none;
+  white-space: nowrap;
 }
-.interval-group :deep(.n-radio-button--checked) {
-  font-weight: 500;
+.docs-link:hover {
+  text-decoration: underline;
 }
-
-.cross-badge {
-  margin-left: 3px;
-  font-size: 10px;
-  opacity: 0.7;
+.interval-select {
+  width: 148px;
+}
+.interval-select :deep(.n-base-selection) {
+  border-radius: 6px;
+  min-height: 32px;
 }
 
 /* ---- Dropdown panel ---- */

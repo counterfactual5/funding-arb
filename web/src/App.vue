@@ -22,6 +22,7 @@ import {
   BriefcaseOutline,
   StatsChartOutline,
   SettingsOutline,
+  DocumentTextOutline,
   PulseOutline,
 } from '@vicons/ionicons5'
 import { useWebSocket } from '@/composables/useApi'
@@ -32,7 +33,9 @@ const router = useRouter()
 const route = useRoute()
 const collapsed = ref(true)
 
-const activeKey = computed(() => route.path)
+const activeKey = computed(() =>
+  route.path.startsWith('/docs') ? '/docs' : route.path,
+)
 
 const menuOptions = computed<MenuOption[]>(() => [
   {
@@ -49,6 +52,11 @@ const menuOptions = computed<MenuOption[]>(() => [
     label: t('menu.backtest'),
     key: '/backtest',
     icon: () => h(NIcon, null, { default: () => h(StatsChartOutline) }),
+  },
+  {
+    label: t('menu.docs'),
+    key: '/docs',
+    icon: () => h(NIcon, null, { default: () => h(DocumentTextOutline) }),
   },
   {
     label: t('menu.settings'),

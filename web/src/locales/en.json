@@ -8,7 +8,30 @@
     "scanner": "Scanner",
     "positions": "Positions",
     "backtest": "Backtest",
+    "docs": "Docs",
     "settings": "Settings"
+  },
+  "docs": {
+    "title": "Algorithm Docs",
+    "subtitle": "Core algorithms for the scanner and strategies, readable in the app.",
+    "articleList": "Articles",
+    "toc": "On this page",
+    "articles": {
+      "readme": {
+        "title": "Project Overview (README)",
+        "desc": "Strategies, quick start, API, config",
+        "tag": "README"
+      },
+      "skillCli": {
+        "title": "CLI Handbook (SKILL.md)",
+        "desc": "Scan, trade, backtest command reference",
+        "tag": "CLI"
+      },
+      "crossInterval": {
+        "title": "Cross-Interval Funding Arbitrage",
+        "desc": "Basis blend, real_edge, and implementation"
+      }
+    }
   },
   "scanner": {
     "title": "Arbitrage Opportunities",
@@ -31,6 +54,7 @@
     "all": "All",
     "sameInterval": "Same Interval",
     "cross": "Cross",
+    "crossIntervalDocs": "Cross-interval model",
     "scannedPairs": "Scanned Pairs",
     "opportunities": "Opportunities",
     "genuineArb": "Genuine Arb",
