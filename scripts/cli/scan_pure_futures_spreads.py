@@ -11,6 +11,7 @@ Legs can be split across different exchanges; no need for one exchange to suppor
 Usage:
   python3 scripts/cli/scan_pure_futures_spreads.py
   python3 scripts/cli/scan_pure_futures_spreads.py --venues binance,bybit,okx,bitget
+  python3 scripts/cli/scan_pure_futures_spreads.py --include-dex             # include all perp DEX venues
   python3 scripts/cli/scan_pure_futures_spreads.py --min-spread 0.1 --verbose
   python3 scripts/cli/scan_pure_futures_spreads.py --json
   python3 scripts/cli/scan_pure_futures_spreads.py --watch 5  # scan every 5 minutes and append to JSONL
@@ -373,7 +374,7 @@ def scan_pure_futures_spreads(
 ) -> dict[str, Any]:
     """Main entry point — scan and return structured results."""
     if venues is None:
-        venues = ["binance", "bitget", "bybit", "okx", "hyperliquid"]
+        venues = ["binance", "bitget", "bybit", "okx"]
 
     by_base = fetch_all_fee_rate_rows_by_base(venues, workers)
     _backfill_missing_settle_times(by_base, venues, workers)
@@ -513,11 +514,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--venues",
-        default="binance,bitget,bybit,okx,hyperliquid",
+        default=None,
         help=(
-            "Comma-separated venues (default: binance,bitget,bybit,okx,hyperliquid; "
-            "also available: aster, lighter)"
+            "Comma-separated venues (default: CEX+HL; "
+            "available CEX: binance,bitget,bybit,okx; "
+            "available DEX: hyperliquid,aster,lighter,edgex,dydx)"
         ),
+    )
+    parser.add_argument(
+        "--include-dex",
+        action="store_true",
+        help="Include all perp DEX venues (hyperliquid,aster,lighter,edgex,dydx) in addition to CEX defaults",
     )
     parser.add_argument(
         "--min-spread",
@@ -561,7 +568,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    venues = [v.strip().lower() for v in args.venues.split(",") if v.strip()]
+    _DEFAULT_CEX = ["binance", "bitget", "bybit", "okx"]
+    _DEFAULT_DEX = ["hyperliquid", "aster", "lighter", "edgex", "dydx"]
+    if args.venues:
+        venues = [v.strip().lower() for v in args.venues.split(",") if v.strip()]
+    elif args.include_dex:
+        venues = _DEFAULT_CEX + _DEFAULT_DEX
+    else:
+        venues = _DEFAULT_CEX + ["hyperliquid"]
 
     if args.watch:
         interval_min = float(args.watch)

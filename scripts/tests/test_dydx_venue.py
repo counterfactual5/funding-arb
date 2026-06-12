@@ -11,7 +11,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import venues.dydx as dydx_mod  # noqa: E402
-from venues.dydx import DydxVenue, _base_from_pair, _market_meta  # noqa: E402
+from venues.dydx import (  # noqa: E402
+    DydxVenue,
+    _base_from_pair,
+    _market_meta,
+    _side_from_type,
+)
 
 _BTC_META_ROW = {
     "ticker": "BTC-USD",
@@ -23,6 +28,8 @@ _BTC_META_ROW = {
     "atomicResolution": -10,
     "quantumConversionExponent": -9,
     "subticksPerTick": 100000,
+    "clobPairId": 0,
+    "stepBaseQuantums": 1000000,
 }
 
 _META_MAP = {"BTC": {**_market_meta(_BTC_META_ROW), "ticker": "BTC-USD"}}
@@ -147,10 +154,11 @@ class TestExecution:
         v = _fresh()
         # _ensure_wallet hits _ensure_sdk first; stub it out so the test
         # doesn't require the real dydx-v4-client wheel.
-        with patch.object(dydx_mod, "_ensure_sdk"), patch.object(
-            dydx_mod, "_network_module", object()
-        ), patch.object(dydx_mod, "_node_client_cls", object), patch.object(
-            dydx_mod, "_wallet_cls", object
+        with (
+            patch.object(dydx_mod, "_ensure_sdk"),
+            patch.object(dydx_mod, "_network_module", object()),
+            patch.object(dydx_mod, "_node_client_cls", object),
+            patch.object(dydx_mod, "_wallet_cls", object),
         ):
             results = v.execute_trades(
                 [{"symbol": "BTCUSDT", "type": "open_long", "amount_base": 0.01}],
@@ -177,11 +185,11 @@ class TestFundingIndexMid:
         }
         import venues.dydx_funding as df
 
-        with patch.object(DydxFundingProvider, "_get", return_value=payload), \
-                patch.object(df, "_orderbook_mid", return_value=64010.0):
-            cur = DydxFundingProvider().fetch_current(
-                "BTCUSDT", include_index_mid=True
-            )
+        with (
+            patch.object(DydxFundingProvider, "_get", return_value=payload),
+            patch.object(df, "_orderbook_mid", return_value=64010.0),
+        ):
+            cur = DydxFundingProvider().fetch_current("BTCUSDT", include_index_mid=True)
         assert cur["mark_price"] == 64000.5
         assert cur["index_price"] == 64010.0  # mid ≠ oracle → basis available
 
@@ -200,11 +208,11 @@ class TestFundingIndexMid:
         }
         import venues.dydx_funding as df
 
-        with patch.object(DydxFundingProvider, "_get", return_value=payload), \
-                patch.object(df, "_orderbook_mid", return_value=0.0):
-            cur = DydxFundingProvider().fetch_current(
-                "BTCUSDT", include_index_mid=True
-            )
+        with (
+            patch.object(DydxFundingProvider, "_get", return_value=payload),
+            patch.object(df, "_orderbook_mid", return_value=0.0),
+        ):
+            cur = DydxFundingProvider().fetch_current("BTCUSDT", include_index_mid=True)
         assert cur["index_price"] == 64000.5  # book empty → oracle fallback
 
     def test_fetch_all_mid_enrichment_env_gated(self, monkeypatch):
@@ -238,8 +246,10 @@ class TestFundingIndexMid:
 
         # Enabled: BTC gets the mid, ZZZ (off-whitelist) keeps oracle.
         monkeypatch.setenv("DYDX_INDEX_MID", "1")
-        with patch.object(DydxFundingProvider, "_get", return_value=payload), \
-                patch.object(df, "_orderbook_mid", return_value=64010.0):
+        with (
+            patch.object(DydxFundingProvider, "_get", return_value=payload),
+            patch.object(df, "_orderbook_mid", return_value=64010.0),
+        ):
             rows = DydxFundingProvider().fetch_all()
         by_sym = {r["symbol"]: r for r in rows}
         assert by_sym["BTCUSDT"]["index_price"] == 64010.0
@@ -254,3 +264,95 @@ class TestRegistration:
         assert "dydx" in supported_venues()
         v = get_venue({"venue": {"type": "dydx"}})
         assert v.venue_id == "dydx"
+
+
+class TestLiveExecution:
+    """Test the live order submission path with mocked SDK components."""
+
+    def test_side_mapping_open_long_is_buy(self, monkeypatch):
+        """open_long and close_short should map to BUY side."""
+        assert _side_from_type("open_long") == "BUY"
+        assert _side_from_type("close_short") == "BUY"
+
+    def test_side_mapping_open_short_is_sell(self, monkeypatch):
+        """open_short and close_long should map to SELL side."""
+        assert _side_from_type("open_short") == "SELL"
+        assert _side_from_type("close_long") == "SELL"
+
+    def test_live_order_success_path(self, monkeypatch):
+        """Full happy path: wallet → build → sign → broadcast."""
+        monkeypatch.setenv("DYDX_ENABLE_LIVE", "1")
+        monkeypatch.setenv("DYDX_MNEMONIC", "word " * 24)
+        monkeypatch.setenv("DYDX_ADDRESS", "dydx1test")
+
+        v = _fresh()
+
+        # Mock SDK components
+        mock_wallet = type("W", (), {"address": "dydx1test"})()
+        mock_node = type("N", (), {})()
+        v._wallet = mock_wallet
+        v._node = mock_node
+
+        # Mock _submit_market_order to return success
+        mock_result = {
+            "order_id": "BTC-USD-12345",
+            "tx_hash": "ABC123",
+            "latency_ms": 150,
+        }
+
+        with patch.object(dydx_mod, "_submit_market_order", return_value=mock_result):
+            results = v.execute_trades(
+                [{"symbol": "BTCUSDT", "type": "open_long", "amount_base": 0.01}],
+                {"BTCUSDT": {"price": 64000.0}},
+                dry_run=False,
+            )
+        assert len(results) == 1
+        r = results[0]
+        assert r["status"] == "submitted"
+        assert r["order_id"] == "BTC-USD-12345"
+        assert r["tx_hash"] == "ABC123"
+        assert r["exec_qty"] == 0.01
+        assert r["venue"] == "dydx"
+        assert r["error"] is None
+
+    def test_live_order_sdk_error_returns_failed(self, monkeypatch):
+        """SDK raises on broadcast → record.status == 'failed'."""
+        monkeypatch.setenv("DYDX_ENABLE_LIVE", "1")
+        monkeypatch.setenv("DYDX_MNEMONIC", "word " * 24)
+        monkeypatch.setenv("DYDX_ADDRESS", "dydx1test")
+
+        v = _fresh()
+        mock_wallet = type("W", (), {"address": "dydx1test"})()
+        v._wallet = mock_wallet
+        v._node = type("N", (), {})()
+
+        with patch.object(
+            dydx_mod,
+            "_submit_market_order",
+            side_effect=RuntimeError("insufficient margin"),
+        ):
+            results = v.execute_trades(
+                [{"symbol": "BTCUSDT", "type": "open_long", "amount_base": 0.01}],
+                {"BTCUSDT": {"price": 64000.0}},
+                dry_run=False,
+            )
+        assert results[0]["status"] == "failed"
+        assert "insufficient margin" in results[0]["error"]
+
+    def test_live_order_no_market_meta(self, monkeypatch):
+        """Missing market metadata → failed."""
+        monkeypatch.setenv("DYDX_ENABLE_LIVE", "1")
+        monkeypatch.setenv("DYDX_MNEMONIC", "word " * 24)
+        monkeypatch.setenv("DYDX_ADDRESS", "dydx1test")
+
+        v = _fresh()
+        v._wallet = type("W", (), {"address": "dydx1test"})()
+        v._node = type("N", (), {})()
+
+        results = v.execute_trades(
+            [{"symbol": "ZZZUSDT", "type": "open_long", "amount_base": 0.01}],
+            {"ZZZUSDT": {"price": 1.0}},
+            dry_run=False,
+        )
+        assert results[0]["status"] == "failed"
+        assert "no market metadata" in results[0]["error"]

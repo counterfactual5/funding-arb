@@ -28,7 +28,7 @@ Last updated: 2026-06-12
 | **Aster** | Done | `venues/aster.py` — Binance-fapi-compatible |
 | **Lighter** | Done | `venues/lighter.py` — `lighter-sdk` |
 | **EdgeX** | Scan + dry-run done; live unverified | `edgex_funding.py` + `edgex.py`; verify: `scripts/tools/verify_edgex_live.py` |
-| **dYdX v4** | Scan + dry-run done; live gated | `dydx_funding.py` (orderbook-mid index via `DYDX_INDEX_MID=1`) + `dydx.py` (CexVenue adapter; live needs `DYDX_ENABLE_LIVE=1`, order builder pending testnet) |
+| **dYdX v4** | Scan + live code done; testnet pending | `dydx_funding.py` (orderbook-mid index via `DYDX_INDEX_MID=1`) + `dydx.py` (CexVenue adapter with SDK order builder; live needs `DYDX_ENABLE_LIVE=1` + testnet verification) |
 | Depth checks | Done | `market/futures_depth.py` for CEX + DEX venues with books |
 | Capability API | Done | `GET /api/settings/venues` — scan / trade / live_ready |
 
@@ -54,7 +54,7 @@ Project CLI skill: [`SKILL.md`](SKILL.md) (repo root)
 |------|-------|-------|
 | **Hyperliquid live keys** | Env-dependent | Sibling `../hyperliquid` + wallet keys for live |
 | **EdgeX live trade** | Unverified | Run `verify_edgex_live.py --read-account` with funded account |
-| **dYdX live orders** | Gated stub | Adapter + wallet wiring done; protobuf place_order (quantums/subticks) needs testnet rehearsal, then drop the guard in `venues/dydx.py` |
+| **dYdX live orders** | Live code done | Adapter + wallet + SDK order builder implemented; testnet verification pending — see `plans/dydx-trading-plan.md` |
 | **Drift** | Not started | Solana perp SDK — P2 |
 
 ---
@@ -63,7 +63,7 @@ Project CLI skill: [`SKILL.md`](SKILL.md) (repo root)
 
 | Venue | Type | Priority | Work items |
 |-------|------|----------|------------|
-| **dYdX v4** | Cosmos app-chain | P2 | ~~Funding scan~~ ~~venue adapter + dry-run~~ done; remaining: live place_order on testnet |
+| **dYdX v4** | Cosmos app-chain | P2 | ~~Funding scan~~ ~~venue adapter + dry-run~~ ~~live order builder~~ done; remaining: testnet end-to-end verification |
 | **Drift** | Solana perp | P2 | Drift SDK, SOL/USDC margin, funding intervals |
 | **GMX v2** | Arbitrum/Avalanche | P3 | Borrow-fee model differs from CEX funding |
 | **Vertex** | Arbitrum hybrid | P3 | REST + signing |

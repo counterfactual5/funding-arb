@@ -9,13 +9,10 @@ public. Write path (balances, positions, orders) needs a wallet: live
 orders are gated behind an explicit `DYDX_ENABLE_LIVE=1` opt-in so the
 adapter stays safe-by-default in dry-run / CI flows.
 
-The SDK is async; executor/watcher are sync, so every async call is
-wrapped in `asyncio.run()`. dYdX v4 is a Cosmos app-chain — building a
-real order requires a `Builder` + protobuf-typed `place_order` message
-(quantums / subticks / clob_pair_id / good_til_block). We surface the
-correct entry point and reject the call until DYDX_ENABLE_LIVE=1 is
-explicitly set. The dry-run branch in `execute_trades` is fully wired
-and matches the executor's `record` shape used for HL / EdgeX.
+Live order submission uses the SDK Market + OrderId + place_order flow:
+quantums/subticks/clob_pair_id conversion is handled by the SDK's Market
+class. The builder + protobuf signing is wrapped in _submit_market_order.
+A 0.5% slippage buffer is applied for IOC market orders.
 
 Symbology: on-chain `BTC-USD` <-> CEX pair `BTCUSDT`. Mark price is the
 indexer `oraclePrice` (independent of the off-chain CEX index — see
@@ -52,27 +49,41 @@ _indexer_client_cls: type | None = None
 _node_client_cls: type | None = None
 _network_module: Any | None = None
 _wallet_cls: Any | None = None
+_market_cls: type | None = None
+_order_flags_cls: Any | None = None
+_order_type_cls: Any | None = None
+_order_pb2_module: Any | None = None
 
 
 def _ensure_sdk() -> None:
     """Import the dYdX v4 SDK on first use; raise with a clear error."""
     global _indexer_client_cls, _node_client_cls, _network_module, _wallet_cls
+    global _market_cls, _order_flags_cls, _order_type_cls, _order_pb2_module
     if (
         _indexer_client_cls is not None
         and _node_client_cls is not None
         and _network_module is not None
+        and _market_cls is not None
     ):
         return
     try:
+        from dydx_v4_client import OrderFlags as _OF
         from dydx_v4_client import network as _net
+        from dydx_v4_client.indexer.rest.constants import OrderType as _OT
         from dydx_v4_client.indexer.rest.indexer_client import IndexerClient
         from dydx_v4_client.node.client import NodeClient
+        from dydx_v4_client.node.market import Market as _Mkt
         from dydx_v4_client.wallet import Wallet as _Wallet
+        from v4_proto.dydxprotocol.clob import order_pb2 as _order_pb2
 
         _network_module = _net
         _indexer_client_cls = IndexerClient
         _node_client_cls = NodeClient
         _wallet_cls = _Wallet
+        _market_cls = _Mkt
+        _order_flags_cls = _OF
+        _order_type_cls = _OT
+        _order_pb2_module = _order_pb2
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(
             "dydx-v4-client is required for the dYdX v4 venue adapter; "
@@ -106,6 +117,11 @@ def _run(coro: Any) -> Any:
 def _base_from_pair(pair: str) -> str:
     s = pair.upper()
     return s[:-4] if s.endswith("USDT") else s
+
+
+def _side_from_type(typ: str) -> str:
+    """Map funding-arb trade type to dYdX order side (BUY/SELL)."""
+    return "BUY" if typ in ("open_long", "close_short") else "SELL"
 
 
 def _has_live_creds() -> bool:
@@ -157,6 +173,103 @@ def _market_meta(meta_row: dict[str, Any]) -> dict[str, Any]:
             meta_row.get("quantumConversionExponent", -9) or -9
         ),
         "subticks_per_tick": int(meta_row.get("subticksPerTick", 1) or 1),
+        "clob_pair_id": int(meta_row.get("clobPairId", 0) or 0),
+        "step_base_quantums": int(meta_row.get("stepBaseQuantums", 1) or 1),
+    }
+
+
+def _market_info_from_meta(base: str, meta: dict[str, Any]) -> dict[str, Any]:
+    """Build the SDK Market .market dict from our cached per-base metadata."""
+    return {
+        "clobPairId": meta.get("clob_pair_id", 0),
+        "atomicResolution": meta.get("atomic_resolution", -10),
+        "quantumConversionExponent": meta.get("quantum_conversion_exponent", -9),
+        "stepBaseQuantums": meta.get("step_base_quantums", 1_000_000_000),
+        "subticksPerTick": meta.get("subticks_per_tick", 100_000),
+        "tickSize": meta.get("tick_size", 1.0),
+        "oraclePrice": str(meta.get("oracle_price", 0)),
+    }
+
+
+def _submit_market_order(
+    wallet: Any,
+    node: Any,
+    base: str,
+    ticker: str,
+    side: str,
+    size_base: float,
+    meta: dict[str, Any],
+    subaccount: int,
+) -> dict[str, Any]:
+    """Build, sign, and broadcast a dYdX v4 IOC market order.
+
+    Returns {order_id, tx_hash, latency_ms} on success.
+    Raises on any failure so the caller can set record["status"] = "failed".
+    """
+    assert _market_cls is not None
+    assert _order_flags_cls is not None
+    assert _order_type_cls is not None
+    assert _order_pb2_module is not None
+
+    # Build SDK Market from our metadata
+    market_info = _market_info_from_meta(base, meta)
+    # Fetch oracle price from indexer for the market order price (with slippage)
+    from venues.dydx_funding import DydxFundingProvider
+
+    funding = DydxFundingProvider()
+    cur = funding.fetch_current(f"{base}USDT")
+    oracle_price = float(cur.get("mark_price", 0) or 0)
+    if oracle_price <= 0:
+        raise RuntimeError(f"no oracle price for {ticker}")
+    market_info["oraclePrice"] = str(oracle_price)
+
+    mkt = _market_cls(market=market_info)
+
+    # Side mapping
+    if side == "BUY":
+        order_side = _order_pb2_module.Order.SIDE_BUY
+        price = oracle_price * 1.005  # 0.5% slippage buffer for market order
+    else:
+        order_side = _order_pb2_module.Order.SIDE_SELL
+        price = oracle_price * 0.995
+
+    # Build order ID (SHORT_TERM with auto client_id from time)
+    client_id = int(time.time() * 1000) % 2**31
+    oid = mkt.order_id(
+        wallet.address, subaccount, client_id, _order_flags_cls.SHORT_TERM
+    )
+
+    # Get current block height for good_til_block
+    current_height: int = _run(node.latest_block_height())
+
+    # Build the order
+    new_order = mkt.order(
+        order_id=oid,
+        order_type=_order_type_cls.MARKET,
+        time_in_force=None,  # SDK handles IOC for MARKET orders
+        side=order_side,
+        size=size_base,
+        price=price,
+        reduce_only=False,
+        good_til_block=current_height + 20,  # ~20 blocks ≈ 20s
+    )
+
+    # Sign and broadcast
+    t0 = time.time()
+    result = _run(node.place_order(wallet, new_order))
+    latency = int((time.time() - t0) * 1000)
+
+    # Parse result
+    tx_hash = ""
+    if hasattr(result, "tx_response") and result.tx_response:
+        tx_hash = getattr(result.tx_response, "txhash", "") or ""
+    elif isinstance(result, dict):
+        tx_hash = result.get("tx_response", {}).get("txhash", "")
+
+    return {
+        "order_id": f"{ticker}-{client_id}",
+        "tx_hash": tx_hash,
+        "latency_ms": latency,
     }
 
 
@@ -464,24 +577,40 @@ class DydxVenue:
                 results.append(record)
                 continue
 
-            # Live branch: validate creds, then defer to a placeholder
-            # so a future change can plug in the full builder+sign flow
-            # without further touching the executor surface.
+            # Live branch: validate creds, build and submit order.
             try:
-                self._ensure_wallet()
+                wallet, node = self._ensure_wallet()
                 size = float(trade.get("amount_base", 0))
                 if size <= 0:
                     raise RuntimeError(f"non-positive size: {size}")
-                # We intentionally do NOT submit here yet — see the
-                # message above. The dry-run path is the supported
-                # execution path; the live branch raises so it can be
-                # detected and routed through a testnet-validated
-                # implementation before any real order is sent.
-                raise RuntimeError(
-                    "dYdX live order submission is not yet implemented; "
-                    "set dry_run=true or run on testnet via the SDK's "
-                    "place_order / market_order example."
+
+                base = _base_from_pair(symbol)
+                meta = self._meta_map().get(base)
+                if not meta:
+                    raise RuntimeError(f"no market metadata for {symbol}")
+
+                side = _side_from_type(typ)
+                ticker = meta.get("ticker", f"{base}-USD")
+
+                t0 = time.time()
+                result = _submit_market_order(
+                    wallet=wallet,
+                    node=node,
+                    base=base,
+                    ticker=ticker,
+                    side=side,
+                    size_base=size,
+                    meta=meta,
+                    subaccount=self._subaccount,
                 )
+                record["status"] = "submitted"
+                record["order_id"] = result.get("order_id")
+                record["tx_hash"] = result.get("tx_hash", "")
+                record["exec_qty"] = size
+                record["exec_price"] = ref_price
+                record["slippage"] = 0.0
+                record["latency_ms"] = result.get("latency_ms", 0)
+                record["error"] = None
             except Exception as exc:  # noqa: BLE001
                 record["status"] = "failed"
                 record["order_id"] = None
