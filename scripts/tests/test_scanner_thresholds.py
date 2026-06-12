@@ -88,6 +88,32 @@ class TestApplyGroupThresholds:
         assert edges == [0.025, 0.035]
 
 
+class TestRealEdgeFilter:
+    def test_real_edge_is_net_minus_mark(self):
+        assert _row_real_edge(_row(8.0, 8.0, 0.05, mark_spread=0.03)) == 0.02
+
+    def test_basis_eaten_edge_dropped(self):
+        # net 0.05% but mark divergence 0.04% → real 0.01% < base 0.02% → dropped,
+        # while a clean 0.03% net (no basis) survives.
+        res = {
+            "forward": [
+                _row(8.0, 8.0, 0.05, mark_spread=0.04),  # real 0.01 → drop
+                _row(8.0, 8.0, 0.03, mark_spread=0.00),  # real 0.03 → keep
+            ],
+            "reverse": [],
+            "total_spreads_found": 2,
+        }
+        out = _apply_group_thresholds(res, 0.02, None, None)
+        assert [r["net_edge_pct"] for r in out["forward"]] == [0.03]
+        assert out["total_spreads_found"] == 1
+
+    def test_falls_back_to_net_when_real_absent(self):
+        # Older cached rows without real_edge_pct → net − mark_spread.
+        row = {"long_interval_h": 8, "short_interval_h": 8,
+               "net_edge_pct": 0.05, "mark_spread_pct": 0.04}
+        assert abs(_row_real_edge(row) - 0.01) < 1e-9
+
+
 if __name__ == "__main__":
     import pytest
 
