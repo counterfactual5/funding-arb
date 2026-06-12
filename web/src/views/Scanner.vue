@@ -174,8 +174,8 @@
               </template>
               <n-data-table
                 :columns="carryColumns"
-                :data="[...(ven.forward || []), ...(ven.reverse || [])]"
-                :bordered="false" :scroll-x="500" size="small" striped
+                :data="carryRowsForVenue(ven)"
+                :bordered="false" :scroll-x="580" size="small" striped
               />
             </n-card>
           </div>
@@ -211,7 +211,7 @@
     <n-modal v-model:show="showOpenModal" preset="card" :title="t('scanner.openPosition')" style="width: 420px">
       <n-form label-placement="left" label-width="110" size="small">
         <n-form-item :label="t('scanner.pair')">
-          <n-text strong>{{ openTarget?.base }}/USDT — long {{ openTarget?.long_venue }}, short {{ openTarget?.short_venue }}</n-text>
+          <n-text strong>{{ openModalSummary }}</n-text>
         </n-form-item>
         <n-form-item :label="t('scanner.amountUsdt')">
           <n-input-number v-model:value="openAmount" :min="10" :step="100" style="width: 100%" />
@@ -659,15 +659,44 @@ function onWsMessage(msg: WsMessage) {
 const ws = useWebSocket(onWsMessage)
 
 // ---- Open position dialog ----
+type OpenKind = 'pure' | 'carry' | 'unified'
+type OpenTarget =
+  | { kind: 'pure'; row: PureRow }
+  | { kind: 'carry'; row: CarryRow }
+  | { kind: 'unified'; row: UnifiedCarryCand }
+
 const showOpenModal = ref(false)
 const opening = ref(false)
-const openTarget = ref<PureRow | null>(null)
+const openTarget = ref<OpenTarget | null>(null)
 const openAmount = ref<number>(1000)
 const openDryRun = ref(true)
 
-function showOpenDialog(row: PureRow) {
-  openTarget.value = row
+const openModalSummary = computed(() => {
+  const tgt = openTarget.value
+  if (!tgt) return ''
+  if (tgt.kind === 'pure') {
+    const r = tgt.row
+    return `${r.base}/USDT — long ${r.long_venue}, short ${r.short_venue}`
+  }
+  if (tgt.kind === 'carry') {
+    const r = tgt.row
+    return `${r.base}/USDT — ${r._direction} @ ${r._venue}`
+  }
+  const r = tgt.row
+  return `${r.base}/USDT — ${r.direction} fut@${r.futures_venue} spot@${r.spot_venue}`
+})
+
+function showOpenDialog(target: OpenTarget) {
+  openTarget.value = target
   showOpenModal.value = true
+}
+
+function venueTradeBlock(...venueIds: string[]): string {
+  for (const vid of venueIds) {
+    const cap = venueCaps.value[vid]
+    if (cap && !cap.trade) return `${vid}: scan-only${cap.reason ? ` (${cap.reason})` : ''}`
+  }
+  return ''
 }
 
 async function confirmOpen() {
@@ -675,15 +704,44 @@ async function confirmOpen() {
   if (!tgt) return
   opening.value = true
   try {
-    await post('/positions/open', {
-      base: tgt.base,
-      long_venue: tgt.long_venue,
-      short_venue: tgt.short_venue,
-      amount_usd: openAmount.value,
-      direction: tgt.direction.toLowerCase(),
-      dry_run: openDryRun.value,
-    })
-    message.success(t('scanner.opened', { base: tgt.base, mode: openDryRun.value ? 'dry-run' : 'LIVE' }))
+    let body: Record<string, unknown>
+    if (tgt.kind === 'pure') {
+      const r = tgt.row
+      body = {
+        strategy: 'pure_futures',
+        base: r.base,
+        long_venue: r.long_venue,
+        short_venue: r.short_venue,
+        amount_usd: openAmount.value,
+        direction: r.direction.toLowerCase(),
+        dry_run: openDryRun.value,
+      }
+    } else if (tgt.kind === 'carry') {
+      const r = tgt.row
+      body = {
+        strategy: 'carry',
+        base: r.base,
+        futures_venue: r._venue,
+        spot_venue: r._venue,
+        amount_usd: openAmount.value,
+        direction: r._direction,
+        dry_run: openDryRun.value,
+      }
+    } else {
+      const r = tgt.row
+      body = {
+        strategy: 'unified',
+        base: r.base,
+        futures_venue: r.futures_venue,
+        spot_venue: r.spot_venue,
+        amount_usd: openAmount.value,
+        direction: (r.direction || 'forward').toLowerCase(),
+        dry_run: openDryRun.value,
+      }
+    }
+    await post('/positions/open', body)
+    const base = tgt.kind === 'pure' ? tgt.row.base : tgt.row.base
+    message.success(t('scanner.opened', { base, mode: openDryRun.value ? 'dry-run' : 'LIVE' }))
     showOpenModal.value = false
   } catch (e) {
     message.error(e instanceof Error ? e.message : t('scanner.failedToOpen'))
@@ -765,12 +823,21 @@ const pureColumns = computed<DataTableColumns<PureRow>>(() => [
         size: 'tiny', type: 'primary', secondary: true,
         disabled: !!block,
         title: block || undefined,
-        onClick: () => showOpenDialog(row),
+        onClick: () => showOpenDialog({ kind: 'pure', row }),
       }, { default: () => t('scanner.open') })
     } },
 ])
 
 // ---- Cash & Carry ----
+type CarryRow = CarryCand & { _venue: string; _direction: 'forward' | 'reverse' }
+
+function carryRowsForVenue(ven: CarryVenue): CarryRow[] {
+  return [
+    ...(ven.forward || []).map((r) => ({ ...r, _venue: ven.venue, _direction: 'forward' as const })),
+    ...(ven.reverse || []).map((r) => ({ ...r, _venue: ven.venue, _direction: 'reverse' as const })),
+  ]
+}
+
 const carryVenues = computed(() => carryData.value)
 const carryTotalFwd = computed(() => carryVenues.value.reduce((s, v) => s + (v.forward?.length ?? 0), 0))
 const carryTotalRev = computed(() => carryVenues.value.reduce((s, v) => s + (v.reverse?.length ?? 0), 0))
@@ -781,14 +848,24 @@ const carryStatCards = computed(() => [
   { label: t('scanner.strategy'), value: 'Cash & Carry', icon: AnalyticsOutline, color: '#8a2be2' },
 ])
 
-const carryColumns = computed<DataTableColumns<CarryCand>>(() => [
+const carryColumns = computed<DataTableColumns<CarryRow>>(() => [
   { title: t('scanner.pair'), key: 'base', width: 90, render: (row) => `${row.base}/USDT` },
-  { title: t('scanner.type'), key: 'type', width: 80, render: (row) => h(NTag, { size: 'small', type: row.has_spot !== undefined ? 'success' : 'warning', bordered: false }, { default: () => row.has_spot !== undefined ? t('scanner.forward') : t('scanner.reverse') }) },
+  { title: t('scanner.type'), key: 'type', width: 80, render: (row) => h(NTag, { size: 'small', type: row._direction === 'forward' ? 'success' : 'warning', bordered: false }, { default: () => row._direction === 'forward' ? t('scanner.forward') : t('scanner.reverse') }) },
   { title: t('scanner.rate'), key: 'rate_pct', width: 100, render: (row) => (row.rate_pct ?? 0).toFixed(4) + '%' },
   { title: t('scanner.ann'), key: 'annual_pct', width: 80, render: (row) => (row.annual_pct ?? 0).toFixed(0) + '%' },
   { title: t('scanner.spotBorrow'), key: 'spot', width: 100, render: (row) => row.has_spot === true ? 'Spot: $' + (row.spot_price ?? 0).toFixed(2) : row.borrowable === true ? 'Borrow' : 'N/A' },
   { title: t('scanner.netEdge'), key: 'net_edge_pct', width: 100, sorter: (a, b) => (a.net_edge_pct ?? 0) - (b.net_edge_pct ?? 0),
     render: (row) => h(NText, { type: (row.net_edge_pct ?? 0) > 0 ? 'success' : 'error', strong: true }, { default: () => (row.net_edge_pct ?? 0).toFixed(4) + '%' }) },
+  { title: t('scanner.action'), key: 'actions', width: 80,
+    render: (row) => {
+      const block = venueTradeBlock(row._venue)
+      return h(NButton, {
+        size: 'tiny', type: 'primary', secondary: true,
+        disabled: !!block,
+        title: block || undefined,
+        onClick: () => showOpenDialog({ kind: 'carry', row }),
+      }, { default: () => t('scanner.open') })
+    } },
 ])
 
 // ---- Unified C&C ----
@@ -812,6 +889,16 @@ const unifiedColumns = computed<DataTableColumns<UnifiedCarryCand>>(() => [
   { title: t('scanner.netEdge'), key: 'net_edge_pct', width: 100, sorter: (a, b) => (a.net_edge_pct ?? 0) - (b.net_edge_pct ?? 0), defaultSortOrder: 'descend',
     render: (row) => h(NText, { type: (row.net_edge_pct ?? 0) > 0 ? 'success' : 'error', strong: true }, { default: () => (row.net_edge_pct ?? 0).toFixed(4) + '%' }) },
   { title: t('scanner.annual'), key: 'annual_pct', width: 80, render: (row) => (row.annual_pct ?? 0).toFixed(0) + '%' },
+  { title: t('scanner.action'), key: 'actions', width: 80,
+    render: (row) => {
+      const block = venueTradeBlock(row.futures_venue, row.spot_venue)
+      return h(NButton, {
+        size: 'tiny', type: 'primary', secondary: true,
+        disabled: !!block,
+        title: block || undefined,
+        onClick: () => showOpenDialog({ kind: 'unified', row }),
+      }, { default: () => t('scanner.open') })
+    } },
 ])
 
 onMounted(async () => {

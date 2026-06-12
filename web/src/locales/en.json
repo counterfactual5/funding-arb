@@ -77,7 +77,7 @@
     "sameInterval": "Same Interval",
     "cross": "Cross",
     "crossIntervalDocs": "Cross-interval model",
-    "scanOnlyStrategy": "Scan-only in the dashboard — use the CLI to open positions.",
+    "scanOnlyStrategy": "Dry-run open from the table; live orders need API keys and balance.",
     "strategyDocsLink": "Algorithm docs",
     "columnDocsLink": "Docs",
     "scannedPairs": "Scanned Pairs",

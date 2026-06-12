@@ -5,20 +5,24 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["positions"])
 
+StrategyKind = Literal["pure_futures", "carry", "unified"]
+
 # ---------------------------------------------------------------------------
 # Try importing real position loader / executor
 # ---------------------------------------------------------------------------
 _load_positions_fn = None
 _close_fn = None
+_load_cross_positions_fn = None
+_open_cross_fn = None
+_close_cross_fn = None
 try:
     from execution.pure_futures_executor import (  # noqa: E402
         close_pure_futures_pair,
@@ -30,8 +34,21 @@ try:
 except Exception:
     pass
 
+try:
+    from execution.cross_venue_executor import (  # noqa: E402
+        close_cross_venue_position,
+        load_positions as load_cross_venue_positions,
+        open_cross_venue_position,
+    )
+
+    _load_cross_positions_fn = load_cross_venue_positions
+    _open_cross_fn = open_cross_venue_position
+    _close_cross_fn = close_cross_venue_position
+except Exception:
+    pass
+
 # ---------------------------------------------------------------------------
-# Position file path (matches execution/pure_futures_executor.py)
+# Position file paths
 # ---------------------------------------------------------------------------
 _POSITIONS_PATH = (
     Path(__file__).resolve().parent.parent.parent
@@ -40,29 +57,59 @@ _POSITIONS_PATH = (
     / "pure-futures"
     / "positions.json"
 )
+_PURE_FUTURES_TEMPLATE = (
+    Path(__file__).resolve().parent.parent.parent
+    / "templates"
+    / "config.pure_futures.spread.json"
+)
 
 
-def _read_positions() -> list[dict[str, Any]]:
-    """Read positions from file, using the real loader if available."""
+def _read_pure_positions() -> list[dict[str, Any]]:
+    """Read pure-futures positions from file, using the real loader if available."""
     if _load_positions_fn is not None:
         try:
-            return _load_positions_fn()
+            rows = _load_positions_fn()
+            for p in rows:
+                p.setdefault("strategy", "pure_futures")
+            return rows
         except Exception:
             pass
-    # Fallback: read directly
     if not _POSITIONS_PATH.exists():
         return []
     try:
         data = json.loads(_POSITIONS_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
+        rows = data if isinstance(data, list) else []
+        for p in rows:
+            p.setdefault("strategy", "pure_futures")
+        return rows
     except Exception:
         return []
 
 
+def _read_cross_positions() -> list[dict[str, Any]]:
+    if _load_cross_positions_fn is None:
+        return []
+    try:
+        rows = _load_cross_positions_fn()
+        for p in rows:
+            p.setdefault("strategy", "carry" if p.get("futures_venue") == p.get("spot_venue") else "unified")
+        return rows
+    except Exception:
+        return []
+
+
+def _read_positions() -> list[dict[str, Any]]:
+    return _read_pure_positions() + _read_cross_positions()
+
+
 def _enrich_positions_with_pnl(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Attach unrealized PnL from live mark prices for open positions."""
+    """Attach unrealized PnL from live mark prices for open pure-futures positions."""
     open_pos = [
-        p for p in positions if p.get("status") == "open" and p.get("qty")
+        p
+        for p in positions
+        if p.get("status") == "open"
+        and p.get("qty")
+        and p.get("strategy", "pure_futures") == "pure_futures"
     ]
     if not open_pos:
         return positions
@@ -88,7 +135,7 @@ def _enrich_positions_with_pnl(positions: list[dict[str, Any]]) -> list[dict[str
     enriched: list[dict[str, Any]] = []
     for pos in positions:
         p = dict(pos)
-        if p.get("status") != "open":
+        if p.get("status") != "open" or p.get("strategy", "pure_futures") != "pure_futures":
             enriched.append(p)
             continue
         qty = float(p.get("qty") or 0)
@@ -119,16 +166,72 @@ def _enrich_positions_with_pnl(positions: list[dict[str, Any]]) -> list[dict[str
 
 
 class OpenPositionRequest(BaseModel):
+    strategy: StrategyKind = Field(
+        "pure_futures",
+        description="pure_futures | carry | unified",
+    )
     base: str = Field(..., description="Base asset of the trading pair, e.g. BTC")
-    long_venue: str = Field(..., description="Long venue")
-    short_venue: str = Field(..., description="Short venue")
     amount_usd: float = Field(..., gt=0, description="Position size (USD)")
     direction: str = Field("forward", description="forward | reverse")
     dry_run: bool = Field(True, description="Whether to simulate opening a position")
+    long_venue: str | None = Field(None, description="Pure futures long venue")
+    short_venue: str | None = Field(None, description="Pure futures short venue")
+    futures_venue: str | None = Field(None, description="Carry/unified perp venue")
+    spot_venue: str | None = Field(None, description="Carry/unified spot venue")
 
 
 class ClosePositionRequest(BaseModel):
     reason: str = Field("", description="Reason for closing the position")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _check_venues_tradeable(venue_ids: list[str], *, live: bool) -> str | None:
+    try:
+        from server.routes.settings import venue_live_ready, venue_trade_capability  # noqa: E402
+    except ImportError:
+        return None
+
+    for vid in venue_ids:
+        capable, reason = venue_trade_capability(vid)
+        if not capable:
+            return f"venue {vid!r} is scan-only, cannot trade: {reason}"
+        if live:
+            ready, live_reason = venue_live_ready(vid)
+            if not ready:
+                return f"venue {vid!r} not ready for live trading: {live_reason}"
+    return None
+
+
+def _executor_config() -> tuple[dict[str, Any], float]:
+    """Build pure-futures executor config from template + Dashboard strategy settings."""
+    cfg: dict[str, Any] = {}
+    if _PURE_FUTURES_TEMPLATE.exists():
+        try:
+            cfg = json.loads(_PURE_FUTURES_TEMPLATE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    try:
+        from core.strategy_config import apply_strategy_to_pure_futures_cfg  # noqa: E402
+
+        cfg = apply_strategy_to_pure_futures_cfg(cfg)
+    except Exception:
+        pass
+    pfa = cfg.get("pureFuturesArbitrage") or {}
+    max_mark = float(pfa.get("maxMarkSpreadPct") or 1.0)
+    return cfg, max_mark
+
+
+def _position_kind(position_id: str, positions: list[dict[str, Any]]) -> str:
+    for pos in positions:
+        if pos.get("id") == position_id:
+            return str(pos.get("strategy") or "pure_futures")
+    if position_id.startswith("xv-"):
+        return "carry"
+    return "pure_futures"
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +243,7 @@ class ClosePositionRequest(BaseModel):
 async def list_positions():
     """List all positions (open + closed)."""
     positions = _read_positions()
-    live = _load_positions_fn is not None
+    live = _load_positions_fn is not None or _load_cross_positions_fn is not None
     if live and positions:
         positions = _enrich_positions_with_pnl(positions)
     return {"success": True, "data": positions, "live": live}
@@ -150,7 +253,7 @@ async def list_positions():
 async def get_position(position_id: str):
     """Get a single position by ID."""
     positions = _read_positions()
-    live = _load_positions_fn is not None
+    live = _load_positions_fn is not None or _load_cross_positions_fn is not None
 
     for pos in positions:
         if pos.get("id") == position_id:
@@ -159,103 +262,105 @@ async def get_position(position_id: str):
     raise HTTPException(status_code=404, detail=f"Position {position_id} not found")
 
 
-def _executor_config() -> tuple[dict[str, Any], float]:
-    """Build executor config (depth check etc.) from persisted strategy params.
-
-    Returns (config, max_mark_spread_pct).
-    """
-    strategy: dict[str, Any] = {}
-    try:
-        from server.routes.settings import _load_strategy_config  # noqa: E402
-
-        strategy = _load_strategy_config()
-    except Exception:
-        pass
-    max_mark = float(strategy.get("max_mark_spread_pct") or 1.0)
-    config = {
-        "pureFuturesArbitrage": {
-            "depthCheckEnabled": True,
-            "depthMaxDevPct": 0.3,
-            "depthMinMultiple": 3.0,
-            # DEX orderbooks can be thin/flaky: a failed depth fetch blocks the open
-            "depthCheckFailOpen": False,
-        }
-    }
-    return config, max_mark
-
-
 @router.post("/positions/open")
 async def open_position(req: OpenPositionRequest):
-    """Open a new spread position."""
-    # Reject venues the executor cannot route orders to (scan-only venues).
-    try:
-        from server.routes.settings import venue_live_ready, venue_trade_capability  # noqa: E402
+    """Open a new hedge position (pure futures, cash-and-carry, or unified C&C)."""
+    strategy = req.strategy
+    direction = str(req.direction or "forward").lower()
+    if direction not in ("forward", "reverse"):
+        return {"success": False, "error": f"invalid direction {req.direction!r}"}
 
-        for vid in (req.long_venue, req.short_venue):
-            capable, reason = venue_trade_capability(vid)
-            if not capable:
-                return {
-                    "success": False,
-                    "error": f"venue {vid!r} is scan-only, cannot trade: {reason}",
-                }
-            if not req.dry_run:
-                ready, live_reason = venue_live_ready(vid)
-                if not ready:
-                    return {
-                        "success": False,
-                        "error": f"venue {vid!r} not ready for live trading: {live_reason}",
-                    }
-    except ImportError:
-        pass
-
-    if _load_positions_fn is None:
-        return {
-            "success": False,
-            "error": "Executor module unavailable",
-            "live": False,
-        }
-
-    try:
-        import asyncio
-
-        from execution.pure_futures_executor import open_pure_futures_pair  # noqa: E402
-
-        exec_config, max_mark = _executor_config()
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: open_pure_futures_pair(
-                req.base,
-                req.long_venue,
-                req.short_venue,
-                req.amount_usd,
-                direction=req.direction,
-                dry_run=req.dry_run,
-                max_mark_spread_pct=max_mark,
-                config=exec_config,
-            ),
+    if strategy == "pure_futures":
+        if not req.long_venue or not req.short_venue:
+            return {
+                "success": False,
+                "error": "long_venue and short_venue required for pure_futures",
+            }
+        venue_err = _check_venues_tradeable(
+            [req.long_venue, req.short_venue], live=not req.dry_run
         )
-        data = result.to_dict() if hasattr(result, "to_dict") else result
-        ok = bool(getattr(result, "ok", True))
-        resp: dict[str, Any] = {"success": ok, "data": data, "live": True}
-        if not ok:
-            logs = getattr(result, "logs", None) or []
-            resp["error"] = "; ".join(str(x) for x in logs[-3:]) or "open aborted"
-        return resp
-    except Exception as e:
-        return {"success": False, "error": f"Failed to open position: {e}"}
+        if venue_err:
+            return {"success": False, "error": venue_err}
+        if _load_positions_fn is None:
+            return {"success": False, "error": "Executor module unavailable", "live": False}
+        try:
+            import asyncio
+
+            from execution.pure_futures_executor import open_pure_futures_pair  # noqa: E402
+
+            exec_config, max_mark = _executor_config()
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: open_pure_futures_pair(
+                    req.base,
+                    req.long_venue,
+                    req.short_venue,
+                    req.amount_usd,
+                    direction=direction,
+                    dry_run=req.dry_run,
+                    max_mark_spread_pct=max_mark,
+                    config=exec_config,
+                ),
+            )
+            return _format_open_result(result)
+        except Exception as e:
+            return {"success": False, "error": f"Failed to open position: {e}"}
+
+    if strategy in ("carry", "unified"):
+        futures_v = (req.futures_venue or "").strip().lower()
+        spot_v = (req.spot_venue or "").strip().lower()
+        if not futures_v or not spot_v:
+            return {
+                "success": False,
+                "error": "futures_venue and spot_venue required for carry/unified",
+            }
+        venue_err = _check_venues_tradeable(
+            [futures_v, spot_v], live=not req.dry_run
+        )
+        if venue_err:
+            return {"success": False, "error": venue_err}
+        if _open_cross_fn is None:
+            return {
+                "success": False,
+                "error": "Cross-venue executor unavailable",
+                "live": False,
+            }
+        try:
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: _open_cross_fn(
+                    req.base,
+                    direction,  # type: ignore[arg-type]
+                    futures_v,
+                    spot_v,
+                    req.amount_usd,
+                    dry_run=req.dry_run,
+                ),
+            )
+            return _format_open_result(result)
+        except Exception as e:
+            return {"success": False, "error": f"Failed to open position: {e}"}
+
+    return {"success": False, "error": f"unknown strategy {strategy!r}"}
+
+
+def _format_open_result(result: Any) -> dict[str, Any]:
+    data = result.to_dict() if hasattr(result, "to_dict") else result
+    ok = bool(getattr(result, "ok", True))
+    resp: dict[str, Any] = {"success": ok, "data": data, "live": True}
+    if not ok:
+        logs = getattr(result, "logs", None) or []
+        resp["error"] = "; ".join(str(x) for x in logs[-3:]) or "open aborted"
+    return resp
 
 
 @router.post("/positions/{position_id}/close")
 async def close_position(position_id: str, req: ClosePositionRequest | None = None):
     """Close a position by ID."""
-    if _close_fn is None:
-        return {
-            "success": False,
-            "error": "Executor module unavailable, cannot close position",
-            "live": False,
-        }
-
     positions = _read_positions()
     target = None
     for pos in positions:
@@ -269,14 +374,31 @@ async def close_position(position_id: str, req: ClosePositionRequest | None = No
     if target.get("status") == "closed":
         return {"success": False, "error": "Position already closed"}
 
+    kind = _position_kind(position_id, positions)
+    dry_run = bool(target.get("dry_run", True)) if os.environ.get("DCA_LIVE") != "1" else False
+
     try:
         import asyncio
 
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: _close_fn(position_id),
-        )
+
+        if kind in ("carry", "unified") and _close_cross_fn is not None:
+            result = await loop.run_in_executor(
+                None,
+                lambda: _close_cross_fn(position_id, dry_run=dry_run),
+            )
+        elif _close_fn is not None:
+            result = await loop.run_in_executor(
+                None,
+                lambda: _close_fn(position_id),
+            )
+        else:
+            return {
+                "success": False,
+                "error": "Executor module unavailable, cannot close position",
+                "live": False,
+            }
+
         data = result.to_dict() if hasattr(result, "to_dict") else result
         ok = bool(getattr(result, "ok", True))
         resp: dict[str, Any] = {"success": ok, "data": data, "live": True}

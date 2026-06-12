@@ -77,7 +77,7 @@
     "sameInterval": "同周期",
     "cross": "跨周期",
     "crossIntervalDocs": "跨周期算法说明",
-    "scanOnlyStrategy": "本策略仅扫描展示，开仓请使用 CLI。",
+    "scanOnlyStrategy": "支持表格内 Dry-run 开仓；实盘需配置 API 与余额。",
     "strategyDocsLink": "查看算法说明",
     "columnDocsLink": "文档",
     "scannedPairs": "扫描交易对",

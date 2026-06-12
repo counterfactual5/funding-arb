@@ -77,7 +77,7 @@
     "sameInterval": "同週期",
     "cross": "跨週期",
     "crossIntervalDocs": "跨週期演算法說明",
-    "scanOnlyStrategy": "本策略僅掃描展示，開倉請使用 CLI。",
+    "scanOnlyStrategy": "支援表格內 Dry-run 開倉；實盤需設定 API 與餘額。",
     "strategyDocsLink": "查看演算法說明",
     "columnDocsLink": "文件",
     "scannedPairs": "掃描交易對",

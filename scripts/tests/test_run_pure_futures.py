@@ -31,7 +31,28 @@ def _scan_stub(*args, **kwargs):
     }
 
 
-def test_run_once_shape():
+def test_run_once_shape(tmp_path, monkeypatch):
+    cfg_file = tmp_path / "strategy_config.json"
+    cfg_file.write_text(
+        json.dumps(
+            {
+                "min_spread_annual": 0.03,
+                "min_edge_annual": 0.01,
+                "max_mark_spread_pct": 1.0,
+                "trade_usd": 500,
+                "max_positions": 2,
+                "scan_interval_sec": 300,
+                "scan_venues": ["binance", "okx"],
+                "min_edge_1h": None,
+                "min_edge_mismatch": None,
+                "fee_mode": "auto",
+                "venue_fee_tiers": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("core.strategy_config.STRATEGY_CONFIG_PATH", cfg_file)
+
     cfg = json.loads(
         json.dumps(
             {
@@ -50,7 +71,7 @@ def test_run_once_shape():
     # monkeypatch the scanner so we don't hit real APIs
     with patch(
         "execution.run_pure_futures_spread.scan_pure_futures_spreads", _scan_stub
-    ):
+    ), patch("execution.run_pure_futures_spread._open_positions", lambda: []):
         out = run_once(cfg)
     assert out["strategy"] == "pure_futures_spread"
     assert out["dry_run"] is True

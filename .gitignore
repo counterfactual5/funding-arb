@@ -42,5 +42,4 @@ infinite_opt.log
 
 # Scratchpad tests
 scratch/
-.github/workflows/
 .pytest_cache/
