@@ -35,11 +35,12 @@ CEX_TIERS: dict[str, VenueTiers] = {
     },
     "bybit": {
         "vip0": {"spot_taker_pct": 0.10, "futures_taker_pct": 0.055},
-        "vip1": {"spot_taker_pct": 0.08, "futures_taker_pct": 0.050},
-        "vip2": {"spot_taker_pct": 0.06, "futures_taker_pct": 0.045},
-        "vip3": {"spot_taker_pct": 0.05, "futures_taker_pct": 0.040},
-        "vip4": {"spot_taker_pct": 0.04, "futures_taker_pct": 0.035},
-        "vip5": {"spot_taker_pct": 0.035, "futures_taker_pct": 0.030},
+        "vip1": {"spot_taker_pct": 0.080, "futures_taker_pct": 0.040},
+        "vip2": {"spot_taker_pct": 0.0775, "futures_taker_pct": 0.0375},
+        "vip3": {"spot_taker_pct": 0.075, "futures_taker_pct": 0.035},
+        "vip4": {"spot_taker_pct": 0.060, "futures_taker_pct": 0.032},
+        "vip5": {"spot_taker_pct": 0.050, "futures_taker_pct": 0.032},
+        "supreme": {"spot_taker_pct": 0.045, "futures_taker_pct": 0.030},
     },
     "okx": {
         "vip0": {"spot_taker_pct": 0.10, "futures_taker_pct": 0.050},

@@ -87,6 +87,7 @@ class BinanceFundingProvider(FundingProvider):
                     "rate_pct": float(row.get("lastFundingRate", 0.0) or 0.0) * 100,
                     "next_funding_ts": int(row.get("nextFundingTime", 0) or 0),
                     "mark_price": float(row.get("markPrice", 0.0) or 0.0),
+                    "index_price": float(row.get("indexPrice", 0.0) or 0.0),
                 }
             )
         return out
@@ -180,6 +181,7 @@ class BitgetFundingProvider(FundingProvider):
                     "mark_price": float(
                         row.get("markPrice", row.get("lastPr", 0)) or 0
                     ),
+                    "index_price": float(row.get("indexPrice", 0) or 0),
                 }
             )
         return out
@@ -275,6 +277,7 @@ class BybitFundingProvider(FundingProvider):
                     "mark_price": float(
                         row.get("markPrice", row.get("lastPrice", 0)) or 0
                     ),
+                    "index_price": float(row.get("indexPrice", 0) or 0),
                 }
             )
         return out
@@ -342,6 +345,7 @@ class OkxFundingProvider(FundingProvider):
     def __init__(self) -> None:
         self._any_cache: tuple[float, list[dict[str, Any]]] | None = None
         self._mark_cache: tuple[float, dict[str, float]] | None = None
+        self._index_cache: tuple[float, dict[str, float]] | None = None
 
     def _inst_id(self, symbol: str) -> str:
         sym = symbol.upper()
@@ -371,12 +375,17 @@ class OkxFundingProvider(FundingProvider):
                 "https://www.okx.com/api/v5/public/mark-price?instType=SWAP"
             )
             mp: dict[str, float] = {}
+            ip: dict[str, float] = {}
             for row in payload.get("data", []) if isinstance(payload, dict) else []:
                 inst = str(row.get("instId", ""))
                 px = float(row.get("markPx", 0) or 0)
+                idx = float(row.get("idxPx", 0) or 0)
                 if inst and px > 0:
                     mp[inst] = px
+                if inst and idx > 0:
+                    ip[inst] = idx
             self._mark_cache = (now, mp)
+            self._index_cache = (now, ip)
             return mp
         except Exception:
             return {}
@@ -385,6 +394,7 @@ class OkxFundingProvider(FundingProvider):
         """Batch endpoint instId=ANY: 1 request replaces per-symbol parallel (~400 contracts < 1s)."""
         quote_u = quote.upper()
         mp_map = self._fetch_mark_prices()
+        ip_map = (self._index_cache or (0, {}))[1]
         out: list[dict[str, Any]] = []
         for row in self._fetch_any():
             inst = str(row.get("instId", ""))
@@ -399,6 +409,7 @@ class OkxFundingProvider(FundingProvider):
                     "rate_pct": float(row.get("fundingRate", 0) or 0) * 100,
                     "next_funding_ts": int(row.get("fundingTime", 0) or 0),
                     "mark_price": float(mp_map.get(swap_inst, 0.0)),
+                    "index_price": float(ip_map.get(swap_inst, 0.0)),
                 }
             )
         return out

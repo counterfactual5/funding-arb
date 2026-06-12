@@ -57,7 +57,9 @@ class LighterFundingProvider:
             return self._meta_cache[1]
         payload = self._get("/api/v1/orderBookDetails")
         out: dict[str, dict[str, Any]] = {}
-        for row in payload.get("order_book_details", []) if isinstance(payload, dict) else []:
+        for row in (
+            payload.get("order_book_details", []) if isinstance(payload, dict) else []
+        ):
             if str(row.get("market_type", "perp")) != "perp":
                 continue
             if str(row.get("status", "active")) != "active":
@@ -113,6 +115,7 @@ class LighterFundingProvider:
                     "rate_pct": float(row.get("rate", 0) or 0) * 100,
                     "next_funding_ts": next_ts,
                     "mark_price": float(m.get("last_trade_price", 0.0)),
+                    "index_price": 0.0,  # Lighter has no public index/oracle price
                 }
             )
         return out

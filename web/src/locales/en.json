@@ -44,6 +44,8 @@
     "mode": "Mode",
     "scanComplete": "Scan complete",
     "scanFailed": "Scan failed",
+    "venuesRequired": "Select at least one venue",
+    "venuesNeedTwo": "Pure futures needs at least 2 venues to compare spreads",
     "opened": "Opened {base} ({mode})",
     "failedToOpen": "Failed to open position",
     "openPosition": "Open Position",

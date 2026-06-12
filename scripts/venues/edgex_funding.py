@@ -66,14 +66,19 @@ class EdgexFundingProvider:
     def _scan_bases(self) -> list[str]:
         """Bounded scan universe (env EDGEX_SCAN_BASES overrides the default)."""
         env = os.environ.get("EDGEX_SCAN_BASES", "").strip()
-        bases = [b.strip().upper() for b in env.split(",") if b.strip()] if env \
+        bases = (
+            [b.strip().upper() for b in env.split(",") if b.strip()]
+            if env
             else list(_DEFAULT_SCAN_BASES)
+        )
         contracts = self._contracts()
         return [b for b in bases if b in contracts]
 
     def _scan_workers(self) -> int:
         try:
-            return max(1, int(os.environ.get("EDGEX_SCAN_WORKERS", _DEFAULT_SCAN_WORKERS)))
+            return max(
+                1, int(os.environ.get("EDGEX_SCAN_WORKERS", _DEFAULT_SCAN_WORKERS))
+            )
         except ValueError:
             return _DEFAULT_SCAN_WORKERS
 
@@ -107,7 +112,9 @@ class EdgexFundingProvider:
             interval_min = float(c.get("fundingRateIntervalMin", 0) or 0)
             out[base] = {
                 "contract_id": str(c.get("contractId", "")),
-                "interval_h": (interval_min / 60.0) if interval_min > 0 else _DEFAULT_INTERVAL_H,
+                "interval_h": (interval_min / 60.0)
+                if interval_min > 0
+                else _DEFAULT_INTERVAL_H,
                 "taker_pct": float(c.get("defaultTakerFeeRate", 0) or 0) * 100,
                 "tick_size": float(c.get("tickSize", 0) or 0),
                 "step_size": float(c.get("stepSize", 0) or 0),
@@ -139,7 +146,9 @@ class EdgexFundingProvider:
     # FundingProvider interface
     # ------------------------------------------------------------------
 
-    def fetch_all(self, quote: str = "USDT", workers: int | None = None) -> list[dict[str, Any]]:
+    def fetch_all(
+        self, quote: str = "USDT", workers: int | None = None
+    ) -> list[dict[str, Any]]:
         """Funding/mark for the bounded scan universe (whitelist + snapshot cache).
 
         NOTE: not the full contract list — see the rate-limit comment at module
@@ -163,10 +172,14 @@ class EdgexFundingProvider:
                 "rate_pct": float(row.get("fundingRate", 0) or 0) * 100,
                 "next_funding_ts": int(row.get("nextFundingTime", 0) or 0),
                 "mark_price": float(row.get("markPrice", 0) or 0),
+                "index_price": 0.0,  # EdgeX has no public index price
             }
 
         raw = run_io_parallel(
-            bases, _one, max_workers=workers or self._scan_workers(), swallow_errors=True
+            bases,
+            _one,
+            max_workers=workers or self._scan_workers(),
+            swallow_errors=True,
         )
         rows = [v for v in raw.values() if v]
         self._snapshot_cache[q] = (now, rows)

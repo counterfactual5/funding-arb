@@ -93,6 +93,12 @@ def _parse_venue_list(override: str | None, fallback: list[str]) -> list[str]:
     return list(fallback)
 
 
+def _venue_sets_match(requested: list[str], cached: list[str] | None) -> bool:
+    if not cached:
+        return False
+    return set(requested) == set(cached)
+
+
 def _scan_thresholds() -> tuple[float, float, float]:
     """Return (min_spread, min_edge, max_mark_spread_pct) from saved strategy config."""
     cfg = _strategy_cfg()
@@ -352,11 +358,27 @@ async def scanner_status(
 @router.get("/scanner/opportunities")
 async def scanner_opportunities(
     strategy: str = Query("pure", enum=["pure", "carry", "unified"]),
+    venues: str | None = Query(
+        None, description="Comma-separated venue ids; cache must match to return data"
+    ),
 ):
     """Return latest cached scan results (empty until a real scan completes)."""
     available = _scanner_available(strategy)
+    req_venues = (
+        [v.strip().lower() for v in venues.split(",") if v.strip()] if venues else None
+    )
+
     if strategy == "pure":
         if _pure_results is not None:
+            cached_v = _pure_results.get("venues") or []
+            if req_venues is not None and not _venue_sets_match(req_venues, cached_v):
+                return {
+                    "success": True,
+                    "data": _empty_pure(),
+                    "live": available,
+                    "has_data": False,
+                    "venues_mismatch": True,
+                }
             return {
                 "success": True,
                 "data": _pure_results,
@@ -372,6 +394,15 @@ async def scanner_opportunities(
 
     if strategy == "carry":
         if _carry_results:
+            cached_v = [r.get("venue", "") for r in _carry_results if r.get("venue")]
+            if req_venues is not None and not _venue_sets_match(req_venues, cached_v):
+                return {
+                    "success": True,
+                    "data": [],
+                    "live": available,
+                    "has_data": False,
+                    "venues_mismatch": True,
+                }
             return {
                 "success": True,
                 "data": _carry_results,

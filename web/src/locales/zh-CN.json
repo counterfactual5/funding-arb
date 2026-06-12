@@ -44,6 +44,8 @@
     "mode": "模式",
     "scanComplete": "扫描完成",
     "scanFailed": "扫描失败",
+    "venuesRequired": "请至少选择一个交易所",
+    "venuesNeedTwo": "纯永续套利至少需要选择 2 个交易所",
     "opened": "已开仓 {base}（{mode}）",
     "failedToOpen": "开仓失败",
     "openPosition": "开仓",

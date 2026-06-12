@@ -213,7 +213,9 @@ const unifiedData = ref<UnifiedCarryCand[]>([])
 const minEdgeFilter = ref<number>(0)
 const intervalFilter = ref<'all' | 'same' | 'cross'>('all')
 // Default to CEX only — DEX venues (hyperliquid/aster/lighter/edgex) are opt-in
-const selectedVenues = ref<string[]>(['binance', 'bitget', 'bybit', 'okx'])
+const DEFAULT_VENUES = [...CEX_VENUES]
+const selectedVenues = ref<string[]>([...DEFAULT_VENUES])
+const lastScannedVenues = ref<string[]>([])
 
 // Track raw input text so the width adapts while typing (e.g. "0." before it becomes a valid number)
 const edgeInputText = ref('0')
@@ -298,18 +300,53 @@ async function loadStrategyVenues() {
     const json = await resp.json()
     const venues = json.data?.scan_venues
     if (Array.isArray(venues) && venues.length > 0) {
-      selectedVenues.value = venues
+      selectedVenues.value = venuesForStrategy(strategy.value, venues)
     }
   } catch { /* ignore */ }
+}
+
+function venuesForStrategy(st: Strategy, venues: string[]): string[] {
+  if (st === 'pure') return venues.length > 0 ? [...venues] : [...DEFAULT_VENUES]
+  const cex = venues.filter((v) => CARRY_CAPABLE.has(v))
+  return cex.length > 0 ? cex : [...DEFAULT_VENUES]
+}
+
+function effectiveVenues(): string[] {
+  const v = selectedVenues.value
+  return v.length > 0 ? v : [...DEFAULT_VENUES]
+}
+
+function venuesMatch(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  const set = new Set(a)
+  return b.every((x) => set.has(x))
+}
+
+function scanVenuesForStrategy(st: Strategy): string[] {
+  return venuesForStrategy(st, effectiveVenues())
+}
+
+function cacheMatchesSelection(st: Strategy): boolean {
+  if (lastScannedVenues.value.length === 0) return false
+  return venuesMatch(lastScannedVenues.value, scanVenuesForStrategy(st))
 }
 
 let _venuesWatchTimer: ReturnType<typeof setTimeout> | null = null
 
 // Handles manual changes in the venue dropdown (both selection and removal of tags)
 function handleVenuesChange(val: string[]) {
+  if (val.length === 0) {
+    message.warning(t('scanner.venuesRequired'))
+    return
+  }
   selectedVenues.value = val
 
-  // Trigger auto-scan with the new selection (debounced)
+  if (strategy.value === 'pure' && val.length < 2) {
+    message.info(t('scanner.venuesNeedTwo'))
+    return
+  }
+
+  // Rescan only the selected venues (debounced)
   if (refreshing.value) return
   if (_venuesWatchTimer) clearTimeout(_venuesWatchTimer)
   _venuesWatchTimer = setTimeout(() => {
@@ -342,14 +379,23 @@ function rowTradeBlock(row: PureRow): string {
   return ''
 }
 
-function venuesQuery(): string {
-  return selectedVenues.value.length > 0 ? selectedVenues.value.join(',') : ''
+function venuesQuery(st?: Strategy): string {
+  return scanVenuesForStrategy(st ?? strategy.value).join(',')
 }
 
 function applyScanData(st: Strategy, data: unknown) {
-  if (st === 'pure') pureData.value = data as ScannerOpportunities
-  else if (st === 'carry') carryData.value = Array.isArray(data) ? data : []
-  else unifiedData.value = Array.isArray(data) ? data as UnifiedCarryCand[] : []
+  if (st === 'pure') {
+    const d = data as ScannerOpportunities
+    pureData.value = d
+    lastScannedVenues.value = Array.isArray(d?.venues) ? [...d.venues] : scanVenuesForStrategy(st)
+  } else if (st === 'carry') {
+    const rows = Array.isArray(data) ? data as CarryVenue[] : []
+    carryData.value = rows
+    lastScannedVenues.value = rows.map((v) => v.venue).filter(Boolean)
+  } else {
+    unifiedData.value = Array.isArray(data) ? data as UnifiedCarryCand[] : []
+    lastScannedVenues.value = scanVenuesForStrategy(st)
+  }
 }
 
 function formatScanTime(iso: string | null | undefined) {
@@ -374,9 +420,12 @@ async function refreshScanLabel(st: Strategy) {
 
 async function waitForScanData(st: Strategy, maxMs = 120000) {
   const start = Date.now()
+  const vq = venuesQuery(st)
   while (Date.now() - start < maxMs) {
     await new Promise((r) => setTimeout(r, 2000))
-    const resp = await fetch(`/api/scanner/opportunities?strategy=${st}`)
+    const resp = await fetch(
+      `/api/scanner/opportunities?strategy=${st}&venues=${encodeURIComponent(vq)}`,
+    )
     const json = await resp.json()
     if (json.success && json.has_data) {
       applyScanData(st, json.data)
@@ -393,19 +442,29 @@ async function loadData(s?: Strategy | MouseEvent, autoScan = true) {
   const st = (s && typeof s !== 'object') ? s : strategy.value
   loading.value = true
   try {
-    const resp = await fetch(`/api/scanner/opportunities?strategy=${st}`)
+    const vq = venuesQuery(st)
+    const resp = await fetch(
+      `/api/scanner/opportunities?strategy=${st}&venues=${encodeURIComponent(vq)}`,
+    )
     const json = await resp.json()
-    if (json.success) {
-      applyScanData(st, json.data)
-      await refreshScanLabel(st)
-    }
     const available = json.live ?? false
     const hasData = json.has_data ?? false
     if (!available) {
       message.warning(t('scanner.scannerUnavailable'))
       return
     }
-    if (autoScan && !hasData && !refreshing.value) {
+    if (json.success && hasData && !json.venues_mismatch) {
+      applyScanData(st, json.data)
+      await refreshScanLabel(st)
+    } else if (json.venues_mismatch) {
+      // Cached scan was for different venues — don't show stale rows
+      if (st === 'pure') pureData.value = null
+      else if (st === 'carry') carryData.value = []
+      else unifiedData.value = []
+      lastScannedVenues.value = []
+    }
+    if (autoScan && (!hasData || json.venues_mismatch) && !refreshing.value) {
+      if (st === 'pure' && scanVenuesForStrategy(st).length < 2) return
       const status = await fetch(`/api/scanner/status?strategy=${st}`).then((r) => r.json())
       if (status.data?.scanning) {
         refreshing.value = true
@@ -424,11 +483,15 @@ async function loadData(s?: Strategy | MouseEvent, autoScan = true) {
 }
 
 async function handleTriggerScan() {
+  const st = strategy.value
+  if (st === 'pure' && scanVenuesForStrategy(st).length < 2) {
+    message.info(t('scanner.venuesNeedTwo'))
+    return
+  }
   refreshing.value = true
   try {
-    const vq = venuesQuery()
-    const st = strategy.value
-    const url = `/api/scanner/trigger?strategy=${st}${vq ? `&venues=${encodeURIComponent(vq)}` : ''}`
+    const vq = venuesQuery(st)
+    const url = `/api/scanner/trigger?strategy=${st}&venues=${encodeURIComponent(vq)}`
     const resp = await fetch(url, { method: 'POST' })
     const json = await resp.json()
     if (json.success) {
@@ -450,6 +513,7 @@ async function handleTriggerScan() {
 
 function onStrategyChange(val: Strategy) {
   strategy.value = val
+  selectedVenues.value = venuesForStrategy(val, selectedVenues.value)
   loadData(val, true)
 }
 
@@ -458,14 +522,23 @@ function onWsMessage(msg: WsMessage) {
   if (msg.event !== 'scanner.update') return
   const d = msg.data as Record<string, any>
   if (d.strategy === 'carry') {
-    carryData.value = Array.isArray(d.data) ? d.data : []
-    refreshScanLabel('carry')
+    const rows = Array.isArray(d.data) ? d.data as CarryVenue[] : []
+    const scanned = rows.map((v) => v.venue).filter(Boolean)
+    if (strategy.value === 'carry' && venuesMatch(scanned, scanVenuesForStrategy('carry'))) {
+      carryData.value = rows
+      lastScannedVenues.value = [...scanned]
+      refreshScanLabel('carry')
+    }
   } else if (d.strategy === 'unified') {
     unifiedData.value = Array.isArray(d.data) ? d.data : []
     refreshScanLabel('unified')
   } else if (d.forward || d.reverse) {
-    pureData.value = d as ScannerOpportunities
-    refreshScanLabel('pure')
+    const scanned = Array.isArray(d.venues) ? d.venues as string[] : []
+    if (strategy.value === 'pure' && venuesMatch(scanned, scanVenuesForStrategy('pure'))) {
+      pureData.value = d as ScannerOpportunities
+      lastScannedVenues.value = [...scanned]
+      refreshScanLabel('pure')
+    }
   }
 }
 const ws = useWebSocket(onWsMessage)
@@ -520,14 +593,11 @@ function toPureRow(i: import('@/composables/useApi').OpportunityItem, direction:
 const pureRows = computed<PureRow[]>(() => {
   const d = pureData.value
   if (!d) return []
+  // Rows are already scoped to the venues used in the last scan — only apply UI filters here
   let all = [
     ...(d.forward || []).map((i) => toPureRow(i, 'Forward')),
     ...(d.reverse || []).map((i) => toPureRow(i, 'Reverse')),
   ]
-  // Filter by selected venues
-  const venues = selectedVenues.value
-  if (venues.length === 0) return []
-  all = all.filter((r) => venues.includes(r.long_venue) && venues.includes(r.short_venue))
   if (minEdgeFilter.value > 0) all = all.filter((r) => r.net_edge_pct >= minEdgeFilter.value)
   if (intervalFilter.value === 'same') all = all.filter((r) => !r.settle_mismatch)
   else if (intervalFilter.value === 'cross') all = all.filter((r) => r.settle_mismatch)
@@ -549,7 +619,7 @@ function renderVenue(venue: string) {
 const genuine = computed(() => pureRows.value.filter((r) => r.real_edge_pct > 0).length)
 const bestReal = computed(() => pureRows.value.length > 0 ? Math.max(...pureRows.value.map((r) => r.real_edge_pct)) : 0)
 const pureStatCards = computed(() => [
-  { label: t('scanner.scannedPairs'), value: pureData.value?.total_assets_scanned ?? 0, icon: SearchOutline, color: '#2080f0' },
+  { label: t('scanner.scannedPairs'), value: cacheMatchesSelection('pure') ? (pureData.value?.total_assets_scanned ?? 0) : '—', icon: SearchOutline, color: '#2080f0' },
   { label: t('scanner.opportunities'), value: pureRows.value.length, icon: FlashOutline, color: '#18a058' },
   { label: t('scanner.genuineArb'), value: genuine.value, icon: TrendingUpOutline, color: genuine.value > 0 ? '#18a058' : '#d03050' },
   { label: t('scanner.bestRealEdge'), value: bestReal.value.toFixed(4) + '%', icon: AnalyticsOutline, color: bestReal.value > 0 ? '#18a058' : '#d03050' },
@@ -586,11 +656,7 @@ const pureColumns = computed<DataTableColumns<PureRow>>(() => [
 ])
 
 // ---- Cash & Carry ----
-const carryVenues = computed(() => {
-  const venues = selectedVenues.value
-  if (venues.length === 0) return []
-  return carryData.value.filter((v) => venues.includes(v.venue))
-})
+const carryVenues = computed(() => carryData.value)
 const carryTotalFwd = computed(() => carryVenues.value.reduce((s, v) => s + (v.forward?.length ?? 0), 0))
 const carryTotalRev = computed(() => carryVenues.value.reduce((s, v) => s + (v.reverse?.length ?? 0), 0))
 const carryStatCards = computed(() => [
@@ -611,11 +677,7 @@ const carryColumns = computed<DataTableColumns<CarryCand>>(() => [
 ])
 
 // ---- Unified C&C ----
-const unifiedRows = computed(() => {
-  const venues = selectedVenues.value
-  if (venues.length === 0) return []
-  return unifiedData.value.filter((r) => venues.includes(r.futures_venue) && venues.includes(r.spot_venue))
-})
+const unifiedRows = computed(() => unifiedData.value)
 const unifiedCrossVenue = computed(() => unifiedRows.value.filter((u) => !u.same_venue).length)
 const unifiedSameVenue = computed(() => unifiedRows.value.filter((u) => u.same_venue).length)
 const unifiedStatCards = computed(() => [
@@ -637,8 +699,8 @@ const unifiedColumns = computed<DataTableColumns<UnifiedCarryCand>>(() => [
   { title: t('scanner.annual'), key: 'annual_pct', width: 80, render: (row) => (row.annual_pct ?? 0).toFixed(0) + '%' },
 ])
 
-onMounted(() => {
-  loadStrategyVenues()
+onMounted(async () => {
+  await loadStrategyVenues()
   loadVenueCapabilities()
   loadData()
   ws.connect()

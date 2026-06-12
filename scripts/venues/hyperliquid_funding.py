@@ -84,6 +84,10 @@ class HyperliquidFundingProvider:
                 mark = float(ctx.get("markPx", 0) or 0)
             except (ValueError, TypeError):
                 mark = 0.0
+            try:
+                oracle = float(ctx.get("oraclePx", 0) or 0)
+            except (ValueError, TypeError):
+                oracle = 0.0
 
             out.append(
                 {
@@ -91,6 +95,7 @@ class HyperliquidFundingProvider:
                     "rate_pct": rate_float * 100,  # decimal → percentage
                     "next_funding_ts": next_ts,
                     "mark_price": mark,
+                    "index_price": oracle,
                 }
             )
         return out

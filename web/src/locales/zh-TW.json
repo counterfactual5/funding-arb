@@ -44,6 +44,8 @@
     "mode": "模式",
     "scanComplete": "掃描完成",
     "scanFailed": "掃描失敗",
+    "venuesRequired": "請至少選擇一個交易所",
+    "venuesNeedTwo": "純永續套利至少需要選擇 2 個交易所",
     "opened": "已開倉 {base}（{mode}）",
     "failedToOpen": "開倉失敗",
     "openPosition": "開倉",

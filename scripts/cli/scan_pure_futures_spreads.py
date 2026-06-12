@@ -50,10 +50,16 @@ DEFAULT_WATCH_INTERVAL = 5  # minutes
 DEFAULT_JSONL_FILE = "data/pure_futures_spreads.jsonl"
 HOURS_PER_YEAR = 365.0 * 24.0
 
+from core.cross_interval_funding import (
+    basis_pct,
+    blended_hourly_rate,
+    infer_last_settle_ts,
+    spread_source_for_pair,
+)
 from core.fee_providers import (
     build_policy_futures_cache,
-    parse_fee_policy,
     pair_open_taker_fee_pct,
+    parse_fee_policy,
 )
 
 # USDT-stablecoin / wrapped-asset blacklist (no point arbing against CEX's internal USD)
@@ -115,7 +121,9 @@ def fetch_all_fee_rate_rows_by_base(
                 "rate_pct": float(r.get("rate_pct", 0.0)),
                 "interval_h": interval_h,
                 "next_funding_ts": next_ts,
+                "last_settle_ts": infer_last_settle_ts(next_ts, interval_h),
                 "mark_price": float(r.get("mark_price", 0.0) or 0.0),
+                "index_price": float(r.get("index_price", 0.0) or 0.0),
             }
         return venue, by_base
 
@@ -145,19 +153,37 @@ def _backfill_missing_settle_times(
     if not missing:
         return
 
-    def _fetch_one(args: tuple[str, str, str]) -> tuple[str, int]:
+    def _fetch_one(args: tuple[str, str, str]) -> tuple[str, dict[str, Any]]:
         venue, symbol, base = args
         fp = get_funding_provider(venue)
         snap = fp.fetch_current(symbol)
-        return f"{venue}:{base}", int(snap.get("next_funding_ts", 0) or 0)
+        return f"{venue}:{base}", snap
 
-    ts_map = run_io_parallel(  # type: ignore[arg-type]
+    snap_map = run_io_parallel(  # type: ignore[arg-type]
         missing, _fetch_one, max_workers=workers, swallow_errors=True
     )
     for venue, symbol, base in missing:
         key = f"{venue}:{base}"
-        if key in ts_map and ts_map[key] > 0:
-            by_base[base][venue]["next_funding_ts"] = ts_map[key]
+        snap = snap_map.get(key)
+        if not isinstance(snap, dict):
+            continue
+        info = by_base[base][venue]
+        next_ts = int(snap.get("next_funding_ts", 0) or 0)
+        if next_ts > 0:
+            info["next_funding_ts"] = next_ts
+        last_ts = int(snap.get("last_settle_ts", 0) or 0)
+        if last_ts > 0:
+            info["last_settle_ts"] = last_ts
+        elif next_ts > 0:
+            info["last_settle_ts"] = infer_last_settle_ts(
+                next_ts, float(info.get("interval_h", 8.0) or 8.0)
+            )
+        idx = float(snap.get("index_price", 0) or 0)
+        if idx > 0:
+            info["index_price"] = idx
+        mark = float(snap.get("mark_price", 0) or 0)
+        if mark > 0 and not info.get("mark_price"):
+            info["mark_price"] = mark
 
 
 def _scan_spreads(
@@ -211,10 +237,26 @@ def _scan_spreads(
                         interval_a,
                     )
 
-                # Normalize rates to per-hour so venues with different settlement
-                # intervals (HL 1h vs CEX 8h) are compared on the same time base.
-                long_rate_hourly = long_rate / long_interval
-                short_rate_hourly = short_rate / short_interval
+                # Normalize rates to per-hour (HL 1h vs CEX 8h). Cross-interval pairs
+                # blend observed rate with basis-implied hourly funding; see
+                # core.cross_interval_funding for the model.
+                is_mismatch = abs(long_interval - short_interval) > 0.5
+                now_ms = int(time.time() * 1000)
+
+                long_rate_hourly, long_blend = blended_hourly_rate(
+                    long_rate,
+                    long_interval,
+                    long_info,
+                    now_ms=now_ms,
+                    use_basis_blend=is_mismatch,
+                )
+                short_rate_hourly, short_blend = blended_hourly_rate(
+                    short_rate,
+                    short_interval,
+                    short_info,
+                    now_ms=now_ms,
+                    use_basis_blend=is_mismatch,
+                )
 
                 # Effective holding period: the shorter interval determines the
                 # minimum cycle (you can exit the shorter side sooner).
@@ -245,13 +287,6 @@ def _scan_spreads(
                     direction = "forward"
 
                 annual = _annual_from_rate(spread, eff_interval)
-                settle_mismatch = (
-                    abs(
-                        float(long_info.get("interval_h", 8.0) or 8.0)
-                        - float(short_info.get("interval_h", 8.0) or 8.0)
-                    )
-                    > 0.5
-                )
 
                 # Calculate mark price spread percentage
                 long_mark = float(long_info.get("mark_price", 0.0) or 0.0)
@@ -284,11 +319,29 @@ def _scan_spreads(
                     "short_settle_ms": short_info.get("next_funding_ts", 0),
                     "long_interval_h": float(long_info.get("interval_h", 8.0) or 8.0),
                     "short_interval_h": float(short_info.get("interval_h", 8.0) or 8.0),
-                    "settle_mismatch": settle_mismatch,
-                    "same_interval": not settle_mismatch,
+                    "settle_mismatch": is_mismatch,
+                    "same_interval": not is_mismatch,
                     "long_mark": long_mark,
                     "short_mark": short_mark,
                     "mark_spread_pct": round(mark_spread_pct, 6),
+                    "long_basis_pct": round(
+                        (long_mark - float(long_info.get("index_price", 0) or 0))
+                        / max(float(long_info.get("index_price", 0) or 1), 1e-12)
+                        * 100,
+                        6,
+                    )
+                    if long_mark > 0 and float(long_info.get("index_price", 0) or 0) > 0
+                    else None,
+                    "short_basis_pct": round(
+                        (short_mark - float(short_info.get("index_price", 0) or 0))
+                        / max(float(short_info.get("index_price", 0) or 1), 1e-12)
+                        * 100,
+                        6,
+                    )
+                    if short_mark > 0
+                    and float(short_info.get("index_price", 0) or 0) > 0
+                    else None,
+                    "spread_source": "basis_blend" if is_mismatch else "rate",
                 }
 
                 if direction == "forward":
