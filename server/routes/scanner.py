@@ -175,9 +175,13 @@ def _recalc_pure_fees(result: dict[str, Any]) -> dict[str, Any]:
             r["short_fee_pct"] = round(short_fee, 4)
             r["fee_pct"] = round(fee_pct, 4)
             r["round_trip_fee_pct"] = round(fee_pct * 2, 4)
-            r["net_edge_pct"] = round(spread - fee_pct, 6)
+            net_edge = spread - fee_pct
+            r["net_edge_pct"] = round(net_edge, 6)
+            r["real_edge_pct"] = round(
+                net_edge - float(row.get("mark_spread_pct", 0) or 0), 6
+            )
             updated.append(r)
-        updated.sort(key=lambda x: -float(x.get("net_edge_pct", 0) or 0))
+        updated.sort(key=lambda x: -float(x.get("real_edge_pct", 0) or 0))
         out[section] = updated
     out["total_spreads_found"] = len(out.get("forward", [])) + len(out.get("reverse", []))
     return out
@@ -265,6 +269,22 @@ def _recalc_unified_fees(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _row_real_edge(row: dict[str, Any]) -> float:
+    """Basis-adjusted edge used for filtering/ranking.
+
+    real_edge = net funding edge − cross-venue mark divergence. A pair whose
+    funding edge is offset by a dislocated mark price (high mark_spread) is not
+    a clean opportunity, so it is judged on this discounted figure. Falls back
+    to net_edge − mark_spread when the field is absent (older cached scans).
+    """
+    re = row.get("real_edge_pct")
+    if re is not None:
+        return float(re)
+    return float(row.get("net_edge_pct", 0) or 0) - float(
+        row.get("mark_spread_pct", 0) or 0
+    )
+
+
 def _row_edge_threshold(
     row: dict[str, Any],
     min_edge: float,
@@ -295,20 +315,18 @@ def _apply_group_thresholds(
     min_edge_1h: float | None,
     min_edge_mismatch: float | None = None,
 ) -> dict[str, Any]:
-    """Re-filter scan output with per-interval-group edge thresholds.
+    """Re-filter scan output on basis-adjusted real edge with per-interval-group
+    thresholds.
 
-    The scan runs with the loosest threshold; this tightens per row: 1h-group
-    pairs may use the lower min_edge_1h, while cross-interval (settle_mismatch)
-    pairs must clear the higher min_edge_mismatch risk premium.
+    The scan runs with the loosest net-edge threshold; this is the primary gate:
+    each row must clear its threshold on REAL edge (net edge − mark divergence),
+    so funding edges sitting on a dislocated mark price are dropped. 1h-group
+    pairs may use the lower min_edge_1h; cross-interval (settle_mismatch) pairs
+    must clear the higher min_edge_mismatch risk premium.
     """
-    loosens_1h = min_edge_1h is not None and min_edge_1h < min_edge
-    tightens_mismatch = min_edge_mismatch is not None and min_edge_mismatch > min_edge
-    if not loosens_1h and not tightens_mismatch:
-        return result
 
     def _keep(row: dict[str, Any]) -> bool:
-        edge = float(row.get("net_edge_pct", 0) or 0)
-        return edge >= _row_edge_threshold(
+        return _row_real_edge(row) >= _row_edge_threshold(
             row, min_edge, min_edge_1h, min_edge_mismatch
         )
 

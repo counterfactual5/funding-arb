@@ -23,6 +23,7 @@
     "venues": "交易所",
     "selectVenues": "選擇交易所",
     "minNetEdge": "最小淨邊際",
+    "minRealEdge": "最小真實邊際",
     "all": "全部",
     "sameInterval": "同週期",
     "cross": "跨週期",

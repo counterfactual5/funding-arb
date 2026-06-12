@@ -21,6 +21,7 @@ export interface OpportunityItem {
   short_rate_pct: number;
   spread_pct: number;
   net_edge_pct: number;
+  real_edge_pct?: number;
   annual_apy_pct?: number;
   long_symbol?: string;
   short_symbol?: string;

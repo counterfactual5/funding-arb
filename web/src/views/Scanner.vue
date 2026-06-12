@@ -42,7 +42,7 @@
 
             <template v-if="strategy === 'pure'">
               <div class="filter-group filter-group-bordered">
-                <n-text depth="3" class="filter-label">{{ t('scanner.minNetEdge') }}</n-text>
+                <n-text depth="3" class="filter-label">{{ t('scanner.minRealEdge') }}</n-text>
                 <n-input-number
                   v-model:value="minEdgeFilter"
                   :min="0"
@@ -591,7 +591,7 @@ function toPureRow(i: import('@/composables/useApi').OpportunityItem, direction:
   return {
     base: i.base, direction, long_venue: i.long_venue, short_venue: i.short_venue,
     net_edge_pct: i.net_edge_pct ?? 0, mark_spread_pct: i.mark_spread_pct ?? 0,
-    real_edge_pct: (i.net_edge_pct ?? 0) - (i.mark_spread_pct ?? 0), annual_apy_pct: i.annual_apy_pct ?? 0,
+    real_edge_pct: i.real_edge_pct ?? ((i.net_edge_pct ?? 0) - (i.mark_spread_pct ?? 0)), annual_apy_pct: i.annual_apy_pct ?? 0,
     long_interval_h: i.long_interval_h ?? 8, short_interval_h: i.short_interval_h ?? 8,
     settle_mismatch: i.settle_mismatch ?? (i.same_interval === false),
   }
@@ -605,7 +605,7 @@ const pureRows = computed<PureRow[]>(() => {
     ...(d.forward || []).map((i) => toPureRow(i, 'Forward')),
     ...(d.reverse || []).map((i) => toPureRow(i, 'Reverse')),
   ]
-  if (minEdgeFilter.value > 0) all = all.filter((r) => r.net_edge_pct >= minEdgeFilter.value)
+  if (minEdgeFilter.value > 0) all = all.filter((r) => r.real_edge_pct >= minEdgeFilter.value)
   if (intervalFilter.value === 'same') all = all.filter((r) => !r.settle_mismatch)
   else if (intervalFilter.value === 'cross') all = all.filter((r) => r.settle_mismatch)
   return all

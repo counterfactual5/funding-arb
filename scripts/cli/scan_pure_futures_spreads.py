@@ -326,6 +326,11 @@ def _scan_spreads(
                     "long_mark": long_mark,
                     "short_mark": short_mark,
                     "mark_spread_pct": round(mark_spread_pct, 6),
+                    # Basis-adjusted edge: net funding edge minus the cross-venue
+                    # mark divergence (a one-shot basis-risk discount). This is the
+                    # primary ranking metric — high funding edge with high mark
+                    # divergence (dislocated perp) is NOT a clean opportunity.
+                    "real_edge_pct": round(net_edge - mark_spread_pct, 6),
                     "long_basis_pct": (
                         round(long_blend["basis_pct"], 6)
                         if long_blend.get("basis_pct") is not None
@@ -348,8 +353,10 @@ def _scan_spreads(
                 else:
                     reverse.append(entry)
 
-    forward.sort(key=lambda x: -x["net_edge_pct"])
-    reverse.sort(key=lambda x: -x["net_edge_pct"])
+    # Rank by basis-adjusted real edge (not raw funding edge): a clean funding
+    # inefficiency beats a large edge that sits on a dislocated mark price.
+    forward.sort(key=lambda x: -x["real_edge_pct"])
+    reverse.sort(key=lambda x: -x["real_edge_pct"])
     return forward, reverse
 
 

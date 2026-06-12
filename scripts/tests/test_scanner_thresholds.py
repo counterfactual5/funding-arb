@@ -12,14 +12,20 @@ for p in (str(ROOT), str(SCRIPTS)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from server.routes.scanner import _apply_group_thresholds, _row_edge_threshold
+from server.routes.scanner import (
+    _apply_group_thresholds,
+    _row_edge_threshold,
+    _row_real_edge,
+)
 
 
-def _row(long_h, short_h, edge, mismatch=None):
+def _row(long_h, short_h, edge, mismatch=None, mark_spread=0.0):
     return {
         "long_interval_h": long_h,
         "short_interval_h": short_h,
         "net_edge_pct": edge,
+        "mark_spread_pct": mark_spread,
+        "real_edge_pct": round(edge - mark_spread, 6),
         "settle_mismatch": (long_h != short_h) if mismatch is None else mismatch,
     }
 
@@ -67,10 +73,12 @@ class TestApplyGroupThresholds:
         assert edges == [0.015, 0.025, 0.035]
         assert out["total_spreads_found"] == 3
 
-    def test_noop_when_no_premiums(self):
-        res = self._result()
-        out = _apply_group_thresholds(res, 0.02, None, None)
-        assert out is res  # unchanged object, no filtering
+    def test_base_real_edge_when_no_premiums(self):
+        out = _apply_group_thresholds(self._result(), 0.02, None, None)
+        edges = sorted(r["net_edge_pct"] for r in out["forward"])
+        # All rows judged on base min_edge via real_edge; 1h@0.015 dropped
+        assert edges == [0.025, 0.025, 0.035]
+        assert out["total_spreads_found"] == 3
 
     def test_mismatch_only_premium(self):
         # no 1h loosening, only mismatch tightening

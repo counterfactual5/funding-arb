@@ -23,6 +23,7 @@
     "venues": "Venues",
     "selectVenues": "Select venues",
     "minNetEdge": "Min Net Edge",
+    "minRealEdge": "Min Real Edge",
     "all": "All",
     "sameInterval": "Same Interval",
     "cross": "Cross",
