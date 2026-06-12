@@ -550,11 +550,19 @@ def venue_has_credentials(venue: str) -> bool:
 
 
 def parse_fee_policy(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Normalize fee policy from strategy config."""
+    """Normalize fee policy from strategy config.
+
+    Idempotent: accepts either raw strategy config keys (fee_mode /
+    venue_fee_tiers) or an already-parsed policy (mode / venue_tiers), so
+    callers can safely re-parse a policy passed down from the server layer.
+    """
     cfg = cfg or {}
     tiers = cfg.get("venue_fee_tiers")
+    if not isinstance(tiers, dict):
+        tiers = cfg.get("venue_tiers")
+    mode = cfg.get("fee_mode") or cfg.get("mode") or "auto"
     return {
-        "mode": str(cfg.get("fee_mode") or "auto"),
+        "mode": str(mode),
         "venue_tiers": dict(tiers) if isinstance(tiers, dict) else {},
     }
 

@@ -89,6 +89,19 @@ def test_list_venue_tiers_has_vip0():
     assert any(t["id"] == "vip0" for t in tiers)
 
 
+def test_parse_fee_policy_idempotent():
+    """Re-parsing an already-parsed policy must not drop VIP tiers.
+
+    The server layer parses once and passes the result to scanners, which
+    parse again; a non-idempotent parse silently degraded everything to vip0.
+    """
+    raw = {"fee_mode": "auto", "venue_fee_tiers": {"bybit": "vip5", "okx": "vip5"}}
+    once = parse_fee_policy(raw)
+    twice = parse_fee_policy(once)
+    assert twice == once
+    assert twice["venue_tiers"] == {"bybit": "vip5", "okx": "vip5"}
+
+
 def test_venue_uses_api_vip_tier_mode(monkeypatch):
     monkeypatch.setenv("BINANCE_API_KEY", "x")
     policy = parse_fee_policy({"fee_mode": "vip_tier", "venue_fee_tiers": {}})
