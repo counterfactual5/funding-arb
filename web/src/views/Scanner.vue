@@ -3,41 +3,72 @@
     <n-card class="table-card">
       <template #header>
         <div class="filter-toolbar">
-          <!-- 第一行：标题 + 策略切换 | 状态 + 扫描按钮 -->
-          <div class="toolbar-row">
-            <n-text class="toolbar-title">{{ t('scanner.title') }}</n-text>
-            <n-radio-group :value="strategy" @update:value="onStrategyChange" size="small">
-              <n-radio-button value="pure">{{ t('scanner.pureFutures') }}</n-radio-button>
-              <n-radio-button value="carry">{{ t('scanner.cashAndCarry') }}</n-radio-button>
-              <n-radio-button value="unified">{{ t('scanner.unifiedCC') }}</n-radio-button>
-            </n-radio-group>
-
-            <div class="toolbar-spacer" />
-
-            <n-tag v-if="refreshing" size="small" type="info" :bordered="false" class="status-tag">{{ t('scanner.scanningFromExchanges') }}</n-tag>
-            <n-tag v-else-if="lastScanLabel" size="small" type="success" :bordered="false" class="status-tag">{{ lastScanLabel }}</n-tag>
-            <n-button size="small" type="primary" ghost @click="handleTriggerScan" :loading="refreshing" class="action-btn">
-              <template #icon><n-icon size="14"><SearchOutline /></n-icon></template>
-              {{ t('scanner.scanNow') }}
-            </n-button>
+          <!-- 第一行：标题居中 + 策略切换居左 -->
+          <div class="toolbar-row toolbar-header-row">
+            <div class="header-left">
+              <n-radio-group :value="strategy" @update:value="onStrategyChange" size="small">
+                <n-radio-button value="pure">{{ t('scanner.pureFutures') }}</n-radio-button>
+                <n-radio-button value="carry">{{ t('scanner.cashAndCarry') }}</n-radio-button>
+                <n-radio-button value="unified">{{ t('scanner.unifiedCC') }}</n-radio-button>
+              </n-radio-group>
+            </div>
+            <div class="header-center">
+              <n-text class="toolbar-title">{{ t('scanner.title') }}</n-text>
+            </div>
+            <div class="header-right"></div>
           </div>
 
-          <!-- 第二行：筛选条件（可换行） -->
+          <!-- 第二行：筛选条件 + 扫描按钮/状态居右 -->
           <div class="toolbar-row toolbar-filters">
             <div class="filter-group">
               <n-text depth="3" class="filter-label">{{ t('scanner.venues') }}</n-text>
-              <n-select
-                :value="selectedVenues"
-                :options="venueOptions"
-                :render-label="renderVenueOptionLabel"
-                :render-tag="renderVenueTag"
-                :style="venueSelectStyle"
-                multiple
-                size="small"
-                class="venue-filter"
-                :placeholder="t('scanner.selectVenues')"
-                @update:value="handleVenuesChange"
-              />
+              <div class="venue-filter-row">
+                <div class="venue-presets">
+                  <n-button
+                    size="tiny"
+                    :type="isVenuePresetActive('cex') ? 'primary' : 'default'"
+                    :ghost="!isVenuePresetActive('cex')"
+                    @click="applyVenuePreset('cex')"
+                  >
+                    {{ t('scanner.venuePresetCex') }}
+                  </n-button>
+                  <n-tooltip :disabled="strategy === 'pure'" trigger="hover">
+                    <template #trigger>
+                      <n-button
+                        size="tiny"
+                        :type="isVenuePresetActive('dex') ? 'primary' : 'default'"
+                        :ghost="!isVenuePresetActive('dex')"
+                        :disabled="strategy !== 'pure'"
+                        @click="applyVenuePreset('dex')"
+                      >
+                        {{ t('scanner.venuePresetDex') }}
+                      </n-button>
+                    </template>
+                    {{ t('scanner.dexPureOnly') }}
+                  </n-tooltip>
+                  <n-button
+                    v-if="strategy === 'pure'"
+                    size="tiny"
+                    :type="isVenuePresetActive('all') ? 'primary' : 'default'"
+                    :ghost="!isVenuePresetActive('all')"
+                    @click="applyVenuePreset('all')"
+                  >
+                    {{ t('scanner.venuePresetAll') }}
+                  </n-button>
+                </div>
+                <n-select
+                  :value="selectedVenues"
+                  :options="venueOptions"
+                  :render-label="renderVenueOptionLabel"
+                  :render-tag="renderVenueTag"
+                  :style="venueSelectStyle"
+                  multiple
+                  size="small"
+                  class="venue-filter"
+                  :placeholder="t('scanner.selectVenues')"
+                  @update:value="handleVenuesChange"
+                />
+              </div>
             </div>
 
             <template v-if="strategy === 'pure'">
@@ -69,6 +100,17 @@
                 </n-radio-group>
               </div>
             </template>
+
+            <div class="toolbar-spacer" />
+
+            <div class="filter-group actions-group">
+              <n-tag v-if="refreshing" size="small" type="info" :bordered="false" class="status-tag">{{ t('scanner.scanningFromExchanges') }}</n-tag>
+              <n-tag v-else-if="lastScanLabel" size="small" type="success" :bordered="false" class="status-tag">{{ lastScanLabel }}</n-tag>
+              <n-button size="small" type="primary" ghost @click="handleTriggerScan" :loading="refreshing" class="action-btn">
+                <template #icon><n-icon size="14"><SearchOutline /></n-icon></template>
+                {{ t('scanner.scanNow') }}
+              </n-button>
+            </div>
           </div>
         </div>
       </template>
@@ -200,7 +242,17 @@ function colTitle(labelKey: string, tipKey: string) {
 }
 
 type Strategy = 'pure' | 'carry' | 'unified'
-const strategy = ref<Strategy>('pure')
+const SCANNER_STRATEGY_KEY = 'scanner_strategy'
+
+function loadSavedStrategy(): Strategy {
+  try {
+    const v = localStorage.getItem(SCANNER_STRATEGY_KEY)
+    if (v === 'pure' || v === 'carry' || v === 'unified') return v
+  } catch { /* private mode / SSR */ }
+  return 'pure'
+}
+
+const strategy = ref<Strategy>(loadSavedStrategy())
 const loading = ref(false)
 const refreshing = ref(false)
 const lastScanLabel = ref('')
@@ -332,6 +384,31 @@ function cacheMatchesSelection(st: Strategy): boolean {
 }
 
 let _venuesWatchTimer: ReturnType<typeof setTimeout> | null = null
+
+type VenuePreset = 'cex' | 'dex' | 'all'
+
+function venuesForPreset(preset: VenuePreset): string[] {
+  if (strategy.value !== 'pure') {
+    return preset === 'dex' ? [] : [...CEX_VENUES]
+  }
+  if (preset === 'cex') return [...CEX_VENUES]
+  if (preset === 'dex') return [...PERP_DEX_VENUES]
+  return [...CEX_VENUES, ...PERP_DEX_VENUES]
+}
+
+function isVenuePresetActive(preset: VenuePreset): boolean {
+  const expected = venuesForPreset(preset)
+  if (expected.length === 0) return false
+  const current = [...selectedVenues.value].sort()
+  const exp = [...expected].sort()
+  return current.length === exp.length && current.every((v, i) => v === exp[i])
+}
+
+function applyVenuePreset(preset: VenuePreset) {
+  const next = venuesForPreset(preset)
+  if (next.length === 0) return
+  handleVenuesChange(next)
+}
 
 // Handles manual changes in the venue dropdown (both selection and removal of tags)
 function handleVenuesChange(val: string[]) {
@@ -513,6 +590,9 @@ async function handleTriggerScan() {
 
 function onStrategyChange(val: Strategy) {
   strategy.value = val
+  try {
+    localStorage.setItem(SCANNER_STRATEGY_KEY, val)
+  } catch { /* ignore */ }
   selectedVenues.value = venuesForStrategy(val, selectedVenues.value)
   loadData(val, true)
 }
@@ -744,10 +824,68 @@ onUnmounted(() => {
   min-height: 32px;
 }
 
+.toolbar-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  position: relative;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.header-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1;
+}
+
 .toolbar-title {
   font-size: 16px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.actions-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .toolbar-header-row {
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+  }
+  .header-center {
+    position: static;
+    transform: none;
+    order: -1;
+  }
+  .header-left {
+    justify-content: center;
+    width: 100%;
+  }
+  .header-right {
+    display: none;
+  }
 }
 
 /* 把状态/按钮推到行尾；空间不足时允许换行而不是挤压 */
@@ -770,6 +908,28 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.venue-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.venue-presets {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.venue-presets :deep(.n-button) {
+  min-width: 2.75rem;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .filter-label {
