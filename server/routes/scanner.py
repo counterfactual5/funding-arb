@@ -234,6 +234,37 @@ def _recalc_carry_fees(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _recalc_unified_fees(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from core.fee_providers import resolve_venue_fee  # noqa: E402
+
+    policy = _fee_policy()
+    out: list[dict[str, Any]] = []
+    for row in results:
+        base = str(row.get("base", ""))
+        sym = f"{base}USDT"
+        fv = str(row.get("futures_venue", ""))
+        sv = str(row.get("spot_venue", fv))
+        spot_pct = float(
+            resolve_venue_fee(sv, leg="spot", symbol=sym, policy=policy)["taker_pct"]
+        )
+        fut_pct = float(
+            resolve_venue_fee(fv, leg="futures", symbol=sym, policy=policy)[
+                "taker_pct"
+            ]
+        )
+        new_fee = spot_pct + fut_pct
+        old_fee = float(row.get("fee_pct", 0) or 0)
+        old_net = float(row.get("net_edge_pct", 0) or 0)
+        r = dict(row)
+        r["spot_fee_pct"] = round(spot_pct, 4)
+        r["futures_fee_pct"] = round(fut_pct, 4)
+        r["fee_pct"] = round(new_fee, 4)
+        r["net_edge_pct"] = round(old_net + old_fee - new_fee, 4)
+        out.append(r)
+    out.sort(key=lambda x: -(x.get("net_edge_pct") or 0))
+    return out
+
+
 def _row_edge_threshold(
     row: dict[str, Any],
     min_edge: float,
@@ -551,7 +582,9 @@ async def scanner_trigger(
             ] or list(DEFAULT_VENUES)
 
             def _scan_unified() -> list[dict[str, Any]]:
-                pool = _unified_carry_cls(venues=unified_venues)
+                pool = _unified_carry_cls(
+                    venues=unified_venues, fee_policy=_fee_policy()
+                )
                 pool.refresh()
                 # scan_routes returns {"forward": [...], "reverse": [...]}, not base→routes
                 grouped = pool.scan_routes(
@@ -626,7 +659,7 @@ async def scanner_scan_all():
 @router.post("/scanner/recalc-fees")
 async def scanner_recalc_fees():
     """Recompute net edge on cached scan results using current fee policy (no re-scan)."""
-    global _pure_results, _carry_results
+    global _pure_results, _carry_results, _unified_results
 
     min_spread, min_edge, _ = _scan_thresholds()
     edge_1h = _min_edge_1h()
@@ -643,6 +676,10 @@ async def scanner_recalc_fees():
     if _carry_results:
         _carry_results = _recalc_carry_fees(_carry_results)
         updated["carry"] = _carry_results
+
+    if _unified_results:
+        _unified_results = _recalc_unified_fees(_unified_results)
+        updated["unified"] = _unified_results
 
     if not updated:
         return {"success": False, "error": "No cached scan results to recalculate"}

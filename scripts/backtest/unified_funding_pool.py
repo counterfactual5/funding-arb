@@ -22,8 +22,11 @@ from backtest.borrow_providers import (
 from backtest.funding_providers import get_funding_provider
 from core.fee_providers import (
     pair_open_taker_fee_pct,
+    parse_fee_policy,
     prefetch_futures_fee_rates,
+    resolve_venue_fee,
     taker_fee_pct,
+    venue_uses_api,
 )
 from market.parallel_fetch import run_io_parallel
 
@@ -148,14 +151,35 @@ class UnifiedFundingPool:
     borrow_fallback_annual_pct: float = DEFAULT_BORROW_FALLBACK_ANNUAL_PCT
     max_workers: int = DEFAULT_IO_WORKERS
     reference_trade_usd: float = DEFAULT_REFERENCE_TRADE_USD
+    fee_policy: dict[str, Any] | None = None
     legs_by_base: dict[str, list[VenueLeg]] = field(default_factory=dict)
     fee_cache: dict[tuple[str, str], dict[str, float]] = field(default_factory=dict)
 
+    def _resolved_policy(self) -> dict[str, Any]:
+        return parse_fee_policy(self.fee_policy)
+
+    def _spot_fee_pct(self, venue: str) -> float:
+        return float(
+            resolve_venue_fee(venue, leg="spot", policy=self._resolved_policy())[
+                "taker_pct"
+            ]
+        )
+
     def _leg_futures_fee_pct(self, leg: VenueLeg) -> float:
-        return taker_fee_pct(
-            leg.venue,
-            leg.symbol,
-            fee_cache=self.fee_cache or None,
+        policy = self._resolved_policy()
+        if venue_uses_api(leg.venue, policy) and self.fee_cache:
+            return taker_fee_pct(
+                leg.venue,
+                leg.symbol,
+                fee_cache=self.fee_cache,
+            )
+        return float(
+            resolve_venue_fee(
+                leg.venue,
+                leg="futures",
+                symbol=leg.symbol,
+                policy=policy,
+            )["taker_pct"]
         )
 
     def _pair_open_fee_pct(
@@ -336,9 +360,9 @@ class UnifiedFundingPool:
         spot_candidates = [l for l in legs if l.has_spot]
         if not spot_candidates:
             return None
-        spot_leg = min(spot_candidates, key=lambda l: _spot_fee_pct(l.venue))
+        spot_leg = min(spot_candidates, key=lambda l: self._spot_fee_pct(l.venue))
         f_fee = self._leg_futures_fee_pct(futures_leg)
-        s_fee = _spot_fee_pct(spot_leg.venue)
+        s_fee = self._spot_fee_pct(spot_leg.venue)
         total_fee = f_fee + s_fee
         net = futures_leg.rate_pct - total_fee
         route = CrossRoute(
@@ -385,7 +409,7 @@ class UnifiedFundingPool:
         margin_leg = min(borrow_candidates, key=borrow_cost)
         borrow_period = borrow_cost(margin_leg)
         f_fee = self._leg_futures_fee_pct(futures_leg)
-        s_fee = _spot_fee_pct(margin_leg.venue)
+        s_fee = self._spot_fee_pct(margin_leg.venue)
         total_fee = f_fee + s_fee
         net = abs(futures_leg.rate_pct) - borrow_period - total_fee
         annual_borrow = margin_leg.borrow_annual_pct
@@ -607,7 +631,7 @@ class UnifiedFundingPool:
         """Best net edge for completing both legs on the same venue."""
         best: dict[str, Any] | None = None
         for leg in legs:
-            fee = _spot_fee_pct(leg.venue) + self._leg_futures_fee_pct(leg)
+            fee = self._spot_fee_pct(leg.venue) + self._leg_futures_fee_pct(leg)
             if direction == "forward":
                 if leg.rate_pct < entry or not leg.has_spot:
                     continue

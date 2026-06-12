@@ -1,17 +1,35 @@
 # Funding Rate Arbitrage Engine
 
-Cross-exchange perpetual funding rate arbitrage engine (Cash-and-Carry + Cross-Asset Funding Arbitrage + Pure Futures Spread).
+Cross-exchange **funding rate** arbitrage: Cash-and-Carry, unified cross-venue carry, and **Pure Futures** (perp–perp) spreads — with a **Vue dashboard**, CLI, and optional **Tauri** desktop shell.
 
-Supports **Bitget / Binance / OKX / Bybit** (spot + USDT-margined perpetuals), splitting spot and futures legs across venues for globally optimal spreads.
+**CEX (spot + USDT-M perps):** Binance · Bitget · Bybit · OKX  
+**Perp DEX (scan; trade where supported):** Hyperliquid · Aster · Lighter · EdgeX
+
+Default scanner venues are **CEX-only**; DEX venues are opt-in via the UI or `--venues`.
+
+---
 
 ## Strategies
 
-| Strategy | Entry Point | Description |
-|---|---|---|
-| **Cash and Carry (Single Asset)** | `run_cash_and_carry.py` | Single asset spot long + perp short, collecting positive funding. Single hedge leg. |
-| **Cross-Asset Arbitrage (Multi Asset)** | `run_cash_and_carry.py` (set `crossAssetArbitrage.maxConcurrentPairs > 1`) | Multi-asset slot contention, only holding the best spread pair. |
-| **Reverse C&C** | via `reverse*` parameters | Margin borrow to sell spot + perp long when funding is negative. |
-| **Pure Futures Spread** ⭐ | `run_pure_futures_spread.py` / `orchestrate_funding.py --pure-futures` | Perp long on one venue + perp short on another, capturing funding rate differential. No spot/borrow/transfer needed. |
+| Strategy | CLI / runner | Dashboard tab | Description |
+|----------|--------------|---------------|-------------|
+| **Pure Futures Spread** ⭐ | `scan_pure_futures_spreads.py`, `run_pure_futures_spread.py` | Scanner → Pure Futures | Long perp on one venue, short on another; capture funding **rate differential**. No spot or borrow. |
+| **Cash & Carry** | `scan_funding_arbitrage.py`, `run_cash_and_carry.py` | Scanner → Cash & Carry | Spot long + perp short (or reverse via borrow) on CEX. |
+| **Unified C&C** | `scan_unified_funding.py` | Scanner → Unified C&C | Spot leg and futures leg on **different** venues for best combined edge. |
+| **Cross-asset C&C** | `run_cash_and_carry.py` (`crossAssetArbitrage`) | — | Multi-asset slot contention; hold top spreads only. |
+
+### Pure Futures metrics (scanner)
+
+| Field | Meaning |
+|-------|---------|
+| `net_edge_pct` | Funding spread minus **open-leg taker fees** (both sides) |
+| `mark_spread_pct` | Mark-price gap between venues (entry slippage risk) |
+| `real_edge_pct` | `net_edge_pct − mark_spread_pct` (conservative edge) |
+| `settle_mismatch` | Different funding intervals (e.g. HL 1h vs CEX 8h) |
+
+Cross-interval pairs use a **basis-blend model** (mark vs index, weighted by settlement progress). See [`docs/cross-interval-funding-model.md`](docs/cross-interval-funding-model.md).
+
+---
 
 ## Quick Start
 
@@ -21,240 +39,228 @@ cd funding-arb
 bash setup.sh
 ```
 
-### Visual Dashboard
+### Visual dashboard (recommended)
 
 ```bash
-# Browser mode (macOS/Linux/Windows, simplest)
-bash start.sh              # Auto-build frontend + start server → open http://localhost:8787
+# Browser mode (macOS / Linux / Windows)
+bash start.sh              # build web + start API → http://localhost:8787
 
-# Desktop app mode (requires Rust)
-bash start.sh --desktop    # Launch Tauri native window
+# Desktop (requires Rust)
+bash start.sh --desktop
 
 # Windows
-.\start.ps1                # Browser mode
-.\start.ps1 -Desktop       # Desktop app mode
+.\start.ps1
+.\start.ps1 -Desktop
 ```
 
 ```mermaid
 graph LR
-    A[start.sh / start.ps1] -->|--desktop| B[Tauri Native Window]
-    A -->|Default / browser| C[Browser Access]
-
-    B --> D[FastAPI Backend :8787]
+    A[start.sh / start.ps1] -->|--desktop| B[Tauri window]
+    A -->|browser| C[http://localhost:8787]
+    B --> D[FastAPI :8787]
     C --> D
-    D --> E[scripts/ Trading Modules]
-
-    style B fill:#4ade80,stroke:#166534,color:#000
-    style C fill:#60a5fa,stroke:#1e40af,color:#000
-    style D fill:#fbbf24,stroke:#92400e,color:#000
+    D --> E[scripts/ scanners & executors]
+    D --> F[WebSocket scanner updates]
 ```
 
-### CLI Scanning
+**Dashboard pages:** Scanner · Positions · Backtest · Settings  
+
+**Scanner highlights:**
+- Three strategy tabs with background warm-up for pure / carry / unified
+- Venue filter (CEX / DEX groups); scans **only selected venues**
+- Min net edge, same-interval / cross-interval filters
+- Fee-aware edge (`net_edge` / `real_edge` tooltips)
+- Open position dialog (dry-run by default)
+
+### CLI scanning
 
 ```bash
-# Cash-and-Carry scan
-python3 scripts/cli/scan_funding_arbitrage.py --venues bitget,bybit,okx
-python3 scripts/cli/scan_unified_funding.py --verbose   # Cross-venue split view
+# Pure futures — default CEX; add DEX explicitly
+.venv/bin/python scripts/cli/scan_pure_futures_spreads.py --verbose
+.venv/bin/python scripts/cli/scan_pure_futures_spreads.py \
+  --venues binance,bitget,bybit,okx,hyperliquid --json
 
-# Pure Futures Spread scan
-python3 scripts/cli/scan_pure_futures_spreads.py --verbose
-python3 scripts/cli/scan_pure_futures_spreads.py --watch 5  # Continuous monitoring, writes to JSONL
+# Continuous watch → data/pure_futures_spreads.jsonl (for backtest)
+.venv/bin/python scripts/cli/scan_pure_futures_spreads.py --watch 5
+
+# Cash-and-carry (CEX)
+.venv/bin/python scripts/cli/scan_funding_arbitrage.py --venues bitget,bybit,okx,binance
+
+# Unified cross-venue carry
+.venv/bin/python scripts/cli/scan_unified_funding.py --verbose
 ```
 
-### Paper Arbitrage (dry-run)
+### Paper / live execution
 
 ```bash
-# Cash-and-Carry
-python3 scripts/execution/run_cash_and_carry.py \
+# Cash-and-Carry (dry-run default in config)
+.venv/bin/python scripts/execution/run_cash_and_carry.py \
   --config templates/config.cash_and_carry.btc.json --verbose
 
-# Pure Futures Spread
-python3 scripts/execution/run_pure_futures_spread.py \
+# Pure futures — single shot or watch loop
+.venv/bin/python scripts/execution/run_pure_futures_spread.py \
   --config templates/config.pure_futures.spread.json --once --verbose
-```
 
-### Live Trading
-
-```bash
-# Pure Futures Spread continuous run
-python3 scripts/execution/run_pure_futures_spread.py \
+.venv/bin/python scripts/execution/run_pure_futures_spread.py \
   --config templates/config.pure_futures.spread.json --watch 5 --verbose
 
-# Standalone Watcher (persistent monitoring of existing positions)
-python3 scripts/execution/pure_futures_watcher.py \
+# Position watcher
+.venv/bin/python scripts/execution/pure_futures_watcher.py \
   --config templates/config.pure_futures.spread.json --interval 30 --verbose
 
-# One-click run via orchestrator
-python3 scripts/cli/orchestrate_funding.py --pure-futures --run-executor --verbose
+# Orchestrator
+.venv/bin/python scripts/cli/orchestrate_funding.py --pure-futures --run-executor --verbose
 ```
 
-### Reports & Backtesting
+### Manual pure-futures trades
 
 ```bash
-# Summarize last 24 hours of Pure Futures opportunity quality
-python3 scripts/cli/report_pure_futures_spreads.py \
+.venv/bin/python scripts/cli/pure_futures_trade.py open BTC \
+  --long-venue okx --short-venue bybit --trade-usd 500 --dry-run
+.venv/bin/python scripts/cli/pure_futures_trade.py list
+.venv/bin/python scripts/cli/pure_futures_trade.py close <position_id> --dry-run
+```
+
+### Reports & backtesting
+
+```bash
+.venv/bin/python scripts/cli/report_pure_futures_spreads.py \
   --jsonl-file data/pure_futures_spreads.jsonl --since-hours 24 --min-samples 3
 
-# Backtesting
-python3 scripts/backtest/backtest_pure_futures_spread.py \
+.venv/bin/python scripts/backtest/backtest_pure_futures_spread.py \
   --jsonl-file data/pure_futures_spreads.jsonl --capital 100000 --json
-
-# Manual open/close positions
-python3 scripts/cli/pure_futures_trade.py open BTC \
-  --long-venue okx --short-venue bybit --trade-usd 500 --dry-run
-python3 scripts/cli/pure_futures_trade.py list
-python3 scripts/pure_futures_trade.py close <position_id> --dry-run
 ```
 
-### Cross-Venue Orchestration
+Historical funding backfill (no JSONL required): `scripts/backtest/funding_history_source.py` — used by the dashboard Backtest page.
 
-```bash
-python3 scripts/cli/orchestrate_funding.py --venues bitget,bybit
-python3 scripts/cli/orchestrate_funding.py --pure-futures  # Pure perpetuals mode
-```
+---
 
-### Testing
+## Fee policy & VIP tiers
 
-```bash
-pip install pytest
-python3 -m pytest scripts/tests/ -q   # 118 tests, all passing
-```
+Net edge in the scanner deducts **per-leg taker fees**. Fee resolution (`scripts/core/fee_providers.py`):
+
+| Mode | Behavior |
+|------|----------|
+| `auto` | Live fee API when keys are configured; else VIP tier table |
+| `tier` | Static VIP ladder (`scripts/core/vip_fee_tiers.py`) |
+| `manual` | Overrides in strategy config |
+
+Configure in **Settings → Strategy**: `fee_mode`, `venue_fee_tiers`, scan thresholds (`min_edge_annual`, `min_edge_1h`, `min_edge_mismatch`).
+
+**API:**
+- `GET /api/settings/fees` — resolved rates per venue
+- `GET /api/settings/fee-tiers` — available tier labels
+- `POST /api/scanner/recalc-fees` — recompute cached scan results without re-scanning
+
+---
+
+## HTTP API (summary)
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/scanner/opportunities?strategy=&venues=` | Cached scan results (venue-aware cache) |
+| `POST /api/scanner/trigger?strategy=&venues=` | On-demand scan |
+| `GET /api/scanner/status` | Scanning flag, last scan time |
+| `GET/POST /api/settings/strategy` | Thresholds, venues, fee policy |
+| `GET /api/settings/venues` | Scan/trade/live capability per venue |
+| `POST /api/positions/open` | Open hedge (dry-run default) |
+| `POST /api/backtest/run` | Run backtest from history or JSONL |
+| `WS /ws/events` | `scanner.update` push events |
+
+---
 
 ## Configuration
 
 1. Copy `.env.example` → `.env`
-2. **Paper** mode requires no API keys (`dry_run: true` is enabled by default)
-3. **Live** mode requires filling in the corresponding exchange variables:
+2. **Paper:** no keys required (`dry_run: true` in templates / UI)
+3. **Live:** exchange API keys with **spot + USDT-M futures** trade permission; **no withdrawal**
 
-| Exchange | Environment Variables |
-|--------|----------|
+| Exchange | Environment variables |
+|----------|----------------------|
 | Bitget | `BITGET_API_KEY`, `BITGET_SECRET_KEY`, `BITGET_PASSPHRASE` |
 | Binance | `BINANCE_API_KEY`, `BINANCE_API_SECRET` |
 | OKX | `OKX_API_KEY`, `OKX_SECRET_KEY`, `OKX_PASSPHRASE` |
 | Bybit | `BYBIT_API_KEY`, `BYBIT_SECRET_KEY` |
+| Hyperliquid | Sibling `../hyperliquid` repo + wallet keys (live) |
+| Aster | `ASTER_API_KEY`, `ASTER_API_SECRET` |
+| Lighter | `LIGHTER_API_PRIVATE_KEY`, account/index env (see `.env.example`) |
+| EdgeX | `EDGEX_ACCOUNT_ID`, `EDGEX_TRADING_PRIVATE_KEY` (live trade) |
 
-API keys need **Spot + USDT-Margined Futures** read/trade permissions enabled; withdrawals must be disabled.
-
-### Credential Management
-
-Run the one-time import tool before first use:
+### Credential management
 
 ```bash
-python3 scripts/cli/setup_credentials.py              # Interactive setup wizard
-python3 scripts/cli/setup_credentials.py --check       # View status
-python3 scripts/cli/setup_credentials.py --migrate     # Migrate from funding-arb.json
-python3 scripts/cli/setup_credentials.py --backend age # Force specific backend
+.venv/bin/python scripts/cli/setup_credentials.py              # Interactive wizard
+.venv/bin/python scripts/cli/setup_credentials.py --check
+.venv/bin/python scripts/cli/setup_credentials.py --migrate    # From funding-arb.json
 ```
 
-The system automatically selects the most secure backend available for the current platform:
-
-```mermaid
-graph TD
-    A[ensure_env] --> B{Detect Platform Backend}
-    B -->|macOS| C[keyring → Keychain]
-    B -->|Windows| D[keyring → Credential Manager]
-    B -->|Linux Desktop| E[keyring → Secret Service]
-    B -->|Linux headless| F[systemd-creds → TPM2 / machine-id]
-    B -->|Universal fallback| G[age encrypted file]
-    B -->|Backward compat| H[funding-arb.json plaintext]
-
-    C --> I[os.environ]
-    D --> I
-    E --> I
-    F --> I
-    G --> I
-    H --> I
-
-    style C fill:#4ade80,stroke:#166534,color:#000
-    style D fill:#4ade80,stroke:#166534,color:#000
-    style E fill:#4ade80,stroke:#166534,color:#000
-    style F fill:#4ade80,stroke:#166534,color:#000
-    style G fill:#fbbf24,stroke:#92400e,color:#000
-    style H fill:#f87171,stroke:#991b1b,color:#000
-```
-
-| Backend | Platform | Security | Description |
-|------|------|:------:|------|
-| **keyring** | macOS / Windows / Linux Desktop | ✅ Highest | Keys stored in system keychain, no files on disk |
-| **systemd-creds** | Linux headless | ✅ High | Bound to TPM2 or machine-id, undecryptable across machines |
-| **age** | All platforms | ⚠️ Medium | Encrypted file, prevents accidental access, not isolated from same-user processes |
-| **funding-arb.json** | All platforms | ❌ Low | Plaintext JSON, backward compatibility only |
+Backends (auto-selected): **keyring** → **systemd-creds** → **age** → legacy `funding-arb.json`. See diagram in previous docs; loaded at server start via `ensure_env()`.
 
 | Variable | Description |
-|------|------|
-| `DCA_HOME` | Runtime data root directory (state, journal, backtest output) |
-| `DCA_RUNS_NAMESPACE` | Subdirectory name, default `cex-bitget` |
-| `DCA_DRY_RUN=1` / `DCA_LIVE=1` | Force paper / live mode |
+|----------|-------------|
+| `DCA_HOME` | Runtime data root (state, journal, backtest output) |
+| `DCA_RUNS_NAMESPACE` | Subdirectory name (default `cex-bitget`) |
+| `DCA_DRY_RUN=1` / `DCA_LIVE=1` | Force paper / live |
 
-## Directory Structure
+Strategy JSON: `scripts/data/strategy_config.json` (also editable in Settings UI).
+
+---
+
+## Directory structure
 
 ```
 funding-arb/
-├── templates/              # Strategy config templates
-│   ├── config.cash_and_carry.*.json   # C&C config per exchange
-│   └── config.pure_futures.spread.json # Pure perp funding spread config
+├── docs/
+│   └── cross-interval-funding-model.md   # Cross-interval basis-blend model
+├── plans/
+│   └── edgex-integration-plan.md
+├── templates/                 # Strategy config templates
 ├── scripts/
-│   ├── execution/
-│   │   ├── run_cash_and_carry.py           # C&C runner
-│   │   ├── run_pure_futures_spread.py      # Pure Futures runner
-│   │   ├── pure_futures_executor.py        # Pure perp executor (open/close/rollback)
-│   │   ├── pure_futures_watcher.py         # Standalone persistent monitoring process
-│   │   ├── settle_mismatch_planner.py      # Settlement cycle mismatch analysis
-│   │   ├── cross_venue_executor.py         # Cross-venue executor
-│   │   └── delta_neutral_executor.py       # Single-venue delta-neutral executor
-│   ├── strategies/futures/
-│   │   ├── pure_futures_spread.py          # Pure perp decision engine
-│   │   ├── cash_and_carry.py               # C&C strategy
-│   │   └── cross_asset_arbitrage.py        # Cross-asset strategy
-│   ├── backtest/
-│   │   ├── unified_funding_pool.py         # Unified funding pool
-│   │   ├── backtest_pure_futures_spread.py # Pure perp backtesting
-│   │   ├── funding_providers.py            # Funding rate providers
-│   │   └── borrow_providers.py             # Borrow providers
-│   ├── cli/
-│   │   ├── orchestrate_funding.py          # Orchestrator (includes --pure-futures)
-│   │   ├── scan_pure_futures_spreads.py    # Pure perp scan CLI
-│   │   ├── report_pure_futures_spreads.py  # Persistence report
-│   │   ├── pure_futures_trade.py           # Manual trading CLI
-│   │   ├── scan_funding_arbitrage.py       # C&C scan CLI
-│   │   ├── scan_unified_funding.py         # Cross-venue view CLI
-│   │   └── setup_credentials.py            # Credential management tool
-│   ├── market/             # funding_batch, price_oracle, parallel_fetch
-│   ├── accounting/futures/ # delta_neutral_portfolio
-│   ├── venues/             # bitget / binance / okx / bybit
-│   ├── core/               # config, notify, credentials
-│   └── transfer/           # cross_venue_router, transfer_providers
-├── server/                 # FastAPI backend (API + Web UI)
-│   ├── main.py            # Entry: API routes + static file serving + WebSocket
-│   └── routes/            # scanner, positions, backtest, settings
-├── web/                    # Vue 3 + Tauri frontend
-│   ├── src/               # Vue source (Scanner, Positions, Backtest, Settings)
-│   ├── src-tauri/         # Tauri/Rust desktop shell
-│   └── dist/              # Build output (served by FastAPI in browser mode)
-├── SKILL.md                # AI agent CLI playbook (this repo only)
-├── ROADMAP.md              # Completed work + future direction (Perp DEX, etc.)
-├── start.sh                # Unified startup script (macOS/Linux)
-├── start.ps1               # Unified startup script (Windows)
+│   ├── cli/                   # scan_*, orchestrate, pure_futures_trade, setup_credentials
+│   ├── execution/             # runners, executors, settle_mismatch_planner, watcher
+│   ├── strategies/futures/    # decision engines
+│   ├── backtest/              # backtest, funding_providers, funding_history_source
+│   ├── core/                  # credentials, fee_providers, vip_fee_tiers,
+│   │                          # cross_interval_funding
+│   ├── venues/                # CEX + hyperliquid, aster, lighter, edgex
+│   ├── market/                # parallel_fetch, futures_depth, price_oracle
+│   └── tests/                 # pytest suite
+├── server/
+│   ├── main.py                # FastAPI + static UI + background scanner loop
+│   └── routes/                # scanner, positions, backtest, settings
+├── web/                       # Vue 3 + Naive UI (+ src-tauri optional)
+├── SKILL.md                   # AI agent CLI playbook
+├── ROADMAP.md                 # Completed work + venue expansion plan
+├── start.sh / start.ps1
 └── setup.sh
 ```
 
-## AI / CLI Skill
+---
 
-For agent-driven workflows without the web UI, see [`SKILL.md`](SKILL.md) at the repo root. In Cursor, use `@SKILL.md` or ask the agent to follow it.
-
-Future work and venue expansion (Perp DEX, etc.): [`ROADMAP.md`](ROADMAP.md).
-
-## Running Tests
+## Testing
 
 ```bash
-pip install pytest
-python3 -m pytest scripts/tests/ -q
-# 147+ tests — C&C, Reverse Margin, Pure Futures, Transfer Chain
+pip install -r requirements.txt   # or: bash setup.sh
+.venv/bin/python -m pytest scripts/tests/ -q
+# 245+ tests — scanners, fees, venues (incl. HL/Aster/Lighter/EdgeX), executor, backtest
 ```
+
+---
+
+## Documentation
+
+| Doc | Contents |
+|-----|----------|
+| [`docs/cross-interval-funding-model.md`](docs/cross-interval-funding-model.md) | Basis-blend funding model for mismatched settlement intervals |
+| [`SKILL.md`](SKILL.md) | CLI-first workflow for AI agents (`@SKILL.md` in Cursor) |
+| [`ROADMAP.md`](ROADMAP.md) | Shipped features, Perp DEX status, planned work |
+| [`plans/edgex-integration-plan.md`](plans/edgex-integration-plan.md) | EdgeX scan + trade integration notes |
+
+---
 
 ## Origin
 
-This project was independently spun off from [cex-adaptive-dca](https://github.com/counterfactual5/cex-adaptive-dca). See [MIGRATION_FROM_DCA.md](MIGRATION_FROM_DCA.md) for details.
+Spun off from [cex-adaptive-dca](https://github.com/counterfactual5/cex-adaptive-dca). See [`MIGRATION_FROM_DCA.md`](MIGRATION_FROM_DCA.md).
 
 ## License
 

@@ -521,6 +521,13 @@ function onStrategyChange(val: Strategy) {
 function onWsMessage(msg: WsMessage) {
   if (msg.event !== 'scanner.update') return
   const d = msg.data as Record<string, any>
+  if (d.recalc_fees && d.data && typeof d.data === 'object') {
+    const payload = d.data as Record<string, unknown>
+    if (payload.pure) applyScanData('pure', payload.pure)
+    if (payload.carry) applyScanData('carry', payload.carry)
+    if (payload.unified) applyScanData('unified', payload.unified)
+    return
+  }
   if (d.strategy === 'carry') {
     const rows = Array.isArray(d.data) ? d.data as CarryVenue[] : []
     const scanned = rows.map((v) => v.venue).filter(Boolean)

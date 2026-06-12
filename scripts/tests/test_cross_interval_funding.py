@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from core.cross_interval_funding import (
+    DEFAULT_BASIS_CAP_PCT,
+    VENUE_BASIS_CAP_PCT,
     basis_pct,
     blended_hourly_rate,
     infer_last_settle_ts,
@@ -43,9 +45,36 @@ def test_settle_progress_from_next_only():
     assert 0.74 < p < 0.76
 
 
-def test_basis_pct_caps_extreme():
-    assert basis_pct(101_000, 100_000) == 1.0
-    assert basis_pct(99_000, 100_000) == -1.0
+def test_basis_pct_caps_extreme_with_default():
+    """Default (no venue) uses DEFAULT_BASIS_CAP_PCT."""
+    # mark is 1% above index → exceeds default cap (0.5%) → clamped
+    assert basis_pct(101_000, 100_000) == DEFAULT_BASIS_CAP_PCT
+    assert basis_pct(99_000, 100_000) == -DEFAULT_BASIS_CAP_PCT
+
+
+def test_basis_pct_per_venue_binance():
+    """Binance cap (0.3%) is tighter than default."""
+    # 0.5% basis on Binance → clamped to 0.3%
+    assert basis_pct(100_500, 100_000, venue="binance") == 0.3
+    # 0.2% basis on Binance → within cap, passes through
+    assert abs(basis_pct(100_200, 100_000, venue="binance") - 0.2) < 1e-6
+
+
+def test_basis_pct_per_venue_hyperliquid():
+    """HyperLiquid cap (0.5%) is wider than Binance."""
+    # 0.4% basis on HL → within 0.5% cap, passes through
+    assert abs(basis_pct(100_400, 100_000, venue="hyperliquid") - 0.4) < 1e-6
+    # 0.6% basis on HL → clamped to 0.5%
+    assert basis_pct(100_600, 100_000, venue="hyperliquid") == 0.5
+
+
+def test_basis_pct_unknown_venue_uses_default():
+    """Unknown venue falls back to DEFAULT_BASIS_CAP_PCT."""
+    assert basis_pct(100_800, 100_000, venue="random_dex") == DEFAULT_BASIS_CAP_PCT
+
+
+def test_basis_pct_venue_lookup_is_case_insensitive():
+    assert basis_pct(100_500, 100_000, venue="Binance") == 0.3
 
 
 def test_blended_hourly_early_period_trusts_rate():

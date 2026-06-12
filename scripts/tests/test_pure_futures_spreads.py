@@ -212,21 +212,30 @@ def test_scan_spreads_three_venues():
 
 
 def test_settle_mismatch_detection():
+    import time as _time
+
+    now_ms = int(_time.time() * 1000)
+    interval_2h_ms = int(2 * 3600 * 1000)
+    interval_8h_ms = int(8 * 3600 * 1000)
     by_base = {
         "BTC": {
             "bitget": {
                 "symbol": "BTCUSDT",
                 "rate_pct": 0.20,
                 "interval_h": 2.0,
-                "next_funding_ts": 10000,
-                "mark_price": 100000.0,
+                "next_funding_ts": now_ms + interval_2h_ms // 2,
+                "last_settle_ts": now_ms - interval_2h_ms // 2,
+                "mark_price": 100_050.0,
+                "index_price": 100_000.0,
             },
             "binance": {
                 "symbol": "BTCUSDT",
                 "rate_pct": 0.02,
                 "interval_h": 8.0,
-                "next_funding_ts": 10100,
-                "mark_price": 100001.0,
+                "next_funding_ts": now_ms + interval_8h_ms // 2,
+                "last_settle_ts": now_ms - interval_8h_ms // 2,
+                "mark_price": 100_001.0,
+                "index_price": 100_000.0,
             },
         },
     }
@@ -234,6 +243,9 @@ def test_settle_mismatch_detection():
     assert len(fwd) == 1
     # Bitget shorts at 0.20 (2h interval), Binance longs at 0.02 (8h interval) → mismatch
     assert fwd[0]["settle_mismatch"] is True
+    assert fwd[0]["spread_source"] == "basis_blend"
+    assert fwd[0]["long_settle_progress"] is not None
+    assert fwd[0]["long_basis_pct"] is not None
 
 
 def test_blacklist_ignored():

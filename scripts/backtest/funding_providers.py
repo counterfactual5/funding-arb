@@ -115,6 +115,7 @@ class BinanceFundingProvider(FundingProvider):
             "next_funding_ts": next_ts,
             "interval_ms": interval_ms,
             "mark_price": float(data.get("markPrice", 0.0) or 0.0),
+            "index_price": float(data.get("indexPrice", 0.0) or 0.0),
         }
 
     def fetch_since(
@@ -212,6 +213,7 @@ class BitgetFundingProvider(FundingProvider):
             "next_funding_ts": next_ts,
             "interval_ms": interval_ms,
             "mark_price": float(row.get("markPrice", 0) or 0),
+            "index_price": float(row.get("indexPrice", 0) or 0),
         }
 
     def fetch_since(
@@ -297,6 +299,7 @@ class BybitFundingProvider(FundingProvider):
             "next_funding_ts": next_ts,
             "interval_ms": interval_ms,
             "mark_price": float(row.get("markPrice", row.get("lastPrice", 0)) or 0),
+            "index_price": float(row.get("indexPrice", 0) or 0),
         }
 
     def fetch_since(
@@ -441,12 +444,14 @@ class OkxFundingProvider(FundingProvider):
             interval_ms = _DEFAULT_INTERVAL_MS
         last_settle_ts = next_ts - interval_ms if next_ts else 0
         mark_price = 0.0
+        index_price = 0.0
         try:
             mp_url = f"{self.BASE}/api/v5/public/mark-price?instId={inst}&instType=SWAP"
             mp_payload = _http_get_with_retry(mp_url)
             mp_rows = mp_payload.get("data", [])
             if mp_rows:
                 mark_price = float(mp_rows[0].get("markPx", 0) or 0)
+                index_price = float(mp_rows[0].get("idxPx", 0) or 0)
         except Exception:
             pass
         return {
@@ -455,6 +460,7 @@ class OkxFundingProvider(FundingProvider):
             "next_funding_ts": next_ts,
             "interval_ms": interval_ms,
             "mark_price": mark_price,
+            "index_price": index_price,
         }
 
     def fetch_since(

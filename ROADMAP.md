@@ -96,6 +96,10 @@ Hyperliquid / Aster / Lighter shipped (see Completed above); remaining candidate
 
 ---
 
-## Removed docs (2026-06-12)
+## Documentation (2026-06-12)
 
-The former `docs/` folder held pre-implementation specs and completed task checklists (`TODO_*`, `PURE_FUTURES_*`). That work is shipped; use this file + [`README.md`](README.md) + [`SKILL.md`](SKILL.md) instead.
+Legacy `docs/` task checklists (`TODO_*`, `PURE_FUTURES_*`) were removed after shipping. Active reference docs:
+
+- [`docs/cross-interval-funding-model.md`](docs/cross-interval-funding-model.md) — basis-blend model for mismatched funding intervals
+- [`README.md`](README.md) — setup, dashboard, CLI, API
+- [`SKILL.md`](SKILL.md) — agent playbook

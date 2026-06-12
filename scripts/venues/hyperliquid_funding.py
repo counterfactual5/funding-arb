@@ -145,6 +145,10 @@ class HyperliquidFundingProvider:
                     mark = float(ctx.get("markPx", 0) or 0)
                 except (ValueError, TypeError):
                     mark = 0.0
+                try:
+                    oracle = float(ctx.get("oraclePx", 0) or 0)
+                except (ValueError, TypeError):
+                    oracle = 0.0
                 now_ms = int(time.time() * 1000)
                 next_ts = _next_hour_ts(now_ms)
                 return {
@@ -152,6 +156,7 @@ class HyperliquidFundingProvider:
                     "next_funding_ts": next_ts,
                     "interval_ms": _INTERVAL_MS,
                     "mark_price": mark,
+                    "index_price": oracle,
                     "last_settle_ts": next_ts - _INTERVAL_MS,
                 }
 

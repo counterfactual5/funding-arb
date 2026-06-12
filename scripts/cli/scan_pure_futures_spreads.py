@@ -51,7 +51,6 @@ DEFAULT_JSONL_FILE = "data/pure_futures_spreads.jsonl"
 HOURS_PER_YEAR = 365.0 * 24.0
 
 from core.cross_interval_funding import (
-    basis_pct,
     blended_hourly_rate,
     infer_last_settle_ts,
     spread_source_for_pair,
@@ -153,18 +152,19 @@ def _backfill_missing_settle_times(
     if not missing:
         return
 
-    def _fetch_one(args: tuple[str, str, str]) -> tuple[str, dict[str, Any]]:
-        venue, symbol, base = args
+    def _fetch_one(
+        args: tuple[str, str, str],
+    ) -> tuple[tuple[str, str, str], dict[str, Any]]:
+        venue, symbol, _base = args
         fp = get_funding_provider(venue)
         snap = fp.fetch_current(symbol)
-        return f"{venue}:{base}", snap
+        return args, snap
 
-    snap_map = run_io_parallel(  # type: ignore[arg-type]
+    snap_map = run_io_parallel(
         missing, _fetch_one, max_workers=workers, swallow_errors=True
     )
     for venue, symbol, base in missing:
-        key = f"{venue}:{base}"
-        snap = snap_map.get(key)
+        snap = snap_map.get((venue, symbol, base))
         if not isinstance(snap, dict):
             continue
         info = by_base[base][venue]
@@ -248,6 +248,7 @@ def _scan_spreads(
                     long_interval,
                     long_info,
                     now_ms=now_ms,
+                    venue=long_venue,
                     use_basis_blend=is_mismatch,
                 )
                 short_rate_hourly, short_blend = blended_hourly_rate(
@@ -255,6 +256,7 @@ def _scan_spreads(
                     short_interval,
                     short_info,
                     now_ms=now_ms,
+                    venue=short_venue,
                     use_basis_blend=is_mismatch,
                 )
 
@@ -324,24 +326,21 @@ def _scan_spreads(
                     "long_mark": long_mark,
                     "short_mark": short_mark,
                     "mark_spread_pct": round(mark_spread_pct, 6),
-                    "long_basis_pct": round(
-                        (long_mark - float(long_info.get("index_price", 0) or 0))
-                        / max(float(long_info.get("index_price", 0) or 1), 1e-12)
-                        * 100,
-                        6,
-                    )
-                    if long_mark > 0 and float(long_info.get("index_price", 0) or 0) > 0
-                    else None,
-                    "short_basis_pct": round(
-                        (short_mark - float(short_info.get("index_price", 0) or 0))
-                        / max(float(short_info.get("index_price", 0) or 1), 1e-12)
-                        * 100,
-                        6,
-                    )
-                    if short_mark > 0
-                    and float(short_info.get("index_price", 0) or 0) > 0
-                    else None,
-                    "spread_source": "basis_blend" if is_mismatch else "rate",
+                    "long_basis_pct": (
+                        round(long_blend["basis_pct"], 6)
+                        if long_blend.get("basis_pct") is not None
+                        else None
+                    ),
+                    "short_basis_pct": (
+                        round(short_blend["basis_pct"], 6)
+                        if short_blend.get("basis_pct") is not None
+                        else None
+                    ),
+                    "long_settle_progress": long_blend.get("settle_progress"),
+                    "short_settle_progress": short_blend.get("settle_progress"),
+                    "spread_source": spread_source_for_pair(
+                        is_mismatch, long_blend, short_blend
+                    ),
                 }
 
                 if direction == "forward":

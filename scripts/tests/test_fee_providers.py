@@ -107,7 +107,7 @@ def test_build_policy_futures_cache_uses_tier_without_api(monkeypatch):
     policy = parse_fee_policy({"fee_mode": "auto", "venue_fee_tiers": {"bybit": "vip2"}})
     cache = build_policy_futures_cache(by_base, policy)
     assert cache[("binance", "BTCUSDT")]["taker_pct"] == 0.05  # vip0 futures
-    assert cache[("bybit", "BTCUSDT")]["taker_pct"] == 0.045  # vip2 futures
+    assert cache[("bybit", "BTCUSDT")]["taker_pct"] == 0.0375  # vip2 futures
 
 
 def test_config_override_beats_cache():

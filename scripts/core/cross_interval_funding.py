@@ -10,8 +10,31 @@ from __future__ import annotations
 
 from typing import Any
 
-# Exchanges clamp premium before funding; uncapped mark-index can inflate scans.
-MAX_BASIS_PCT_PER_PERIOD = 1.0
+# Per-venue basis caps (mark-index premium as % of index, per settlement period).
+#
+# These serve as upper bounds on how much basis-implied funding we trust per period.
+# They are derived from each exchange's actual funding-rate clamp mechanism:
+#   - Binance/Bybit/Bitget/OKX clamp funding to ~±0.1% per 8h period for most assets.
+#     A 0.3% basis cap is generous (3x the typical clamp) to avoid over-trimming
+#     legitimate large-basis signals while still filtering extreme noise.
+#   - HyperLiquid uses an EMA-based premium with no hard cap; 0.5% is conservative.
+#   - Lighter mirrors HL's 1h model with a similar premium formula.
+#   - EdgeX/Aster use Binance-fapi-compatible mechanisms with similar clamps.
+#   - Unknown venues get the global fallback.
+#
+# To tune: observe live mark-index spreads during volatile periods; if real basis
+# consistently exceeds these values, widen the cap.
+VENUE_BASIS_CAP_PCT: dict[str, float] = {
+    "binance": 0.30,
+    "bybit": 0.30,
+    "bitget": 0.30,
+    "okx": 0.30,
+    "aster": 0.30,
+    "hyperliquid": 0.50,
+    "lighter": 0.50,
+    "edgex": 0.30,
+}
+DEFAULT_BASIS_CAP_PCT = 0.50
 
 
 def infer_last_settle_ts(next_funding_ts: int, interval_h: float) -> int:
@@ -41,12 +64,16 @@ def settle_progress(
     return 0.5
 
 
-def basis_pct(mark: float, index: float) -> float | None:
-    """Mark-index premium as % of index; None when data missing."""
+def basis_pct(mark: float, index: float, *, venue: str = "") -> float | None:
+    """Mark-index premium as % of index; None when data missing.
+
+    The result is clamped to the per-venue cap (VENUE_BASIS_CAP_PCT) or the
+    global default when the venue is unknown.
+    """
     if mark <= 0 or index <= 0:
         return None
     raw = (mark - index) / index * 100.0
-    cap = MAX_BASIS_PCT_PER_PERIOD
+    cap = VENUE_BASIS_CAP_PCT.get(venue.lower(), DEFAULT_BASIS_CAP_PCT)
     if abs(raw) > cap:
         return cap if raw > 0 else -cap
     return raw
@@ -65,6 +92,7 @@ def blended_hourly_rate(
     info: dict[str, Any],
     *,
     now_ms: int,
+    venue: str = "",
     use_basis_blend: bool = True,
 ) -> tuple[float, dict[str, Any]]:
     """Estimate hourly funding: linear rate, or progress-weighted basis blend."""
@@ -82,7 +110,7 @@ def blended_hourly_rate(
 
     mark = float(info.get("mark_price", 0) or 0)
     index = float(info.get("index_price", 0) or 0)
-    bp = basis_pct(mark, index)
+    bp = basis_pct(mark, index, venue=venue)
     if bp is None:
         return rate_hourly, meta
 
