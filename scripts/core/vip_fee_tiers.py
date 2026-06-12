@@ -27,11 +27,13 @@ CEX_TIERS: dict[str, VenueTiers] = {
     },
     "bitget": {
         "vip0": {"spot_taker_pct": 0.10, "futures_taker_pct": 0.060},
-        "vip1": {"spot_taker_pct": 0.08, "futures_taker_pct": 0.055},
-        "vip2": {"spot_taker_pct": 0.07, "futures_taker_pct": 0.050},
-        "vip3": {"spot_taker_pct": 0.06, "futures_taker_pct": 0.045},
-        "vip4": {"spot_taker_pct": 0.05, "futures_taker_pct": 0.040},
-        "vip5": {"spot_taker_pct": 0.04, "futures_taker_pct": 0.035},
+        "vip1": {"spot_taker_pct": 0.08, "futures_taker_pct": 0.060},
+        "vip2": {"spot_taker_pct": 0.07, "futures_taker_pct": 0.040},
+        "vip3": {"spot_taker_pct": 0.06, "futures_taker_pct": 0.0375},
+        "vip4": {"spot_taker_pct": 0.05, "futures_taker_pct": 0.035},
+        "vip5": {"spot_taker_pct": 0.04, "futures_taker_pct": 0.032},
+        "vip6": {"spot_taker_pct": 0.035, "futures_taker_pct": 0.030},
+        "vip7": {"spot_taker_pct": 0.03, "futures_taker_pct": 0.020},
     },
     "bybit": {
         "vip0": {"spot_taker_pct": 0.10, "futures_taker_pct": 0.055},
@@ -44,11 +46,15 @@ CEX_TIERS: dict[str, VenueTiers] = {
     },
     "okx": {
         "vip0": {"spot_taker_pct": 0.10, "futures_taker_pct": 0.050},
-        "vip1": {"spot_taker_pct": 0.09, "futures_taker_pct": 0.045},
-        "vip2": {"spot_taker_pct": 0.08, "futures_taker_pct": 0.040},
-        "vip3": {"spot_taker_pct": 0.07, "futures_taker_pct": 0.035},
-        "vip4": {"spot_taker_pct": 0.065, "futures_taker_pct": 0.030},
-        "vip5": {"spot_taker_pct": 0.06, "futures_taker_pct": 0.025},
+        "vip1": {"spot_taker_pct": 0.09, "futures_taker_pct": 0.040},
+        "vip2": {"spot_taker_pct": 0.08, "futures_taker_pct": 0.035},
+        "vip3": {"spot_taker_pct": 0.07, "futures_taker_pct": 0.028},
+        "vip4": {"spot_taker_pct": 0.065, "futures_taker_pct": 0.027},
+        "vip5": {"spot_taker_pct": 0.06, "futures_taker_pct": 0.026},
+        "vip6": {"spot_taker_pct": 0.055, "futures_taker_pct": 0.025},
+        "vip7": {"spot_taker_pct": 0.050, "futures_taker_pct": 0.020},
+        "vip8": {"spot_taker_pct": 0.045, "futures_taker_pct": 0.020},
+        "vip9": {"spot_taker_pct": 0.040, "futures_taker_pct": 0.015},
     },
 }
 
@@ -58,7 +64,7 @@ PERP_TIERS: dict[str, VenueTiers] = {
         "default": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.045},
     },
     "aster": {
-        "default": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.035},
+        "default": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.04},
     },
     "lighter": {
         "default": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.0},

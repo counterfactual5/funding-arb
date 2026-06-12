@@ -21,7 +21,7 @@ DEFAULT_TAKER_PCT: dict[str, float] = {
     "okx": 0.05,
     "bybit": 0.055,
     "hyperliquid": 0.045,  # HL base cross rate (userFees userCrossRate=0.00045); was a stale 0.035
-    "aster": 0.035,  # Aster perp taker VIP0
+    "aster": 0.04,  # Aster perp taker VIP0 (0.04% per official docs)
     "lighter": 0.0,  # Lighter currently zero-fee (orderBookDetails taker_fee=0)
     "edgex": 0.038,  # EdgeX defaultTakerFeeRate=0.00038 (getMetaData)
 }
@@ -32,7 +32,7 @@ DEFAULT_MAKER_PCT: dict[str, float] = {
     "okx": 0.02,
     "bybit": 0.02,
     "hyperliquid": 0.01,
-    "aster": 0.01,
+    "aster": 0.0,  # Aster perp maker 0% per official docs
     "lighter": 0.0,
     "edgex": 0.0,
 }
@@ -515,7 +515,10 @@ def pair_open_taker_fee_pct(
         long_venue, long_symbol, fee_cache=fee_cache, config_overrides=config_overrides
     )
     short_fee = taker_fee_pct(
-        short_venue, short_symbol, fee_cache=fee_cache, config_overrides=config_overrides
+        short_venue,
+        short_symbol,
+        fee_cache=fee_cache,
+        config_overrides=config_overrides,
     )
     return long_fee, short_fee, long_fee + short_fee
 
@@ -656,7 +659,9 @@ def build_policy_carry_caches(
     policy: dict[str, Any] | None = None,
     *,
     workers: int = 8,
-) -> tuple[dict[tuple[str, str], dict[str, float]], dict[tuple[str, str], dict[str, float]]]:
+) -> tuple[
+    dict[tuple[str, str], dict[str, float]], dict[tuple[str, str], dict[str, float]]
+]:
     """Spot + futures caches for cash-and-carry scanner."""
     policy = policy or parse_fee_policy()
     v = venue.lower()
