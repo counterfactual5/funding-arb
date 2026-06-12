@@ -28,7 +28,7 @@ Last updated: 2026-06-12
 | **Aster** | Done | `venues/aster.py` — Binance-fapi-compatible |
 | **Lighter** | Done | `venues/lighter.py` — `lighter-sdk` |
 | **EdgeX** | Scan + dry-run done; live unverified | `edgex_funding.py` + `edgex.py`; verify: `scripts/tools/verify_edgex_live.py` |
-| **dYdX v4** | Scan-only done | `venues/dydx_funding.py` — indexer REST, 1h funding; trading TBD |
+| **dYdX v4** | Scan + dry-run done; live gated | `dydx_funding.py` (orderbook-mid index via `DYDX_INDEX_MID=1`) + `dydx.py` (CexVenue adapter; live needs `DYDX_ENABLE_LIVE=1`, order builder pending testnet) |
 | Depth checks | Done | `market/futures_depth.py` for CEX + DEX venues with books |
 | Capability API | Done | `GET /api/settings/venues` — scan / trade / live_ready |
 
@@ -54,7 +54,7 @@ Project CLI skill: [`SKILL.md`](SKILL.md) (repo root)
 |------|-------|-------|
 | **Hyperliquid live keys** | Env-dependent | Sibling `../hyperliquid` + wallet keys for live |
 | **EdgeX live trade** | Unverified | Run `verify_edgex_live.py --read-account` with funded account |
-| **dYdX trading** | Scan-only | Cosmos wallet / order adapter not implemented |
+| **dYdX live orders** | Gated stub | Adapter + wallet wiring done; protobuf place_order (quantums/subticks) needs testnet rehearsal, then drop the guard in `venues/dydx.py` |
 | **Drift** | Not started | Solana perp SDK — P2 |
 
 ---
@@ -63,7 +63,7 @@ Project CLI skill: [`SKILL.md`](SKILL.md) (repo root)
 
 | Venue | Type | Priority | Work items |
 |-------|------|----------|------------|
-| **dYdX v4** | Cosmos app-chain | P2 | ~~Funding scan~~ done; wallet signing + `venues/dydx.py` executor |
+| **dYdX v4** | Cosmos app-chain | P2 | ~~Funding scan~~ ~~venue adapter + dry-run~~ done; remaining: live place_order on testnet |
 | **Drift** | Solana perp | P2 | Drift SDK, SOL/USDC margin, funding intervals |
 | **GMX v2** | Arbitrum/Avalanche | P3 | Borrow-fee model differs from CEX funding |
 | **Vertex** | Arbitrum hybrid | P3 | REST + signing |

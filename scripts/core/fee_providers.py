@@ -224,6 +224,18 @@ def _fetch_edgex(symbol: str) -> dict[str, float]:
     }
 
 
+def _fetch_dydx(symbol: str) -> dict[str, float]:
+    """dYdX v4 fees — defaults (fee tiers are on-chain, not public REST).
+
+    The default taker fee is 5 bps (0.05%). Fee tiers are volume-based
+    and require on-chain query; we use the default tier here.
+    """
+    return {
+        "taker_pct": DEFAULT_TAKER_PCT["dydx"],
+        "maker_pct": DEFAULT_MAKER_PCT.get("dydx", 0.0),
+    }
+
+
 _FETCHERS: dict[str, Callable[[str], dict[str, float]]] = {
     "bitget": _fetch_bitget,
     "bybit": _fetch_bybit,
@@ -232,6 +244,7 @@ _FETCHERS: dict[str, Callable[[str], dict[str, float]]] = {
     "hyperliquid": _fetch_hyperliquid,
     "lighter": _fetch_lighter,
     "edgex": _fetch_edgex,
+    "dydx": _fetch_dydx,
 }
 
 

@@ -127,6 +127,8 @@ def fetch_futures_depth(
         return _fetch_lighter_depth(base, limit)
     if v == "edgex":
         return _fetch_edgex_depth(base, limit)
+    if v == "dydx":
+        return _fetch_dydx_depth(base, limit)
     raise ValueError(f"Unsupported venue: {venue!r}")
 
 
@@ -144,6 +146,7 @@ def _fetch_hyperliquid_depth(base: str) -> Book:
     with urllib.request.urlopen(req, timeout=15) as resp:
         d = _json.loads(resp.read().decode())
     levels = d.get("levels") or [[], []]
+
     # levels[0] = bids (descending), levels[1] = asks (ascending); entries {px, sz, n}
     def _conv(rows: Any) -> list[tuple[float, float]]:
         out: list[tuple[float, float]] = []
@@ -220,6 +223,35 @@ def _fetch_edgex_depth(base: str, limit: int = 50) -> Book:
         return out
 
     return {"bids": _conv(data.get("bids")), "asks": _conv(data.get("asks"))}
+
+
+def _fetch_dydx_depth(base: str, limit: int = 50) -> Book:
+    """dYdX v4 L2 order book via the public indexer (no auth).
+
+    Endpoint: GET /v4/orderbooks/perpetualMarket/{ticker}
+    Each level is {"price": "64000", "size": "0.1234"} (strings).
+    """
+    import json as _json
+    import urllib.request
+
+    ticker = f"{base.upper()}-USD"
+    url = f"https://indexer.dydx.trade/v4/orderbooks/perpetualMarket/{ticker}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        d = _json.loads(resp.read().decode())
+
+    def _conv(rows: Any) -> list[tuple[float, float]]:
+        out: list[tuple[float, float]] = []
+        for r in rows or []:
+            try:
+                px, qty = float(r["price"]), float(r["size"])
+            except (TypeError, KeyError, ValueError):
+                continue
+            if px > 0 and qty > 0:
+                out.append((px, qty))
+        return out
+
+    return {"bids": _conv(d.get("bids")), "asks": _conv(d.get("asks"))}
 
 
 def depth_usd_within(book: Book, side: str, max_dev_pct: float) -> float:
