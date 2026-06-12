@@ -12,7 +12,9 @@ basis blend、real_edge 与代码实现
 | --- | --- | --- |
 | Binance / OKX / Bybit | 8h | 每 8 小时结算一次 |
 | Bitget | 2h 或 8h | 部分合约 2h |
-| Hyperliquid | 1h | 每小时结算 |
+| Hyperliquid / Lighter / dYdX v4 | 1h | 每小时结算 |
+| EdgeX | 4h | 多数主流合约 240min |
+| Aster | 按合约 | 读 fundingInfo，常见 8h |
 
 若简单做 spread_naive = short_rate_pct - long_rate_pct，会把 1h 的 0.01% 与 8h 的 0.05% 放在同一量级比较，严重失真。
 
@@ -71,6 +73,9 @@ is_mismatch = |long_interval_h − short_interval_h| > 0.5
 | Aster | 继承 Binance provider | ✅ |
 | Lighter | 无公开 index → 0 | ❌ 回退 rate_linear |
 | EdgeX | 无公开 index → 0 | ❌ 回退 rate_linear |
+| dYdX v4 | indexer 仅 oraclePrice（mark≈index） | ❌ 回退 rate_linear |
+
+> ℹ️ dYdX 链上费率 = 60 分钟 premium TWAP + 利率项，每小时整点支付；nextFundingRate 是预测值，与 CEX 8h 配对时务必用 min_edge_mismatch。
 
 ## 结算进度 progress
 
@@ -101,7 +106,7 @@ basis_pct = (mark_price − index_price) / index_price × 100%
 | 类型 | 单周期 cap | 说明 |
 | --- | --- | --- |
 | Binance / Bybit / Bitget / OKX / Aster / EdgeX | ±0.30% | 约为典型 funding clamp 的 3 倍，过滤极端噪声 |
-| Hyperliquid / Lighter | ±0.50% | 无硬顶 EMA premium，放宽 cap |
+| Hyperliquid / Lighter / dYdX | ±0.50% | 无硬顶或 oracle-only，放宽 cap |
 | 未知 venue | ±0.50% | DEFAULT_BASIS_CAP_PCT |
 
 ## 混合 hourly 与 spread
@@ -194,6 +199,23 @@ net_edge ≈ 0.252 − 0.11 = 0.14%
 ```
 
 > ℹ️ 若用朴素线性外推，HL 仅 0.04%/h，spread 会低估 HL 作为 short 腿的优势。
+
+## EdgeX 4h 线性回退示例
+
+<!-- id: ci-example-edgex -->
+
+场景：BTC，EdgeX（4h，无 index）vs Binance（8h）。EdgeX 腿无法 basis blend，spread_source 对短腿为 rate_linear。
+
+| 腿 | rate_pct | interval_h | blend |
+| --- | --- | --- | --- |
+| Short @ EdgeX | 0.02 | 4 | rate_linear → 0.02/4 = 0.005 %/h |
+| Long @ Binance | 0.08 | 8 | basis_blend（有 index） |
+
+```text
+eff_interval = min(4, 8) = 4h
+spread ≈ (short_hourly − long_blended) × 4
+需同时满足 min_edge_mismatch 与 settle_mismatch_planner 现金流检查
+```
 
 ## 已知限制
 

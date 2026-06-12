@@ -69,6 +69,14 @@ Negative-rate assets that cannot be borrowed are listed under reverse_not_borrow
 
 Multi-asset mode (crossAssetArbitrage) runs slot contention: a higher-edge candidate can preempt an existing position, but only if it beats preemptionFrictionBufferPct — preventing churn that bleeds fees.
 
+## Dashboard opens
+
+<!-- id: cc-dashboard -->
+
+Scanner → Cash & Carry supports dry-run opens on the same venue (spot + perp). API: POST /api/positions/open with strategy=carry; futures_venue and spot_venue are identical.
+
+> ⚠️ Reverse requires margin borrow-sell (supports_reverse_arbitrage). Confirm borrow quota and live rates before disabling dry-run.
+
 ## Scanner fields
 
 <!-- id: cc-fields -->

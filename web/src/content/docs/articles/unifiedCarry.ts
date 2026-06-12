@@ -85,6 +85,21 @@ const zhCN: DocSection[] = [
     ],
   },
   {
+    id: 'u-dashboard',
+    title: '仪表盘开仓',
+    blocks: [
+      {
+        type: 'p',
+        text: 'Scanner → Unified C&C 支持 Dry-run 开仓：POST /api/positions/open，strategy=unified，分别传 futures_venue 与 spot_venue。跨所需自行保证两边 USDT 余额，系统不自动转账。',
+      },
+      {
+        type: 'callout',
+        variant: 'info',
+        text: '开仓前对比 net_edge_pct 与 net_edge_all_in_pct；跨所小额短持有时转账费会吃掉全部毛利。',
+      },
+    ],
+  },
+  {
     id: 'u-fields',
     title: 'Scanner 字段',
     blocks: [
@@ -208,6 +223,21 @@ const zhTW: DocSection[] = [
     ],
   },
   {
+    id: 'u-dashboard',
+    title: '儀表盤開倉',
+    blocks: [
+      {
+        type: 'p',
+        text: 'Scanner → Unified C&C 支援 Dry-run 開倉：POST /api/positions/open，strategy=unified，分別傳 futures_venue 與 spot_venue。跨所需自行保證兩邊 USDT 餘額，系統不自動轉賬。',
+      },
+      {
+        type: 'callout',
+        variant: 'info',
+        text: '開倉前對比 net_edge_pct 與 net_edge_all_in_pct；跨所小額短持有時轉賬費會吃掉全部毛利。',
+      },
+    ],
+  },
+  {
     id: 'u-fields',
     title: 'Scanner 欄位',
     blocks: [
@@ -327,6 +357,21 @@ const en: DocSection[] = [
         type: 'callout',
         variant: 'warn',
         text: 'The transfer fee is one-off and amortizes over the holding period. For short holds with small size, it can consume the entire edge — watch the gap between all-in and net.',
+      },
+    ],
+  },
+  {
+    id: 'u-dashboard',
+    title: 'Dashboard opens',
+    blocks: [
+      {
+        type: 'p',
+        text: 'Scanner → Unified C&C supports dry-run opens: strategy=unified with separate futures_venue and spot_venue. Cross-venue routes need USDT on both sides — no automatic transfer.',
+      },
+      {
+        type: 'callout',
+        variant: 'info',
+        text: 'Compare net_edge_pct vs net_edge_all_in_pct before opening; transfer fees can erase small cross-venue edges.',
       },
     ],
   },

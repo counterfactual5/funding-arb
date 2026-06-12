@@ -43,6 +43,20 @@ Higher VIP means lower taker, directly amplifying net_edge / real_edge. The same
 - Where to set: Settings → Trading Fees → per-venue VIP tier
 - With API keys, real account rates (including rebates) take priority
 
+## Perp DEX default taker (no API)
+
+<!-- id: fe-dex-defaults -->
+
+When no account API is available, fee_providers uses public defaults or contract metadata (EdgeX defaultTakerFeeRate). Reference VIP0 / default tiers below.
+
+| Venue | Default futures taker | Notes |
+| --- | --- | --- |
+| Hyperliquid | 0.045% | userFees can be lower |
+| Aster | 0.04% | Binance-fapi compatible |
+| Lighter | 0% | Promotional zero fee; verify on-chain |
+| EdgeX | 0.038% | getMetaData defaultTakerFeeRate |
+| dYdX v4 | 0.05% | Scan estimate; trading not wired |
+
 ## Edge fields
 
 <!-- id: fe-edges -->

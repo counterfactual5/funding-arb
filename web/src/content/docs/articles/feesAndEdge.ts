@@ -72,6 +72,27 @@ const zhCN: DocSection[] = [
     ],
   },
   {
+    id: 'fe-dex-defaults',
+    title: 'Perp DEX 默认 taker（无 API 时）',
+    blocks: [
+      {
+        type: 'p',
+        text: 'DEX 无账户 API 时使用 fee_providers 中的公开默认值或合约元数据（EdgeX defaultTakerFeeRate）。下表为 VIP0 / 默认档参考，实际以 Settings 或链上费率为准。',
+      },
+      {
+        type: 'table',
+        headers: ['Venue', '默认 futures taker', '备注'],
+        rows: [
+          ['Hyperliquid', '0.045%', 'userFees 可更低'],
+          ['Aster', '0.04%', 'Binance-fapi 兼容'],
+          ['Lighter', '0%', '当前零费促销，以链上为准'],
+          ['EdgeX', '0.038%', 'getMetaData defaultTakerFeeRate'],
+          ['dYdX v4', '0.05%', '扫描估算；交易未接入'],
+        ],
+      },
+    ],
+  },
+  {
     id: 'fe-edges',
     title: '各类边际字段',
     blocks: [
@@ -186,6 +207,27 @@ const zhTW: DocSection[] = [
     ],
   },
   {
+    id: 'fe-dex-defaults',
+    title: 'Perp DEX 預設 taker（無 API 時）',
+    blocks: [
+      {
+        type: 'p',
+        text: 'DEX 無賬戶 API 時使用 fee_providers 中的公開預設值或合約後設資料（EdgeX defaultTakerFeeRate）。下表為 VIP0 / 預設檔參考，實際以 Settings 或鏈上費率為準。',
+      },
+      {
+        type: 'table',
+        headers: ['Venue', '預設 futures taker', '備註'],
+        rows: [
+          ['Hyperliquid', '0.045%', 'userFees 可更低'],
+          ['Aster', '0.04%', 'Binance-fapi 相容'],
+          ['Lighter', '0%', '當前零費促銷，以鏈上為準'],
+          ['EdgeX', '0.038%', 'getMetaData defaultTakerFeeRate'],
+          ['dYdX v4', '0.05%', '掃描估算；交易未接入'],
+        ],
+      },
+    ],
+  },
+  {
     id: 'fe-edges',
     title: '各類邊際欄位',
     blocks: [
@@ -295,6 +337,27 @@ const en: DocSection[] = [
           'Tier tables: public exchange fee schedules, maintained in vip_fee_tiers.py',
           'Where to set: Settings → Trading Fees → per-venue VIP tier',
           'With API keys, real account rates (including rebates) take priority',
+        ],
+      },
+    ],
+  },
+  {
+    id: 'fe-dex-defaults',
+    title: 'Perp DEX default taker (no API)',
+    blocks: [
+      {
+        type: 'p',
+        text: 'When no account API is available, fee_providers uses public defaults or contract metadata (EdgeX defaultTakerFeeRate). Reference VIP0 / default tiers below.',
+      },
+      {
+        type: 'table',
+        headers: ['Venue', 'Default futures taker', 'Notes'],
+        rows: [
+          ['Hyperliquid', '0.045%', 'userFees can be lower'],
+          ['Aster', '0.04%', 'Binance-fapi compatible'],
+          ['Lighter', '0%', 'Promotional zero fee; verify on-chain'],
+          ['EdgeX', '0.038%', 'getMetaData defaultTakerFeeRate'],
+          ['dYdX v4', '0.05%', 'Scan estimate; trading not wired'],
         ],
       },
     ],

@@ -23,8 +23,9 @@
 | --- | --- |
 | Binance / OKX / Bybit | 8h |
 | Bitget | 2h 或 8h（按合約） |
-| Hyperliquid / Lighter | 1h |
-| Aster / EdgeX | 1h ~ 8h（按合約） |
+| Hyperliquid / Lighter / dYdX v4 | 1h |
+| EdgeX | 4h（主流合約） |
+| Aster | 按合約（常見 8h，讀 fundingInfo） |
 
 ```text
 annual_pct ≈ |rate_pct| × (24 / interval_h) × 365
@@ -43,6 +44,8 @@ basis_pct = (mark_price − index_price) / index_price × 100%
 ```
 
 在跨週期配對中，本系統用該基差對下一期 funding 做加權估計（basis blend），詳見「跨週期資金費率套利」。
+
+dYdX v4 類似：每分鐘取樣 impact 價相對 Oracle 的溢價，60 分鐘平均後加利率項，每小時整點結算。Indexer 的 nextFundingRate 已是下一小時預測值。
 
 ## Delta 中性對沖
 

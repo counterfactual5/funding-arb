@@ -12,6 +12,21 @@ Cross-exchange funding rate arbitrage engine supporting Cash-and-Carry, unified 
 | --- | --- |
 | CEX (spot + USDT-M perps) | Binance · Bitget · Bybit · OKX |
 | Perp DEX (scan; trade where supported) | Hyperliquid · Aster · Lighter · EdgeX |
+| Perp DEX (scan-only) | dYdX v4 (1h funding; trading adapter pending) |
+
+## Dashboard opens
+
+<!-- id: dashboard-open -->
+
+All three Scanner tabs support in-table dry-run opens (live off by default). Live orders need API keys, balance, and the dry-run toggle off.
+
+| Tab | API strategy | Executor |
+| --- | --- | --- |
+| Pure Futures | pure_futures | pure_futures_executor — dual perp legs |
+| Cash & Carry | carry | cross_venue_executor — same-venue spot + perp |
+| Unified C&C | unified | cross_venue_executor — cross-venue spot + perp |
+
+> ⚠️ Scan-only venues (e.g. dYdX) disable Open. For EdgeX live, use verify_edgex_live.py before real orders.
 
 ## Strategies
 
@@ -143,7 +158,7 @@ Configure in Settings → Strategy: fee_mode, venue_fee_tiers, scan thresholds (
 | GET /api/scanner/status | Scan state, last scan time |
 | GET/POST /api/settings/strategy | Thresholds, fee policy |
 | GET /api/settings/venues | Scan/trade/live capability per venue |
-| POST /api/positions/open | Open hedge (dry-run default) |
+| POST /api/positions/open | Open: strategy (pure_futures|carry|unified), dry_run (default true) |
 | POST /api/backtest/run | Run backtest |
 | WS /ws/events | scanner.update push |
 
@@ -154,6 +169,8 @@ Configure in Settings → Strategy: fee_mode, venue_fee_tiers, scan thresholds (
 - Copy .env.example → .env
 - Paper mode: no keys required (dry_run: true in config)
 - Live mode: exchange keys with spot + USDT-M futures trade permission; no withdrawal
+- Strategy thresholds: Settings → Strategy → scripts/data/strategy_config.json
+- CLI runners merge that file on start (same as dashboard)
 
 | Exchange | Environment variables |
 | --- | --- |

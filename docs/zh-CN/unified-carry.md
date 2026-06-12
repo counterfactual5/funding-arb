@@ -51,6 +51,14 @@ net_edge_all_in_pct = net_edge_pct − transfer_fee_pct
 
 > ⚠️ 转账费是一次性成本，持仓时间越长摊薄越多。短持仓 + 跨所小额时，转账费可能吃掉全部边际，留意 all-in 与 net 的差值。
 
+## 仪表盘开仓
+
+<!-- id: u-dashboard -->
+
+Scanner → Unified C&C 支持 Dry-run 开仓：POST /api/positions/open，strategy=unified，分别传 futures_venue 与 spot_venue。跨所需自行保证两边 USDT 余额，系统不自动转账。
+
+> ℹ️ 开仓前对比 net_edge_pct 与 net_edge_all_in_pct；跨所小额短持有时转账费会吃掉全部毛利。
+
 ## Scanner 字段
 
 <!-- id: u-fields -->

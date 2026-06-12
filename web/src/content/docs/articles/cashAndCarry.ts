@@ -108,6 +108,21 @@ const zhCN: DocSection[] = [
     ],
   },
   {
+    id: 'cc-dashboard',
+    title: '仪表盘开仓',
+    blocks: [
+      {
+        type: 'p',
+        text: 'Scanner → Cash & Carry 表格支持 Dry-run 开仓：同所 spot + perp（forward 或 reverse，由该行费率符号决定）。API：POST /api/positions/open，strategy=carry，futures_venue 与 spot_venue 相同。',
+      },
+      {
+        type: 'callout',
+        variant: 'warn',
+        text: '反向需交易所支持 margin 借卖（supports_reverse_arbitrage）。live 前确认借币额度与利率；net_edge 已扣借币成本但仍会浮动。',
+      },
+    ],
+  },
+  {
     id: 'cc-fields',
     title: 'Scanner 字段',
     blocks: [
@@ -254,6 +269,21 @@ const zhTW: DocSection[] = [
     ],
   },
   {
+    id: 'cc-dashboard',
+    title: '儀表盤開倉',
+    blocks: [
+      {
+        type: 'p',
+        text: 'Scanner → Cash & Carry 表格支援 Dry-run 開倉：同所 spot + perp（forward 或 reverse，由該行費率符號決定）。API：POST /api/positions/open，strategy=carry，futures_venue 與 spot_venue 相同。',
+      },
+      {
+        type: 'callout',
+        variant: 'warn',
+        text: '反向需交易所支援 margin 借賣（supports_reverse_arbitrage）。live 前確認借幣額度與利率；net_edge 已扣借幣成本但仍會浮動。',
+      },
+    ],
+  },
+  {
     id: 'cc-fields',
     title: 'Scanner 欄位',
     blocks: [
@@ -396,6 +426,21 @@ const en: DocSection[] = [
       {
         type: 'p',
         text: 'Multi-asset mode (crossAssetArbitrage) runs slot contention: a higher-edge candidate can preempt an existing position, but only if it beats preemptionFrictionBufferPct — preventing churn that bleeds fees.',
+      },
+    ],
+  },
+  {
+    id: 'cc-dashboard',
+    title: 'Dashboard opens',
+    blocks: [
+      {
+        type: 'p',
+        text: 'Scanner → Cash & Carry supports dry-run opens on the same venue (spot + perp). API: POST /api/positions/open with strategy=carry; futures_venue and spot_venue are identical.',
+      },
+      {
+        type: 'callout',
+        variant: 'warn',
+        text: 'Reverse requires margin borrow-sell (supports_reverse_arbitrage). Confirm borrow quota and live rates before disabling dry-run.',
       },
     ],
   },

@@ -12,7 +12,9 @@ Each exchange publishes rate_pct for its own settlement period. Periods vary:
 | --- | --- | --- |
 | Binance / OKX / Bybit | 8h | Settles every 8 hours |
 | Bitget | 2h or 8h | Some contracts 2h |
-| Hyperliquid | 1h | Hourly settlement |
+| Hyperliquid / Lighter / dYdX v4 | 1h | Hourly settlement |
+| EdgeX | 4h | Majors typically 240min |
+| Aster | Per contract | Often 8h via fundingInfo |
 
 Comparing 0.01% (1h) vs 0.05% (8h) directly would be severely distorted.
 
@@ -71,6 +73,9 @@ is_mismatch = |long_interval_h − short_interval_h| > 0.5
 | Aster | Inherits Binance provider | ✅ |
 | Lighter | No public index → 0 | ❌ rate_linear |
 | EdgeX | No public index → 0 | ❌ rate_linear |
+| dYdX v4 | Indexer oraclePrice only (mark≈index) | ❌ rate_linear |
+
+> ℹ️ dYdX on-chain rate = 60-min premium TWAP + interest; paid hourly. nextFundingRate is a forecast — use min_edge_mismatch vs 8h CEX.
 
 ## Settlement progress
 
@@ -189,6 +194,23 @@ net_edge ≈ 0.252 − 0.11 = 0.14%
 ```
 
 > ℹ️ With naive linear extrapolation, HL would be only 0.04%/h, underestimating its advantage as the short leg.
+
+## EdgeX 4h linear fallback example
+
+<!-- id: ci-example-edgex -->
+
+Scenario: BTC, EdgeX (4h, no index) vs Binance (8h). The EdgeX leg uses rate_linear; Binance uses basis_blend.
+
+| Leg | rate_pct | interval_h | blend |
+| --- | --- | --- | --- |
+| Short @ EdgeX | 0.02 | 4 | rate_linear → 0.02/4 = 0.005 %/h |
+| Long @ Binance | 0.08 | 8 | basis_blend (has index) |
+
+```text
+eff_interval = min(4, 8) = 4h
+spread ≈ (short_hourly − long_blended) × 4
+Also requires min_edge_mismatch and settle_mismatch_planner cash-flow checks
+```
 
 ## Known limitations
 

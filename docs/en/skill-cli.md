@@ -22,7 +22,7 @@ All commands run from the repo root. Use the project venv: .venv/bin/python. Net
 
 # Include perp DEXs (1h settlement)
 .venv/bin/python scripts/cli/scan_pure_futures_spreads.py \
-  --venues binance,bitget,bybit,okx,hyperliquid,aster,lighter --json
+  --venues binance,bitget,bybit,okx,hyperliquid,aster,lighter,edgex,dydx --json
 
 # Continuous monitoring → data/pure_futures_spreads.jsonl
 .venv/bin/python scripts/cli/scan_pure_futures_spreads.py --watch 5
@@ -35,6 +35,18 @@ All commands run from the repo root. Use the project venv: .venv/bin/python. Net
 ```
 
 Prefer --json for parsing. Key fields: base, direction, long_venue, short_venue, spread_pct, fee_pct, net_edge_pct, annual_apy_pct, mark_spread_pct, settle_mismatch.
+
+## Strategy config (shared with dashboard)
+
+<!-- id: strategy-config -->
+
+Settings → Strategy writes scripts/data/strategy_config.json. These CLIs merge it on start (thresholds, scan_venues, fees):
+
+- run_pure_futures_spread.py --config templates/config.pure_futures.spread.json
+- orchestrate_funding.py --pure-futures
+- pure_futures_watcher.py
+
+Templates still own parallelLegs, depthCheck, dry_run. EdgeX account check: python3 scripts/tools/verify_edgex_live.py
 
 ## Trade (open / close / list)
 

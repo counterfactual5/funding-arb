@@ -51,6 +51,14 @@ net_edge_all_in_pct = net_edge_pct − transfer_fee_pct
 
 > ⚠️ The transfer fee is one-off and amortizes over the holding period. For short holds with small size, it can consume the entire edge — watch the gap between all-in and net.
 
+## Dashboard opens
+
+<!-- id: u-dashboard -->
+
+Scanner → Unified C&C supports dry-run opens: strategy=unified with separate futures_venue and spot_venue. Cross-venue routes need USDT on both sides — no automatic transfer.
+
+> ℹ️ Compare net_edge_pct vs net_edge_all_in_pct before opening; transfer fees can erase small cross-venue edges.
+
 ## Scanner fields
 
 <!-- id: u-fields -->

@@ -7,7 +7,7 @@ const zhCN: DocSection[] = [
     blocks: [
       {
         type: 'p',
-        text: 'Pure Futures 是本系统的主策略：在两个交易所分别持有同一币种的永续多头与空头，赚取两所资金费率之差。不需要现货、不需要借币，天然跨所，Perp DEX（Hyperliquid / Aster / Lighter / EdgeX）也能参与。',
+        text: 'Pure Futures 是本系统的主策略：在两个交易所分别持有同一币种的永续多头与空头，赚取两所资金费率之差。不需要现货、不需要借币，天然跨所，Perp DEX（Hyperliquid / Aster / Lighter / EdgeX；dYdX 可扫描）也能参与。',
       },
       {
         type: 'callout',
@@ -68,7 +68,7 @@ const zhCN: DocSection[] = [
           ['手续费', '现货 taker 较高（~0.1%）', '双永续 taker 较低'],
           ['跨所', 'Unified 才拆腿', '天然跨所'],
           ['借币', '反向需要', '不需要'],
-          ['DEX 参与', '不支持', 'HL / Aster / Lighter / EdgeX'],
+          ['DEX 参与', '不支持', 'HL / Aster / Lighter / EdgeX / dYdX（扫描）'],
           ['收益来源', '单所费率绝对值', '两所费率之差'],
         ],
       },
@@ -91,7 +91,31 @@ const zhCN: DocSection[] = [
       },
       {
         type: 'p',
-        text: 'min_edge_1h 更低是因为 1h 周期资金周转快、同周期无 timing risk；min_edge_mismatch 更高是为跨周期的结算不同步留风险溢价。',
+        text: 'min_edge_1h 更低是因为 1h 周期资金周转快、同周期无 timing risk；min_edge_mismatch 更高是为跨周期的结算不同步留风险溢价。上述阈值在 Settings → Strategy 配置，写入 scripts/data/strategy_config.json；Scanner API 与 CLI runner 共用。',
+      },
+    ],
+  },
+  {
+    id: 'pf-settings',
+    title: 'Settings 与 CLI 配置统一',
+    blocks: [
+      {
+        type: 'table',
+        headers: ['Dashboard 字段', 'CLI / 模板字段'],
+        rows: [
+          ['min_spread_annual', 'pureFuturesArbitrage.minSpreadPct'],
+          ['min_edge_annual', 'pureFuturesArbitrage.minNetEdgePct'],
+          ['min_edge_1h / min_edge_mismatch', '按腿周期在 runner 内逐行应用（见跨周期文档）'],
+          ['trade_usd', 'pureFuturesArbitrage.tradeUsdPerPair'],
+          ['max_positions', 'pureFuturesArbitrage.maxConcurrentPairs'],
+          ['scan_venues', 'pureFuturesArbitrage.venues'],
+          ['scan_interval_sec', 'scanIntervalMinutes（秒÷60）'],
+          ['fee_mode / venue_fee_tiers', '扫描时 fee_providers 解析'],
+        ],
+      },
+      {
+        type: 'p',
+        text: 'templates/config.pure_futures.spread.json 仍保留执行细节（parallelLegs、depthCheck、dry_run 等）；阈值以 strategy_config.json 为准。合并逻辑：scripts/core/strategy_config.py → apply_strategy_to_pure_futures_cfg()。',
       },
     ],
   },
@@ -108,8 +132,13 @@ const zhCN: DocSection[] = [
         items: [
           'spread_source = rate：同周期，直接用公布费率',
           'spread_source = basis_blend：跨周期且有 index，使用混合模型',
-          'spread_source = rate_linear：跨周期但无 index（Lighter / EdgeX 腿），线性回退',
+          'spread_source = rate_linear：跨周期但无独立 index（Lighter / EdgeX / dYdX 腿），线性回退',
         ],
+      },
+      {
+        type: 'callout',
+        variant: 'info',
+        text: 'dYdX indexer 目前仅暴露 oraclePrice，mark≈index，basis blend 对该腿几乎不生效；与 CEX 8h 配对时按 rate_linear + min_edge_mismatch 更保守。',
       },
       {
         type: 'p',
@@ -124,10 +153,11 @@ const zhCN: DocSection[] = [
       {
         type: 'ul',
         items: [
+          '仪表盘：Scanner → Pure Futures 表格「开仓」，默认 dry-run；scan-only venue 按钮禁用',
           '手动交易：pure_futures_trade.py open / list / close（默认 dry-run）',
-          '自动执行：run_pure_futures_spread.py --once / --watch',
-          '持仓监控：pure_futures_watcher.py 持续检查费率与边际，触发退出条件时告警',
-          '开仓前深度检查：futures_depth.py，DEX 订单簿拉取失败则阻止开仓',
+          '自动执行：run_pure_futures_spread.py --once / --watch（合并 strategy_config.json）',
+          '持仓监控：pure_futures_watcher.py；parallelLegs 默认 true，双腿并发下单',
+          '开仓前深度检查：futures_depth.py，DEX 订单簿拉取失败则阻止开仓（depthCheckFailOpen=false）',
         ],
       },
       {
@@ -165,7 +195,7 @@ const zhTW: DocSection[] = [
     blocks: [
       {
         type: 'p',
-        text: 'Pure Futures 是本系統的主策略：在兩個交易所分別持有同一幣種的永續多頭與空頭，賺取兩所資金費率之差。不需要現貨、不需要借幣，天然跨所，Perp DEX（Hyperliquid / Aster / Lighter / EdgeX）也能參與。',
+        text: 'Pure Futures 是本系統的主策略：在兩個交易所分別持有同一幣種的永續多頭與空頭，賺取兩所資金費率之差。不需要現貨、不需要借幣，天然跨所，Perp DEX（Hyperliquid / Aster / Lighter / EdgeX；dYdX 可掃描）也能參與。',
       },
       {
         type: 'callout',
@@ -226,7 +256,7 @@ const zhTW: DocSection[] = [
           ['手續費', '現貨 taker 較高（~0.1%）', '雙永續 taker 較低'],
           ['跨所', 'Unified 才拆腿', '天然跨所'],
           ['借幣', '反向需要', '不需要'],
-          ['DEX 參與', '不支援', 'HL / Aster / Lighter / EdgeX'],
+          ['DEX 參與', '不支援', 'HL / Aster / Lighter / EdgeX / dYdX（掃描）'],
           ['收益來源', '單所費率絕對值', '兩所費率之差'],
         ],
       },
@@ -249,7 +279,31 @@ const zhTW: DocSection[] = [
       },
       {
         type: 'p',
-        text: 'min_edge_1h 更低是因為 1h 週期資金週轉快、同週期無 timing risk；min_edge_mismatch 更高是為跨週期的結算不同步留風險溢價。',
+        text: 'min_edge_1h 更低是因為 1h 週期資金週轉快、同週期無 timing risk；min_edge_mismatch 更高是為跨週期的結算不同步留風險溢價。上述閾值在 Settings → Strategy 配置，寫入 scripts/data/strategy_config.json；Scanner API 與 CLI runner 共用。',
+      },
+    ],
+  },
+  {
+    id: 'pf-settings',
+    title: 'Settings 與 CLI 配置統一',
+    blocks: [
+      {
+        type: 'table',
+        headers: ['Dashboard 欄位', 'CLI / 模板欄位'],
+        rows: [
+          ['min_spread_annual', 'pureFuturesArbitrage.minSpreadPct'],
+          ['min_edge_annual', 'pureFuturesArbitrage.minNetEdgePct'],
+          ['min_edge_1h / min_edge_mismatch', '按腿週期在 runner 內逐行應用（見跨週期文件）'],
+          ['trade_usd', 'pureFuturesArbitrage.tradeUsdPerPair'],
+          ['max_positions', 'pureFuturesArbitrage.maxConcurrentPairs'],
+          ['scan_venues', 'pureFuturesArbitrage.venues'],
+          ['scan_interval_sec', 'scanIntervalMinutes（秒÷60）'],
+          ['fee_mode / venue_fee_tiers', '掃描時 fee_providers 解析'],
+        ],
+      },
+      {
+        type: 'p',
+        text: 'templates/config.pure_futures.spread.json 仍保留執行細節（parallelLegs、depthCheck、dry_run 等）；閾值以 strategy_config.json 為準。合併邏輯：scripts/core/strategy_config.py → apply_strategy_to_pure_futures_cfg()。',
       },
     ],
   },
@@ -266,8 +320,13 @@ const zhTW: DocSection[] = [
         items: [
           'spread_source = rate：同週期，直接用公佈費率',
           'spread_source = basis_blend：跨週期且有 index，使用混合模型',
-          'spread_source = rate_linear：跨週期但無 index（Lighter / EdgeX 腿），線性回退',
+          'spread_source = rate_linear：跨週期但無獨立 index（Lighter / EdgeX / dYdX 腿），線性回退',
         ],
+      },
+      {
+        type: 'callout',
+        variant: 'info',
+        text: 'dYdX indexer 目前僅暴露 oraclePrice，mark≈index，basis blend 對該腿幾乎不生效；與 CEX 8h 配對時按 rate_linear + min_edge_mismatch 更保守。',
       },
       {
         type: 'p',
@@ -282,10 +341,11 @@ const zhTW: DocSection[] = [
       {
         type: 'ul',
         items: [
+          '儀表盤：Scanner → Pure Futures 表格「開倉」，預設 dry-run；scan-only venue 按鈕禁用',
           '手動交易：pure_futures_trade.py open / list / close（預設 dry-run）',
-          '自動執行：run_pure_futures_spread.py --once / --watch',
-          '持倉監控：pure_futures_watcher.py 持續檢查費率與邊際，觸發退出條件時告警',
-          '開倉前深度檢查：futures_depth.py，DEX 訂單簿拉取失敗則阻止開倉',
+          '自動執行：run_pure_futures_spread.py --once / --watch（合併 strategy_config.json）',
+          '持倉監控：pure_futures_watcher.py；parallelLegs 預設 true，雙腿併發下單',
+          '開倉前深度檢查：futures_depth.py，DEX 訂單簿拉取失敗則阻止開倉（depthCheckFailOpen=false）',
         ],
       },
       {
@@ -323,7 +383,7 @@ const en: DocSection[] = [
     blocks: [
       {
         type: 'p',
-        text: 'Pure Futures is the primary strategy: hold a perp long on one exchange and a perp short on another for the same asset, capturing the funding rate differential. No spot, no borrowing, inherently cross-venue — perp DEXs (Hyperliquid / Aster / Lighter / EdgeX) can participate.',
+        text: 'Pure Futures is the primary strategy: hold a perp long on one exchange and a perp short on another for the same asset, capturing the funding rate differential. No spot, no borrowing, inherently cross-venue — perp DEXs (Hyperliquid / Aster / Lighter / EdgeX; dYdX scan-only) can participate.',
       },
       {
         type: 'callout',
@@ -384,7 +444,7 @@ const en: DocSection[] = [
           ['Fees', 'Spot taker is high (~0.1%)', 'Two low perp takers'],
           ['Cross-venue', 'Only via Unified', 'Inherently cross-venue'],
           ['Borrowing', 'Required for reverse', 'Not needed'],
-          ['DEX participation', 'No', 'HL / Aster / Lighter / EdgeX'],
+          ['DEX participation', 'No', 'HL / Aster / Lighter / EdgeX / dYdX (scan)'],
           ['Return source', 'Absolute rate at one venue', 'Rate differential between venues'],
         ],
       },
@@ -407,7 +467,31 @@ const en: DocSection[] = [
       },
       {
         type: 'p',
-        text: 'min_edge_1h is lower because hourly settlement turns capital faster with no timing risk; min_edge_mismatch is higher as a risk premium for unsynchronized settlements.',
+        text: 'min_edge_1h is lower because hourly settlement turns capital faster with no timing risk; min_edge_mismatch is higher as a risk premium for unsynchronized settlements. Configure in Settings → Strategy (scripts/data/strategy_config.json); shared by Scanner API and CLI runners.',
+      },
+    ],
+  },
+  {
+    id: 'pf-settings',
+    title: 'Settings and CLI config',
+    blocks: [
+      {
+        type: 'table',
+        headers: ['Dashboard field', 'CLI / template field'],
+        rows: [
+          ['min_spread_annual', 'pureFuturesArbitrage.minSpreadPct'],
+          ['min_edge_annual', 'pureFuturesArbitrage.minNetEdgePct'],
+          ['min_edge_1h / min_edge_mismatch', 'Applied per row by interval group in runners'],
+          ['trade_usd', 'pureFuturesArbitrage.tradeUsdPerPair'],
+          ['max_positions', 'pureFuturesArbitrage.maxConcurrentPairs'],
+          ['scan_venues', 'pureFuturesArbitrage.venues'],
+          ['scan_interval_sec', 'scanIntervalMinutes (sec ÷ 60)'],
+          ['fee_mode / venue_fee_tiers', 'Resolved via fee_providers at scan time'],
+        ],
+      },
+      {
+        type: 'p',
+        text: 'templates/config.pure_futures.spread.json keeps execution knobs (parallelLegs, depthCheck, dry_run). Thresholds come from strategy_config.json via core/strategy_config.py → apply_strategy_to_pure_futures_cfg().',
       },
     ],
   },

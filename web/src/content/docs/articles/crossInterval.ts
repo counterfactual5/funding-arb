@@ -15,7 +15,9 @@ const zhCN: DocSection[] = [
         rows: [
           ['Binance / OKX / Bybit', '8h', '每 8 小时结算一次'],
           ['Bitget', '2h 或 8h', '部分合约 2h'],
-          ['Hyperliquid', '1h', '每小时结算'],
+          ['Hyperliquid / Lighter / dYdX v4', '1h', '每小时结算'],
+          ['EdgeX', '4h', '多数主流合约 240min'],
+          ['Aster', '按合约', '读 fundingInfo，常见 8h'],
         ],
       },
       {
@@ -102,7 +104,13 @@ const zhCN: DocSection[] = [
           ['Aster', '继承 Binance provider', '✅'],
           ['Lighter', '无公开 index → 0', '❌ 回退 rate_linear'],
           ['EdgeX', '无公开 index → 0', '❌ 回退 rate_linear'],
+          ['dYdX v4', 'indexer 仅 oraclePrice（mark≈index）', '❌ 回退 rate_linear'],
         ],
+      },
+      {
+        type: 'callout',
+        variant: 'info',
+        text: 'dYdX 链上费率 = 60 分钟 premium TWAP + 利率项，每小时整点支付；nextFundingRate 是预测值，与 CEX 8h 配对时务必用 min_edge_mismatch。',
       },
     ],
   },
@@ -147,7 +155,7 @@ const zhCN: DocSection[] = [
         headers: ['类型', '单周期 cap', '说明'],
         rows: [
           ['Binance / Bybit / Bitget / OKX / Aster / EdgeX', '±0.30%', '约为典型 funding clamp 的 3 倍，过滤极端噪声'],
-          ['Hyperliquid / Lighter', '±0.50%', '无硬顶 EMA premium，放宽 cap'],
+          ['Hyperliquid / Lighter / dYdX', '±0.50%', '无硬顶或 oracle-only，放宽 cap'],
           ['未知 venue', '±0.50%', 'DEFAULT_BASIS_CAP_PCT'],
         ],
       },
@@ -283,6 +291,32 @@ const zhCN: DocSection[] = [
     ],
   },
   {
+    id: 'ci-example-edgex',
+    title: 'EdgeX 4h 线性回退示例',
+    blocks: [
+      {
+        type: 'p',
+        text: '场景：BTC，EdgeX（4h，无 index）vs Binance（8h）。EdgeX 腿无法 basis blend，spread_source 对短腿为 rate_linear。',
+      },
+      {
+        type: 'table',
+        headers: ['腿', 'rate_pct', 'interval_h', 'blend'],
+        rows: [
+          ['Short @ EdgeX', '0.02', '4', 'rate_linear → 0.02/4 = 0.005 %/h'],
+          ['Long @ Binance', '0.08', '8', 'basis_blend（有 index）'],
+        ],
+      },
+      {
+        type: 'formula',
+        lines: [
+          'eff_interval = min(4, 8) = 4h',
+          'spread ≈ (short_hourly − long_blended) × 4',
+          '需同时满足 min_edge_mismatch 与 settle_mismatch_planner 现金流检查',
+        ],
+      },
+    ],
+  },
+  {
     id: 'ci-limits',
     title: '已知限制',
     blocks: [
@@ -315,7 +349,9 @@ const zhTW: DocSection[] = [
         rows: [
           ['Binance / OKX / Bybit', '8h', '每 8 小時結算一次'],
           ['Bitget', '2h 或 8h', '部分合約 2h'],
-          ['Hyperliquid', '1h', '每小時結算'],
+          ['Hyperliquid / Lighter / dYdX v4', '1h', '每小時結算'],
+          ['EdgeX', '4h', '多數主流合約 240min'],
+          ['Aster', '按合約', '讀 fundingInfo，常見 8h'],
         ],
       },
       {
@@ -402,7 +438,13 @@ const zhTW: DocSection[] = [
           ['Aster', '繼承 Binance provider', '✅'],
           ['Lighter', '無公開 index → 0', '❌ 回退 rate_linear'],
           ['EdgeX', '無公開 index → 0', '❌ 回退 rate_linear'],
+          ['dYdX v4', 'indexer 僅 oraclePrice（mark≈index）', '❌ 回退 rate_linear'],
         ],
+      },
+      {
+        type: 'callout',
+        variant: 'info',
+        text: 'dYdX 鏈上費率 = 60 分鐘 premium TWAP + 利率項，每小時整點支付；nextFundingRate 是預測值，與 CEX 8h 配對時務必用 min_edge_mismatch。',
       },
     ],
   },
@@ -447,7 +489,7 @@ const zhTW: DocSection[] = [
         headers: ['型別', '單週期 cap', '說明'],
         rows: [
           ['Binance / Bybit / Bitget / OKX / Aster / EdgeX', '±0.30%', '約為典型 funding clamp 的 3 倍，過濾極端噪聲'],
-          ['Hyperliquid / Lighter', '±0.50%', '無硬頂 EMA premium，放寬 cap'],
+          ['Hyperliquid / Lighter / dYdX', '±0.50%', '無硬頂或 oracle-only，放寬 cap'],
           ['未知 venue', '±0.50%', 'DEFAULT_BASIS_CAP_PCT'],
         ],
       },
@@ -583,6 +625,32 @@ const zhTW: DocSection[] = [
     ],
   },
   {
+    id: 'ci-example-edgex',
+    title: 'EdgeX 4h 線性回退示例',
+    blocks: [
+      {
+        type: 'p',
+        text: '場景：BTC，EdgeX（4h，無 index）vs Binance（8h）。EdgeX 腿無法 basis blend，spread_source 對短腿為 rate_linear。',
+      },
+      {
+        type: 'table',
+        headers: ['腿', 'rate_pct', 'interval_h', 'blend'],
+        rows: [
+          ['Short @ EdgeX', '0.02', '4', 'rate_linear → 0.02/4 = 0.005 %/h'],
+          ['Long @ Binance', '0.08', '8', 'basis_blend（有 index）'],
+        ],
+      },
+      {
+        type: 'formula',
+        lines: [
+          'eff_interval = min(4, 8) = 4h',
+          'spread ≈ (short_hourly − long_blended) × 4',
+          '需同時滿足 min_edge_mismatch 與 settle_mismatch_planner 現金流檢查',
+        ],
+      },
+    ],
+  },
+  {
     id: 'ci-limits',
     title: '已知限制',
     blocks: [
@@ -590,7 +658,7 @@ const zhTW: DocSection[] = [
         type: 'table',
         headers: ['項', '說明'],
         rows: [
-          ['Planner / 回測未統一', 'settle_mismatch_planner、unified_funding_pool 仍用線性 rate/interval'],
+          ['現金流懲罰', 'planner 在 scanner net_edge 上疊加 timing 懲罰，不重複計算 spread'],
           ['全域性 basis 封頂', '固定 ±1%/週期，未按交易所真實 premium clamp 細分'],
           ['無 index 的 DEX', 'Lighter、EdgeX 跨週期只能 rate_linear'],
           ['歷史 JSONL', '舊快照若無 index_price / progress 欄位，回放無法復現混合模型'],
@@ -615,7 +683,9 @@ const en: DocSection[] = [
         rows: [
           ['Binance / OKX / Bybit', '8h', 'Settles every 8 hours'],
           ['Bitget', '2h or 8h', 'Some contracts 2h'],
-          ['Hyperliquid', '1h', 'Hourly settlement'],
+          ['Hyperliquid / Lighter / dYdX v4', '1h', 'Hourly settlement'],
+          ['EdgeX', '4h', 'Majors typically 240min'],
+          ['Aster', 'Per contract', 'Often 8h via fundingInfo'],
         ],
       },
       {
@@ -702,7 +772,13 @@ const en: DocSection[] = [
           ['Aster', 'Inherits Binance provider', '✅'],
           ['Lighter', 'No public index → 0', '❌ rate_linear'],
           ['EdgeX', 'No public index → 0', '❌ rate_linear'],
+          ['dYdX v4', 'Indexer oraclePrice only (mark≈index)', '❌ rate_linear'],
         ],
+      },
+      {
+        type: 'callout',
+        variant: 'info',
+        text: 'dYdX on-chain rate = 60-min premium TWAP + interest; paid hourly. nextFundingRate is a forecast — use min_edge_mismatch vs 8h CEX.',
       },
     ],
   },
@@ -868,6 +944,32 @@ const en: DocSection[] = [
         type: 'callout',
         variant: 'info',
         text: 'With naive linear extrapolation, HL would be only 0.04%/h, underestimating its advantage as the short leg.',
+      },
+    ],
+  },
+  {
+    id: 'ci-example-edgex',
+    title: 'EdgeX 4h linear fallback example',
+    blocks: [
+      {
+        type: 'p',
+        text: 'Scenario: BTC, EdgeX (4h, no index) vs Binance (8h). The EdgeX leg uses rate_linear; Binance uses basis_blend.',
+      },
+      {
+        type: 'table',
+        headers: ['Leg', 'rate_pct', 'interval_h', 'blend'],
+        rows: [
+          ['Short @ EdgeX', '0.02', '4', 'rate_linear → 0.02/4 = 0.005 %/h'],
+          ['Long @ Binance', '0.08', '8', 'basis_blend (has index)'],
+        ],
+      },
+      {
+        type: 'formula',
+        lines: [
+          'eff_interval = min(4, 8) = 4h',
+          'spread ≈ (short_hourly − long_blended) × 4',
+          'Also requires min_edge_mismatch and settle_mismatch_planner cash-flow checks',
+        ],
       },
     ],
   },

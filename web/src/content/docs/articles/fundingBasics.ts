@@ -37,8 +37,9 @@ const zhCN: DocSection[] = [
         rows: [
           ['Binance / OKX / Bybit', '8h'],
           ['Bitget', '2h 或 8h（按合约）'],
-          ['Hyperliquid / Lighter', '1h'],
-          ['Aster / EdgeX', '1h ~ 8h（按合约）'],
+          ['Hyperliquid / Lighter / dYdX v4', '1h'],
+          ['EdgeX', '4h（主流合约）'],
+          ['Aster', '按合约（常见 8h，读 fundingInfo）'],
         ],
       },
       {
@@ -66,6 +67,10 @@ const zhCN: DocSection[] = [
       {
         type: 'p',
         text: '在跨周期配对中，本系统用该基差对下一期 funding 做加权估计（basis blend），详见「跨周期资金费率套利」。',
+      },
+      {
+        type: 'p',
+        text: 'dYdX v4 类似：每分钟采样 impact 价相对 Oracle 的溢价，60 分钟平均后加利率项，每小时整点结算。Indexer 的 nextFundingRate 已是下一小时预测值。',
       },
     ],
   },
@@ -167,8 +172,9 @@ const zhTW: DocSection[] = [
         rows: [
           ['Binance / OKX / Bybit', '8h'],
           ['Bitget', '2h 或 8h（按合約）'],
-          ['Hyperliquid / Lighter', '1h'],
-          ['Aster / EdgeX', '1h ~ 8h（按合約）'],
+          ['Hyperliquid / Lighter / dYdX v4', '1h'],
+          ['EdgeX', '4h（主流合約）'],
+          ['Aster', '按合約（常見 8h，讀 fundingInfo）'],
         ],
       },
       {
@@ -196,6 +202,10 @@ const zhTW: DocSection[] = [
       {
         type: 'p',
         text: '在跨週期配對中，本系統用該基差對下一期 funding 做加權估計（basis blend），詳見「跨週期資金費率套利」。',
+      },
+      {
+        type: 'p',
+        text: 'dYdX v4 類似：每分鐘取樣 impact 價相對 Oracle 的溢價，60 分鐘平均後加利率項，每小時整點結算。Indexer 的 nextFundingRate 已是下一小時預測值。',
       },
     ],
   },
@@ -297,8 +307,9 @@ const en: DocSection[] = [
         rows: [
           ['Binance / OKX / Bybit', '8h'],
           ['Bitget', '2h or 8h (per contract)'],
-          ['Hyperliquid / Lighter', '1h'],
-          ['Aster / EdgeX', '1h ~ 8h (per contract)'],
+          ['Hyperliquid / Lighter / dYdX v4', '1h'],
+          ['EdgeX', '4h (majors)'],
+          ['Aster', 'Per contract (often 8h)'],
         ],
       },
       {
@@ -326,6 +337,10 @@ const en: DocSection[] = [
       {
         type: 'p',
         text: 'For cross-interval pairs, this system blends the basis into the next-period funding estimate (basis blend) — see "Cross-Interval Funding Arbitrage".',
+      },
+      {
+        type: 'p',
+        text: 'dYdX v4 samples impact prices vs the oracle each minute, averages over 60 minutes, adds an interest term, and settles hourly. The indexer nextFundingRate is the forecast for the next hour.',
       },
     ],
   },

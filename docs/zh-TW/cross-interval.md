@@ -12,7 +12,9 @@ basis blend、real_edge 與程式實作
 | --- | --- | --- |
 | Binance / OKX / Bybit | 8h | 每 8 小時結算一次 |
 | Bitget | 2h 或 8h | 部分合約 2h |
-| Hyperliquid | 1h | 每小時結算 |
+| Hyperliquid / Lighter / dYdX v4 | 1h | 每小時結算 |
+| EdgeX | 4h | 多數主流合約 240min |
+| Aster | 按合約 | 讀 fundingInfo，常見 8h |
 
 若簡單做 spread_naive = short_rate_pct - long_rate_pct，會把 1h 的 0.01% 與 8h 的 0.05% 放在同一量級比較，嚴重失真。
 
@@ -71,6 +73,9 @@ is_mismatch = |long_interval_h − short_interval_h| > 0.5
 | Aster | 繼承 Binance provider | ✅ |
 | Lighter | 無公開 index → 0 | ❌ 回退 rate_linear |
 | EdgeX | 無公開 index → 0 | ❌ 回退 rate_linear |
+| dYdX v4 | indexer 僅 oraclePrice（mark≈index） | ❌ 回退 rate_linear |
+
+> ℹ️ dYdX 鏈上費率 = 60 分鐘 premium TWAP + 利率項，每小時整點支付；nextFundingRate 是預測值，與 CEX 8h 配對時務必用 min_edge_mismatch。
 
 ## 結算進度 progress
 
@@ -101,7 +106,7 @@ basis_pct = (mark_price − index_price) / index_price × 100%
 | 型別 | 單週期 cap | 說明 |
 | --- | --- | --- |
 | Binance / Bybit / Bitget / OKX / Aster / EdgeX | ±0.30% | 約為典型 funding clamp 的 3 倍，過濾極端噪聲 |
-| Hyperliquid / Lighter | ±0.50% | 無硬頂 EMA premium，放寬 cap |
+| Hyperliquid / Lighter / dYdX | ±0.50% | 無硬頂或 oracle-only，放寬 cap |
 | 未知 venue | ±0.50% | DEFAULT_BASIS_CAP_PCT |
 
 ## 混合 hourly 與 spread
@@ -195,13 +200,30 @@ net_edge ≈ 0.252 − 0.11 = 0.14%
 
 > ℹ️ 若用樸素線性外推，HL 僅 0.04%/h，spread 會低估 HL 作為 short 腿的優勢。
 
+## EdgeX 4h 線性回退示例
+
+<!-- id: ci-example-edgex -->
+
+場景：BTC，EdgeX（4h，無 index）vs Binance（8h）。EdgeX 腿無法 basis blend，spread_source 對短腿為 rate_linear。
+
+| 腿 | rate_pct | interval_h | blend |
+| --- | --- | --- | --- |
+| Short @ EdgeX | 0.02 | 4 | rate_linear → 0.02/4 = 0.005 %/h |
+| Long @ Binance | 0.08 | 8 | basis_blend（有 index） |
+
+```text
+eff_interval = min(4, 8) = 4h
+spread ≈ (short_hourly − long_blended) × 4
+需同時滿足 min_edge_mismatch 與 settle_mismatch_planner 現金流檢查
+```
+
 ## 已知限制
 
 <!-- id: ci-limits -->
 
 | 項 | 說明 |
 | --- | --- |
-| Planner / 回測未統一 | settle_mismatch_planner、unified_funding_pool 仍用線性 rate/interval |
+| 現金流懲罰 | planner 在 scanner net_edge 上疊加 timing 懲罰，不重複計算 spread |
 | 全域性 basis 封頂 | 固定 ±1%/週期，未按交易所真實 premium clamp 細分 |
 | 無 index 的 DEX | Lighter、EdgeX 跨週期只能 rate_linear |
 | 歷史 JSONL | 舊快照若無 index_price / progress 欄位，回放無法復現混合模型 |

@@ -15,7 +15,32 @@ const zhCN: DocSection[] = [
         rows: [
           ['CEX（现货 + USDT-M 永续）', 'Binance · Bitget · Bybit · OKX'],
           ['Perp DEX（扫描；支持交易处）', 'Hyperliquid · Aster · Lighter · EdgeX'],
+          ['Perp DEX（仅扫描）', 'dYdX v4（1h funding，交易适配器待做）'],
         ],
+      },
+    ],
+  },
+  {
+    id: 'dashboard-open',
+    title: '仪表盘开仓',
+    blocks: [
+      {
+        type: 'p',
+        text: 'Scanner 三个 Tab 均支持表格内 Dry-run 开仓（默认不提交实盘）。实盘需对应 venue 配置 API、余额充足，并关闭 Dry-run 开关。',
+      },
+      {
+        type: 'table',
+        headers: ['Tab', 'API strategy', '执行路径'],
+        rows: [
+          ['Pure Futures', 'pure_futures', 'pure_futures_executor — 双永续腿'],
+          ['Cash & Carry', 'carry', 'cross_venue_executor — 同所 spot + perp'],
+          ['Unified C&C', 'unified', 'cross_venue_executor — 跨所 spot + perp'],
+        ],
+      },
+      {
+        type: 'callout',
+        variant: 'warn',
+        text: 'DEX 若标记为 scan-only（如 dYdX），Open 按钮会禁用。EdgeX live 下单需 edgex-python-sdk 与账户密钥，建议先用 scripts/tools/verify_edgex_live.py 验证。',
       },
     ],
   },
@@ -198,7 +223,7 @@ const zhCN: DocSection[] = [
           ['GET /api/scanner/status', '扫描状态、上次扫描时间'],
           ['GET/POST /api/settings/strategy', '策略阈值、费率策略'],
           ['GET /api/settings/venues', '各所 scan/trade/live 能力'],
-          ['POST /api/positions/open', '开仓（默认 dry-run）'],
+          ['POST /api/positions/open', '开仓：body 含 strategy（pure_futures|carry|unified）、dry_run（默认 true）'],
           ['POST /api/backtest/run', '运行回测'],
           ['WS /ws/events', 'scanner.update 推送'],
         ],
@@ -215,6 +240,8 @@ const zhCN: DocSection[] = [
           '复制 .env.example → .env',
           'Paper 模式不需要 API key（配置中 dry_run: true）',
           'Live 模式需要 spot + USDT-M futures 交易权限；不需要提现权限',
+          '策略阈值与扫描场所：Settings → Strategy，持久化到 scripts/data/strategy_config.json',
+          'CLI runner（run_pure_futures_spread / orchestrate --pure-futures / watcher）启动时自动合并该文件，与仪表盘同源',
         ],
       },
       {
@@ -264,7 +291,32 @@ const zhTW: DocSection[] = [
         rows: [
           ['CEX（現貨 + USDT-M 永續）', 'Binance · Bitget · Bybit · OKX'],
           ['Perp DEX（掃描；支援交易處）', 'Hyperliquid · Aster · Lighter · EdgeX'],
+          ['Perp DEX（僅掃描）', 'dYdX v4（1h funding，交易介面卡待做）'],
         ],
+      },
+    ],
+  },
+  {
+    id: 'dashboard-open',
+    title: '儀表盤開倉',
+    blocks: [
+      {
+        type: 'p',
+        text: 'Scanner 三個 Tab 均支援表格內 Dry-run 開倉（預設不提交實盤）。實盤需對應 venue 配置 API、餘額充足，並關閉 Dry-run 開關。',
+      },
+      {
+        type: 'table',
+        headers: ['Tab', 'API strategy', '執行路徑'],
+        rows: [
+          ['Pure Futures', 'pure_futures', 'pure_futures_executor — 雙永續腿'],
+          ['Cash & Carry', 'carry', 'cross_venue_executor — 同所 spot + perp'],
+          ['Unified C&C', 'unified', 'cross_venue_executor — 跨所 spot + perp'],
+        ],
+      },
+      {
+        type: 'callout',
+        variant: 'warn',
+        text: 'DEX 若標記為 scan-only（如 dYdX），Open 按鈕會禁用。EdgeX live 下單需 edgex-python-sdk 與賬戶金鑰，建議先用 scripts/tools/verify_edgex_live.py 驗證。',
       },
     ],
   },
@@ -327,7 +379,7 @@ const zhTW: DocSection[] = [
       },
       {
         type: 'p',
-        text: 'Windows：.\\start.ps1 或 .\\start.ps1 -Desktop',
+        text: 'Windows：.\start.ps1 或 .\start.ps1 -Desktop',
       },
     ],
   },
@@ -447,7 +499,7 @@ const zhTW: DocSection[] = [
           ['GET /api/scanner/status', '掃描狀態、上次掃描時間'],
           ['GET/POST /api/settings/strategy', '策略閾值、費率策略'],
           ['GET /api/settings/venues', '各所 scan/trade/live 能力'],
-          ['POST /api/positions/open', '開倉（預設 dry-run）'],
+          ['POST /api/positions/open', '開倉：body 含 strategy（pure_futures|carry|unified）、dry_run（預設 true）'],
           ['POST /api/backtest/run', '執行回測'],
           ['WS /ws/events', 'scanner.update 推送'],
         ],
@@ -464,6 +516,8 @@ const zhTW: DocSection[] = [
           '複製 .env.example → .env',
           'Paper 模式不需要 API key（配置中 dry_run: true）',
           'Live 模式需要 spot + USDT-M futures 交易許可權；不需要提現許可權',
+          '策略閾值與掃描場所：Settings → Strategy，持久化到 scripts/data/strategy_config.json',
+          'CLI runner（run_pure_futures_spread / orchestrate --pure-futures / watcher）啟動時自動合併該檔案，與儀表盤同源',
         ],
       },
       {
@@ -513,7 +567,32 @@ const en: DocSection[] = [
         rows: [
           ['CEX (spot + USDT-M perps)', 'Binance · Bitget · Bybit · OKX'],
           ['Perp DEX (scan; trade where supported)', 'Hyperliquid · Aster · Lighter · EdgeX'],
+          ['Perp DEX (scan-only)', 'dYdX v4 (1h funding; trading adapter pending)'],
         ],
+      },
+    ],
+  },
+  {
+    id: 'dashboard-open',
+    title: 'Dashboard opens',
+    blocks: [
+      {
+        type: 'p',
+        text: 'All three Scanner tabs support in-table dry-run opens (live off by default). Live orders need API keys, balance, and the dry-run toggle off.',
+      },
+      {
+        type: 'table',
+        headers: ['Tab', 'API strategy', 'Executor'],
+        rows: [
+          ['Pure Futures', 'pure_futures', 'pure_futures_executor — dual perp legs'],
+          ['Cash & Carry', 'carry', 'cross_venue_executor — same-venue spot + perp'],
+          ['Unified C&C', 'unified', 'cross_venue_executor — cross-venue spot + perp'],
+        ],
+      },
+      {
+        type: 'callout',
+        variant: 'warn',
+        text: 'Scan-only venues (e.g. dYdX) disable Open. For EdgeX live, use verify_edgex_live.py before real orders.',
       },
     ],
   },
@@ -696,7 +775,7 @@ const en: DocSection[] = [
           ['GET /api/scanner/status', 'Scan state, last scan time'],
           ['GET/POST /api/settings/strategy', 'Thresholds, fee policy'],
           ['GET /api/settings/venues', 'Scan/trade/live capability per venue'],
-          ['POST /api/positions/open', 'Open hedge (dry-run default)'],
+          ['POST /api/positions/open', 'Open: strategy (pure_futures|carry|unified), dry_run (default true)'],
           ['POST /api/backtest/run', 'Run backtest'],
           ['WS /ws/events', 'scanner.update push'],
         ],
@@ -713,6 +792,8 @@ const en: DocSection[] = [
           'Copy .env.example → .env',
           'Paper mode: no keys required (dry_run: true in config)',
           'Live mode: exchange keys with spot + USDT-M futures trade permission; no withdrawal',
+          'Strategy thresholds: Settings → Strategy → scripts/data/strategy_config.json',
+          'CLI runners merge that file on start (same as dashboard)',
         ],
       },
       {

@@ -43,6 +43,20 @@ VIP 等級越高 taker 越低，直接放大 net_edge / real_edge。同一筆費
 - 設定入口：Settings → 交易手續費 → 各所 VIP 檔位
 - 有 API key 時優先用賬戶真實費率（包含返傭後的實際值）
 
+## Perp DEX 預設 taker（無 API 時）
+
+<!-- id: fe-dex-defaults -->
+
+DEX 無賬戶 API 時使用 fee_providers 中的公開預設值或合約後設資料（EdgeX defaultTakerFeeRate）。下表為 VIP0 / 預設檔參考，實際以 Settings 或鏈上費率為準。
+
+| Venue | 預設 futures taker | 備註 |
+| --- | --- | --- |
+| Hyperliquid | 0.045% | userFees 可更低 |
+| Aster | 0.04% | Binance-fapi 相容 |
+| Lighter | 0% | 當前零費促銷，以鏈上為準 |
+| EdgeX | 0.038% | getMetaData defaultTakerFeeRate |
+| dYdX v4 | 0.05% | 掃描估算；交易未接入 |
+
 ## 各類邊際欄位
 
 <!-- id: fe-edges -->

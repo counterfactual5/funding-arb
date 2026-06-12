@@ -22,7 +22,7 @@
 
 # 加入 Perp DEX（1h 結算）
 .venv/bin/python scripts/cli/scan_pure_futures_spreads.py \
-  --venues binance,bitget,bybit,okx,hyperliquid,aster,lighter --json
+  --venues binance,bitget,bybit,okx,hyperliquid,aster,lighter,edgex,dydx --json
 
 # 持續監控 → data/pure_futures_spreads.jsonl（JSONL 回測需要）
 .venv/bin/python scripts/cli/scan_pure_futures_spreads.py --watch 5
@@ -35,6 +35,18 @@
 ```
 
 推薦 --json 解析結果。每條機會關鍵欄位：base、direction（forward/reverse）、long_venue、short_venue、spread_pct、fee_pct、net_edge_pct（結算週期內扣費後）、annual_apy_pct、mark_spread_pct、settle_mismatch。
+
+## 策略配置（與儀表盤同源）
+
+<!-- id: strategy-config -->
+
+Settings → Strategy 寫入 scripts/data/strategy_config.json。以下 CLI 啟動時會自動合併該檔案（閾值、scan_venues、fee 策略），無需手改模板 JSON：
+
+- run_pure_futures_spread.py --config templates/config.pure_futures.spread.json
+- orchestrate_funding.py --pure-futures
+- pure_futures_watcher.py
+
+模板仍控制 parallelLegs、depthCheck、dry_run 等執行細節。EdgeX 賬戶驗證：python3 scripts/tools/verify_edgex_live.py
 
 ## 交易（手動開/平/列表）
 

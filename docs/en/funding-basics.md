@@ -23,8 +23,9 @@ Each venue publishes rate_pct for its own settlement period. Periods differ, so 
 | --- | --- |
 | Binance / OKX / Bybit | 8h |
 | Bitget | 2h or 8h (per contract) |
-| Hyperliquid / Lighter | 1h |
-| Aster / EdgeX | 1h ~ 8h (per contract) |
+| Hyperliquid / Lighter / dYdX v4 | 1h |
+| EdgeX | 4h (majors) |
+| Aster | Per contract (often 8h) |
 
 ```text
 annual_pct ≈ |rate_pct| × (24 / interval_h) × 365
@@ -43,6 +44,8 @@ basis_pct = (mark_price − index_price) / index_price × 100%
 ```
 
 For cross-interval pairs, this system blends the basis into the next-period funding estimate (basis blend) — see "Cross-Interval Funding Arbitrage".
+
+dYdX v4 samples impact prices vs the oracle each minute, averages over 60 minutes, adds an interest term, and settles hourly. The indexer nextFundingRate is the forecast for the next hour.
 
 ## Delta-neutral hedging
 

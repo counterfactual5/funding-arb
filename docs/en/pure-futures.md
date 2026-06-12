@@ -6,7 +6,7 @@ Perp-perp rate differential, net / real edge
 
 <!-- id: pf-overview -->
 
-Pure Futures is the primary strategy: hold a perp long on one exchange and a perp short on another for the same asset, capturing the funding rate differential. No spot, no borrowing, inherently cross-venue — perp DEXs (Hyperliquid / Aster / Lighter / EdgeX) can participate.
+Pure Futures is the primary strategy: hold a perp long on one exchange and a perp short on another for the same asset, capturing the funding rate differential. No spot, no borrowing, inherently cross-venue — perp DEXs (Hyperliquid / Aster / Lighter / EdgeX; dYdX scan-only) can participate.
 
 > ℹ️ Versus Cash & Carry: both legs are perps with lower taker fees, no spot slippage, and no dependency on spot listings or borrow quotas.
 
@@ -45,7 +45,7 @@ The long/short assignment is always "short the higher rate, long the lower". The
 | Fees | Spot taker is high (~0.1%) | Two low perp takers |
 | Cross-venue | Only via Unified | Inherently cross-venue |
 | Borrowing | Required for reverse | Not needed |
-| DEX participation | No | HL / Aster / Lighter / EdgeX |
+| DEX participation | No | HL / Aster / Lighter / EdgeX / dYdX (scan) |
 | Return source | Absolute rate at one venue | Rate differential between venues |
 
 ## Thresholds and filters
@@ -60,7 +60,24 @@ The long/short assignment is always "short the higher rate, long the lower". The
 | min_edge_mismatch | Dedicated (higher) bar for cross-interval pairs |
 | max_mark_spread_pct | Discard if the cross-venue mark gap exceeds this |
 
-min_edge_1h is lower because hourly settlement turns capital faster with no timing risk; min_edge_mismatch is higher as a risk premium for unsynchronized settlements.
+min_edge_1h is lower because hourly settlement turns capital faster with no timing risk; min_edge_mismatch is higher as a risk premium for unsynchronized settlements. Configure in Settings → Strategy (scripts/data/strategy_config.json); shared by Scanner API and CLI runners.
+
+## Settings and CLI config
+
+<!-- id: pf-settings -->
+
+| Dashboard field | CLI / template field |
+| --- | --- |
+| min_spread_annual | pureFuturesArbitrage.minSpreadPct |
+| min_edge_annual | pureFuturesArbitrage.minNetEdgePct |
+| min_edge_1h / min_edge_mismatch | Applied per row by interval group in runners |
+| trade_usd | pureFuturesArbitrage.tradeUsdPerPair |
+| max_positions | pureFuturesArbitrage.maxConcurrentPairs |
+| scan_venues | pureFuturesArbitrage.venues |
+| scan_interval_sec | scanIntervalMinutes (sec ÷ 60) |
+| fee_mode / venue_fee_tiers | Resolved via fee_providers at scan time |
+
+templates/config.pure_futures.spread.json keeps execution knobs (parallelLegs, depthCheck, dry_run). Thresholds come from strategy_config.json via core/strategy_config.py → apply_strategy_to_pure_futures_cfg().
 
 ## Cross-interval pairs
 
