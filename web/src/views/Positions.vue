@@ -25,7 +25,7 @@ const message = useMessage()
 const positions = getPositions()
 const resolvedFees = getResolvedFees()
 
-const statusFilter = ref<'open' | 'closed' | 'all'>('open')
+const statusFilter = ref<'open' | 'closed' | 'all'>('all')
 
 const allItems = computed(() => positions.data.value ?? [])
 const filteredItems = computed(() => {
@@ -107,12 +107,22 @@ function getOpenPrices(p: PositionItem): { long?: number; short?: number; future
   return { long: p.long_price, short: p.short_price }
 }
 
-/** Get close prices from close_info */
+/** Get close prices from close_info, falling back to open prices for dry-run positions
+ *  (dry-run closes don't record actual fill prices).
+ */
 function getClosePrices(p: PositionItem): { long?: number; short?: number; futures?: number; spot?: number } {
   const ci = p.close_info
-  if (!ci) return {}
+  if (!ci) {
+    // No close_info at all — fall back to open prices (PnL ≈ 0)
+    return getOpenPrices(p)
+  }
   if (ci.futures_price !== undefined || ci.spot_price !== undefined) {
     return { futures: ci.futures_price as number, spot: ci.spot_price as number }
+  }
+  // Dry-run closes only have {dry_run, open_mark_spread, close_mark_spread}
+  // — no actual fill prices. Fall back to open prices so PnL ≈ 0 (just fees).
+  if (ci.long_price === undefined && ci.short_price === undefined) {
+    return getOpenPrices(p)
   }
   return { long: ci.long_price as number, short: ci.short_price as number }
 }
