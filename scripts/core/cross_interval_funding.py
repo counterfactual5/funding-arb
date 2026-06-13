@@ -87,6 +87,19 @@ def hourly_from_basis(basis_pct_val: float, interval_h: float) -> float:
     return basis_pct_val / interval_h
 
 
+# Pre-allocated empty meta for the common case (same-interval pairs).
+# Avoids ~2000 dict allocations per scan for pairs that don't use basis blend.
+# Callers read via .get() so missing keys are safe.
+_EMPTY_META: dict[str, Any] = {
+    "rate_hourly": 0.0,
+    "basis_hourly": None,
+    "settle_progress": None,
+    "blend_alpha": 0.0,
+    "used_basis": False,
+    "basis_pct": None,
+}
+
+
 def blended_hourly_rate(
     rate_pct: float,
     interval_h: float,
@@ -98,6 +111,15 @@ def blended_hourly_rate(
 ) -> tuple[float, dict[str, Any]]:
     """Estimate hourly funding: linear rate, or progress-weighted basis blend."""
     rate_hourly = rate_pct / interval_h if interval_h > 0 else 0.0
+    # Short-circuit the common case (same-interval pairs): skip the 6-key
+    # meta dict allocation entirely. Callers use .get() so None is safe.
+    if not use_basis_blend:
+        return rate_hourly, _EMPTY_META
+
+    mark = float(info.get("mark_price", 0) or 0)
+    index = float(info.get("index_price", 0) or 0)
+    bp = basis_pct(mark, index, venue=venue)
+    # Build meta dict only when basis blend is actually used.
     meta: dict[str, Any] = {
         "rate_hourly": rate_hourly,
         "basis_hourly": None,
@@ -106,12 +128,6 @@ def blended_hourly_rate(
         "used_basis": False,
         "basis_pct": None,
     }
-    if not use_basis_blend:
-        return rate_hourly, meta
-
-    mark = float(info.get("mark_price", 0) or 0)
-    index = float(info.get("index_price", 0) or 0)
-    bp = basis_pct(mark, index, venue=venue)
     if bp is None:
         return rate_hourly, meta
 

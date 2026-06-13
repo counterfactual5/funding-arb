@@ -401,18 +401,34 @@ def prefetch_spot_fee_rates(
     *,
     workers: int = 8,
 ) -> dict[tuple[str, str], dict[str, float]]:
-    """Parallel prefetch spot fee rates. pairs = [(venue, symbol), ...]."""
+    """Parallel prefetch spot fee rates. pairs = [(venue, symbol), ...].
+
+    Checks _SPOT_CACHE first; only fetches stale/missing entries.
+    """
     unique = list({(v.lower(), normalize_symbol(s)) for v, s in pairs})
+    now = time.time()
+
+    cached: dict[tuple[str, str], dict[str, float]] = {}
+    stale: list[tuple[str, str]] = []
+    for item in unique:
+        entry = _SPOT_CACHE.get(item)
+        if entry and now - entry[0] < _CACHE_TTL_SEC:
+            cached[item] = dict(entry[1])
+        else:
+            stale.append(item)
+
+    if not stale:
+        return cached
 
     def _one(item: tuple[str, str]) -> tuple[tuple[str, str], dict[str, float]]:
         v, sym = item
         return (v, sym), fetch_spot_fee_rates(v, sym, use_cache=False)
 
-    raw = run_io_parallel(unique, _one, max_workers=workers, swallow_errors=True)
+    raw = run_io_parallel(stale, _one, max_workers=workers, swallow_errors=True)
     for k, v in raw.items():
         _SPOT_CACHE[k] = (time.time(), v)
-    out: dict[tuple[str, str], dict[str, float]] = {}
-    for v, sym in unique:
+    out: dict[tuple[str, str], dict[str, float]] = dict(cached)
+    for v, sym in stale:
         out[(v, sym)] = raw.get((v, sym)) or {
             "taker_pct": default_spot_taker_pct(v),
             "maker_pct": default_spot_taker_pct(v),
@@ -447,19 +463,38 @@ def prefetch_futures_fee_rates(
     *,
     workers: int = 8,
 ) -> dict[tuple[str, str], dict[str, float]]:
-    """Parallel prefetch. pairs = [(venue, symbol), ...]."""
+    """Parallel prefetch. pairs = [(venue, symbol), ...].
+
+    Checks the per-symbol _CACHE first; only fetches pairs whose cache entry
+    is stale or missing. Exchange fee rates rarely change (_CACHE_TTL_SEC=3600),
+    so repeated scans within an hour skip all HTTP work here.
+    """
     unique = list({(v.lower(), normalize_symbol(s)) for v, s in pairs})
+    now = time.time()
+
+    # Fast path: serve everything from cache if fresh.
+    cached: dict[tuple[str, str], dict[str, float]] = {}
+    stale: list[tuple[str, str]] = []
+    for item in unique:
+        entry = _CACHE.get(item)
+        if entry and now - entry[0] < _CACHE_TTL_SEC:
+            cached[item] = dict(entry[1])
+        else:
+            stale.append(item)
+
+    if not stale:
+        return cached  # all fresh, zero HTTP
 
     def _one(item: tuple[str, str]) -> tuple[tuple[str, str], dict[str, float]]:
         v, sym = item
         return (v, sym), fetch_futures_fee_rates(v, sym, use_cache=False)
 
-    raw = run_io_parallel(unique, _one, max_workers=workers, swallow_errors=True)
+    raw = run_io_parallel(stale, _one, max_workers=workers, swallow_errors=True)
     for k, v in raw.items():
         _CACHE[k] = (time.time(), v)
-    # Fill missing with defaults
-    out: dict[tuple[str, str], dict[str, float]] = {}
-    for v, sym in unique:
+    # Merge cached + freshly fetched
+    out: dict[tuple[str, str], dict[str, float]] = dict(cached)
+    for v, sym in stale:
         out[(v, sym)] = raw.get((v, sym)) or {
             "taker_pct": default_taker_pct(v),
             "maker_pct": DEFAULT_MAKER_PCT.get(v, 0.02),
@@ -656,12 +691,19 @@ def build_policy_futures_cache(
     cache: dict[tuple[str, str], dict[str, float]] = {}
     api_pairs: list[tuple[str, str]] = []
 
+    # Precompute which venues use API fees — avoids ~500 os.environ scans
+    # (one per (base, venue) pair) when most venues repeat across bases.
+    all_venues = {
+        venue.lower() for venue_map in by_base.values() for venue in venue_map
+    }
+    api_venues = {v for v in all_venues if venue_uses_api(v, policy)}
+
     for base, venue_map in by_base.items():
         for venue, info in venue_map.items():
             v = venue.lower()
             sym = normalize_symbol(str(info.get("symbol") or f"{base}USDT"))
             key = (v, sym)
-            if venue_uses_api(v, policy):
+            if v in api_venues:
                 api_pairs.append(key)
             else:
                 cache[key] = {

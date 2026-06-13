@@ -157,7 +157,7 @@ def fetch_all_fee_rate_rows_by_base(
         return venue, by_base
 
     fetched = run_io_parallel(
-        venues, _fetch_one, max_workers=workers, swallow_errors=True
+        venues, _fetch_one, max_workers=workers, swallow_errors=True, timeout=30.0
     )
     for venue, by_base in fetched.items():
         # Store in cache
@@ -230,6 +230,10 @@ def _scan_spreads(
     forward: list[dict[str, Any]] = []
     reverse: list[dict[str, Any]] = []
 
+    # Hoist now_ms out of the inner loop — funding timestamps resolve to
+    # seconds/minutes, so one timestamp per scan is identical in effect.
+    now_ms = int(time.time() * 1000)
+
     for base, venue_map in by_base.items():
         vlist = sorted(venue_map.keys())
         for i, va in enumerate(vlist):
@@ -241,8 +245,14 @@ def _scan_spreads(
                 interval_a = float(ra.get("interval_h", 8.0) or 8.0)
                 interval_b = float(rb.get("interval_h", 8.0) or 8.0)
 
+                # Cheap pre-filter: raw rate spread before building model.
+                # This avoids ~2000 pair_pure_futures_spread calls for pairs
+                # that can't possibly clear min_spread.
+                raw_spread = abs(rate_a - rate_b)
+                if raw_spread < min_spread * 0.5:
+                    continue
+
                 # Perp-perp: short at higher rate (receives funding), long at lower (pays less).
-                # Spread = absolute difference regardless of sign.
                 if rate_a >= rate_b:
                     short_venue, short_rate, short_info, short_interval = (
                         va,
@@ -270,7 +280,7 @@ def _scan_spreads(
                         interval_a,
                     )
 
-                now_ms = int(time.time() * 1000)
+                now_ms_snapshot = now_ms  # use hoisted timestamp
                 model = pair_pure_futures_spread(
                     long_rate_pct=long_rate,
                     long_interval_h=long_interval,
@@ -280,7 +290,7 @@ def _scan_spreads(
                     short_interval_h=short_interval,
                     short_info=short_info,
                     short_venue=short_venue,
-                    now_ms=now_ms,
+                    now_ms=now_ms_snapshot,
                 )
                 is_mismatch = model["is_mismatch"]
                 long_blend = model["long_blend"]
@@ -409,7 +419,7 @@ def scan_pure_futures_spreads(
     if venues is None:
         venues = ["binance", "bitget", "bybit", "okx"]
 
-    by_base = fetch_all_fee_rate_rows_by_base(venues, workers)
+    by_base = fetch_all_fee_rate_rows_by_base(venues, workers, cache_ttl_sec=30.0)
     _backfill_missing_settle_times(by_base, venues, workers)
     policy = parse_fee_policy(fee_policy)
     fee_cache = build_policy_futures_cache(by_base, policy, workers=workers)

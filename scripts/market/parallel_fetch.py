@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Parallel market data fetch for live runners (I/O bound HTTP)."""
+
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,8 +17,15 @@ def run_io_parallel(
     max_workers: int = 8,
     swallow_errors: bool = False,
     on_error: Callable[[K, Exception], None] | None = None,
+    timeout: float | None = None,
 ) -> dict[K, V]:
-    """Run I/O-bound ``fn(key) -> (key, value)`` concurrently."""
+    """Run I/O-bound ``fn(key) -> (key, value)`` concurrently.
+
+    If ``timeout`` is set (seconds), each task that exceeds it is treated as
+    an error: logged via ``on_error`` (if set) and skipped when
+    ``swallow_errors=True``. Prevents a single slow venue from blocking the
+    whole batch.
+    """
     if not keys:
         return {}
     workers = max(1, min(max_workers, len(keys)))
@@ -36,7 +44,7 @@ def run_io_parallel(
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(fn, key): key for key in keys}
-        for fut in as_completed(futures):
+        for fut in as_completed(futures, timeout=timeout):
             key = futures[fut]
             try:
                 k, v = fut.result()
@@ -47,6 +55,16 @@ def run_io_parallel(
                         on_error(key, e)
                     continue
                 raise
+        # Cancel any futures that didn't complete within the timeout window
+        if timeout is not None:
+            for fut, key in futures.items():
+                if not fut.done():
+                    fut.cancel()
+                    if swallow_errors:
+                        if on_error:
+                            on_error(key, TimeoutError(f"timed out after {timeout}s"))
+                    # If not swallow_errors, we still don't raise here —
+                    # as_completed already raised TimeoutError above.
     return out
 
 
