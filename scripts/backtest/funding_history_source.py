@@ -175,22 +175,32 @@ def fetch_cc_capability(
         for b in bases
     }
 
-    def _spot_one(pair: tuple[str, str]) -> tuple[tuple[str, str], bool]:
-        venue, base = pair
-        try:
-            px = _get_venue(venue).get_ticker(f"{base}USDT")
-            return pair, float(px or 0) > 0
-        except Exception:
-            return pair, False
+    # Bulk spot probe: fetch all tickers per venue in ONE call (when supported),
+    # instead of one HTTP call per (venue, base) pair. Reduces V×B calls to V.
+    def _spot_bulk(venue: str) -> tuple[str, dict[str, float]]:
+        v = _get_venue(venue)
+        tickers: dict[str, float] = {}
+        if hasattr(v, "get_all_spot_tickers"):
+            try:
+                tickers = {
+                    k.upper(): float(val or 0)
+                    for k, val in v.get_all_spot_tickers().items()
+                }
+            except Exception:
+                pass
+        return venue.lower(), tickers
 
-    spot_map = run_io_parallel(
-        list(out.keys()),
-        _spot_one,
-        max_workers=min(workers, len(out)),
+    bulk_spot = run_io_parallel(
+        [v.lower() for v in venues],
+        _spot_bulk,
+        max_workers=min(workers, len(venues)),
         swallow_errors=True,
     )
-    for pair, has_spot in spot_map.items():
-        out[pair]["has_spot"] = has_spot
+    for pair_key in out:
+        venue_lower, base_upper = pair_key
+        tickers = bulk_spot.get(venue_lower, {})
+        sym = f"{base_upper}USDT"
+        out[pair_key]["has_spot"] = tickers.get(sym, 0) > 0
 
     def _borrow_one(venue: str) -> tuple[str, dict[str, Any]]:
         try:

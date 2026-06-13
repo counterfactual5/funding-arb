@@ -441,7 +441,9 @@ def watch_cycle(
 
     # Fetch current funding rates for all venues
     try:
-        scan_rates = fetch_all_fee_rate_rows_by_base(venues, workers)
+        scan_rates = fetch_all_fee_rate_rows_by_base(
+            venues, workers, cache_ttl_sec=30.0
+        )
     except Exception as e:
         alerts.append(f"rate_fetch_error: {e}")
         return cycle_result

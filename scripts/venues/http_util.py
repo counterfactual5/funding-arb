@@ -18,7 +18,7 @@ _session = requests.Session()
 _session.headers.update({"User-Agent": _DEFAULT_UA})
 # Connection pool settings: reuse up to 20 connections per host, 100 total
 _adapter = requests.adapters.HTTPAdapter(
-    pool_connections=20, pool_maxsize=20, max_retries=0
+    pool_connections=64, pool_maxsize=64, max_retries=0
 )
 _session.mount("https://", _adapter)
 _session.mount("http://", _adapter)

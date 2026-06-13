@@ -12,11 +12,13 @@ import { reactive } from "vue";
 import { useWallet } from "@/composables/useWallet";
 import { useHyperliquidTrade } from "@/composables/useHyperliquidTrade";
 import { useDydxTrade } from "@/composables/useDydxTrade";
+import {
+  WALLET_TRADE_VENUES,
+  type WalletTradeVenue,
+} from "@/constants/walletTrade";
 
-// ─── Which venues support browser wallet signing ───────────────
-
-export const WALLET_TRADE_VENUES = ["hyperliquid", "dydx"] as const;
-export type WalletTradeVenue = (typeof WALLET_TRADE_VENUES)[number];
+// Re-export for backward compatibility
+export { WALLET_TRADE_VENUES, type WalletTradeVenue };
 
 export interface PlaceOrderParams {
   venue: string;

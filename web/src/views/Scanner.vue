@@ -141,7 +141,7 @@
               </n-card>
             </n-gi>
           </n-grid>
-          <n-data-table v-if="pureRows.length > 0" :columns="pureColumns" :data="pureRows" :bordered="false" :scroll-x="1480" size="small" striped />
+          <n-data-table v-if="pureRows.length > 0" :columns="pureColumns" :data="pureRows" :bordered="false" :scroll-x="1480" :max-height="600" virtual size="small" striped />
           <n-empty v-else :description="t('scanner.noPureFutures')" style="padding:40px 0" />
         </template>
 
@@ -202,7 +202,7 @@
               </n-card>
             </n-gi>
           </n-grid>
-          <n-data-table v-if="unifiedRows.length > 0" :columns="unifiedColumns" :data="unifiedRows" :bordered="false" :scroll-x="800" size="small" striped />
+          <n-data-table v-if="unifiedRows.length > 0" :columns="unifiedColumns" :data="unifiedRows" :bordered="false" :scroll-x="800" :max-height="600" virtual size="small" striped />
           <n-empty v-else :description="t('scanner.unifiedRequiresScan')" style="padding:40px 0" />
         </template>
       </n-spin>
@@ -278,9 +278,20 @@ import { NCard, NGrid, NGi, NDataTable, NButton, NSpace, NText, NIcon, NSpin, NT
 import { RouterLink } from 'vue-router'
 import { SearchOutline, TrendingUpOutline, FlashOutline, AnalyticsOutline } from '@vicons/ionicons5'
 import { post, useWebSocket, type ScannerOpportunities, type CarryVenue, type CarryCand, type UnifiedCarryCand, type WsMessage } from '@/composables/useApi'
-import { useWalletTrade, WALLET_TRADE_VENUES } from '@/composables/useWalletTrade'
+import { WALLET_TRADE_VENUES } from '@/constants/walletTrade'
+import { useWallet } from '@/composables/useWallet'
 import { useI18n } from 'vue-i18n'
 import { CEX_VENUE_RANK, DEX_VENUE_RANK } from '@/constants/venueOrder'
+
+// Lazy-loaded wallet trade module — avoids pulling ethers + @nktkas/hyperliquid
+// into the initial bundle (Scanner is eagerly loaded on the / route).
+let _walletTradeModule: typeof import('@/composables/useWalletTrade') | null = null
+async function getWalletTrade() {
+  if (!_walletTradeModule) {
+    _walletTradeModule = await import('@/composables/useWalletTrade')
+  }
+  return _walletTradeModule
+}
 
 const { t } = useI18n()
 
@@ -667,8 +678,22 @@ function onStrategyChange(val: Strategy) {
 }
 
 // ---- WebSocket live updates (pushed by background scanner) ----
+// Debounce WS messages: coalesce rapid updates into one render per ~200ms
+// to avoid re-rendering hundreds of table rows on every push.
+let _pendingWsMsg: WsMessage | null = null
+let _wsDebounceTimer: ReturnType<typeof setTimeout> | null = null
 function onWsMessage(msg: WsMessage) {
   if (msg.event !== 'scanner.update') return
+  _pendingWsMsg = msg
+  if (_wsDebounceTimer) return
+  _wsDebounceTimer = setTimeout(() => {
+    _wsDebounceTimer = null
+    const m = _pendingWsMsg
+    _pendingWsMsg = null
+    if (m) _applyWsMessage(m)
+  }, 200)
+}
+function _applyWsMessage(msg: WsMessage) {
   const d = msg.data as Record<string, any>
   if (d.recalc_fees && d.data && typeof d.data === 'object') {
     const payload = d.data as Record<string, unknown>
@@ -712,7 +737,14 @@ const openAmount = ref<number>(1000)
 const openDryRun = ref(true)
 const openMode = ref<'backend' | 'wallet'>('backend')
 
-const { placeOrder: walletPlaceOrder, ensureAgent, isWalletConnected } = useWalletTrade()
+// Synchronous wallet connection check — uses useWallet (no ethers import).
+const { hasKeplr, hasMetaMask, keplrState, metamaskState } = useWallet()
+
+function isWalletConnected(venue: string): boolean {
+  if (venue === 'hyperliquid') return hasMetaMask.value && metamaskState.connected
+  if (venue === 'dydx') return hasKeplr.value && keplrState.connected
+  return false
+}
 
 const openModalSummary = computed(() => {
   const tgt = openTarget.value
@@ -847,6 +879,10 @@ async function confirmOpenWallet(tgt: OpenTarget) {
   const size = openAmount.value / 50000 // fallback: will be refined by SDK market price
 
   try {
+    // Lazy-load the wallet trade module (ethers + @nktkas/hyperliquid)
+    const mod = await getWalletTrade()
+    const { placeOrder: walletPlaceOrder, ensureAgent } = mod.useWalletTrade()
+
     // Ensure agent is ready for wallet venues
     for (const v of [r.long_venue, r.short_venue]) {
       if ((WALLET_TRADE_VENUES as readonly string[]).includes(v) && isWalletConnected(v)) {
