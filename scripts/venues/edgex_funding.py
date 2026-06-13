@@ -26,9 +26,27 @@ from typing import Any
 from market.parallel_fetch import run_io_parallel
 from venues.http_util import http_get_json
 
-_BASE_URL = "https://pro.edgex.exchange"
+_MAINNET_URL = "https://pro.edgex.exchange"
+_TESTNET_URL = "https://testnet.edgex.exchange"
 _META_TTL_SEC = 300.0
-_SNAPSHOT_TTL_SEC = 60.0
+
+
+def _base_url() -> str:
+    """Resolve the EdgeX public (scan) host from env.
+
+    EDGEX_PUBLIC_BASE_URL overrides everything; otherwise EDGEX_NETWORK=testnet
+    selects the testnet host. NOTE: EdgeX testnet sits behind Cloudflare Access,
+    so the public scan path may not be reachable without proper access — set
+    EDGEX_PUBLIC_BASE_URL explicitly to the correct host when testing.
+    """
+    override = os.environ.get("EDGEX_PUBLIC_BASE_URL", "").strip()
+    if override:
+        return override
+    net = os.environ.get("EDGEX_NETWORK", "mainnet").strip().lower()
+    return _TESTNET_URL if net == "testnet" else _MAINNET_URL
+
+
+_SNAPSHOT_TTL_SEC = 120.0  # funding rates settle every 4h; 2min cache is safe & cuts ~50% of fan-out calls
 _DEFAULT_INTERVAL_H = 4.0
 
 # EdgeX sits behind Cloudflare with strict per-IP rate limits and NO batch
@@ -42,7 +60,9 @@ _DEFAULT_SCAN_BASES = (
     "BTC ETH SOL XRP BNB DOGE ADA AVAX LINK SUI LTC BCH DOT NEAR APT ARB OP "
     "TIA SEI WLD TON TRX ATOM FIL INJ ORDI PEPE WIF AAVE UNI"
 ).split()
-_DEFAULT_SCAN_WORKERS = 3
+_DEFAULT_SCAN_WORKERS = (
+    5  # raised from 3 — Cloudflare tolerates 5 concurrent with the longer cache
+)
 
 
 def _base_from_contract_name(name: str) -> str:
@@ -56,8 +76,8 @@ class EdgexFundingProvider:
 
     venue_id: str = "edgex"
 
-    def __init__(self, base_url: str = _BASE_URL) -> None:
-        self._base_url = base_url
+    def __init__(self, base_url: str | None = None) -> None:
+        self._base_url = base_url or _base_url()
         # base(str) -> contract metadata; refreshed every _META_TTL_SEC.
         self._meta_cache: tuple[float, dict[str, dict[str, Any]]] | None = None
         # (quote) -> (ts, rows); rate-limit guard, refreshed every _SNAPSHOT_TTL_SEC.

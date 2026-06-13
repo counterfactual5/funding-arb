@@ -19,14 +19,26 @@ is scan/backtest only.
 from __future__ import annotations
 
 import math
+import os
 import time
 from typing import Any
 
 from venues.http_util import http_get_json
 
-_BASE_URL = "https://mainnet.zklighter.elliot.ai"
+_MAINNET_URL = "https://mainnet.zklighter.elliot.ai"
+_TESTNET_URL = "https://testnet.zklighter.elliot.ai"
 _INTERVAL_MS = 3600_000  # 1 hour
 _META_TTL_SEC = 300.0
+
+
+def _base_url() -> str:
+    """Resolve the Lighter API host from env (LIGHTER_BASE_URL override, else
+    LIGHTER_NETWORK=testnet selects the testnet host)."""
+    override = os.environ.get("LIGHTER_BASE_URL", "").strip()
+    if override:
+        return override
+    net = os.environ.get("LIGHTER_NETWORK", "mainnet").strip().lower()
+    return _TESTNET_URL if net == "testnet" else _MAINNET_URL
 
 
 def _next_hour_ts(now_ms: int | None = None) -> int:
@@ -39,8 +51,8 @@ class LighterFundingProvider:
 
     venue_id: str = "lighter"
 
-    def __init__(self, base_url: str = _BASE_URL) -> None:
-        self._base_url = base_url
+    def __init__(self, base_url: str | None = None) -> None:
+        self._base_url = base_url or _base_url()
         # symbol(base) → {market_id, last_trade_price}
         self._meta_cache: tuple[float, dict[str, dict[str, Any]]] | None = None
 

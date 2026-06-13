@@ -12,6 +12,7 @@ import {
   NIcon,
   NBadge,
   NText,
+  NTag,
   NMessageProvider,
   NSelect,
   darkTheme,
@@ -21,11 +22,15 @@ import {
   SearchOutline,
   BriefcaseOutline,
   StatsChartOutline,
-  SettingsOutline,
   DocumentTextOutline,
   PulseOutline,
+  KeyOutline,
+  WalletOutline,
+  ToggleOutline,
+  CardOutline,
+  LockClosedOutline,
 } from '@vicons/ionicons5'
-import { useWebSocket } from '@/composables/useApi'
+import { useWebSocket, type TradingMode } from '@/composables/useApi'
 import i18n, { setLocale, SUPPORTED_LOCALES, type SupportedLocale } from '@/i18n'
 
 const { t } = useI18n()
@@ -54,14 +59,34 @@ const menuOptions = computed<MenuOption[]>(() => [
     icon: () => h(NIcon, null, { default: () => h(StatsChartOutline) }),
   },
   {
+    label: t('menu.cex'),
+    key: '/cex',
+    icon: () => h(NIcon, null, { default: () => h(KeyOutline) }),
+  },
+  {
+    label: t('menu.dex'),
+    key: '/dex',
+    icon: () => h(NIcon, null, { default: () => h(WalletOutline) }),
+  },
+  {
+    label: t('menu.strategy'),
+    key: '/strategy',
+    icon: () => h(NIcon, null, { default: () => h(ToggleOutline) }),
+  },
+  {
+    label: t('menu.fees'),
+    key: '/fees',
+    icon: () => h(NIcon, null, { default: () => h(CardOutline) }),
+  },
+  {
+    label: t('menu.advanced'),
+    key: '/advanced',
+    icon: () => h(NIcon, null, { default: () => h(LockClosedOutline) }),
+  },
+  {
     label: t('menu.docs'),
     key: '/docs',
     icon: () => h(NIcon, null, { default: () => h(DocumentTextOutline) }),
-  },
-  {
-    label: t('menu.settings'),
-    key: '/settings',
-    icon: () => h(NIcon, null, { default: () => h(SettingsOutline) }),
   },
 ])
 
@@ -72,16 +97,35 @@ const currentLocale = computed({
 
 const { connected, connect: wsConnect, disconnect: wsDisconnect } = useWebSocket()
 
+const tradingMode = ref<TradingMode | null>(null)
+let tradingModeTimer: ReturnType<typeof setInterval> | null = null
+
+async function fetchTradingMode() {
+  try {
+    const response = await fetch('/api/settings/trading-mode')
+    const json = await response.json()
+    if (json.success) tradingMode.value = json.data
+  } catch {
+    // ignore
+  }
+}
+
 function handleMenuUpdate(key: string) {
   router.push(key)
 }
 
 onMounted(() => {
   wsConnect()
+  fetchTradingMode()
+  tradingModeTimer = setInterval(fetchTradingMode, 30000)
 })
 
 onUnmounted(() => {
   wsDisconnect()
+  if (tradingModeTimer) {
+    clearInterval(tradingModeTimer)
+    tradingModeTimer = null
+  }
 })
 </script>
 
@@ -125,6 +169,24 @@ onUnmounted(() => {
             <n-text class="header-title">{{ t('app.title') }}</n-text>
           </div>
           <div class="header-right">
+            <n-tag
+              v-if="tradingMode?.mode === 'live'"
+              size="small"
+              type="error"
+              :bordered="false"
+              style="margin-right: 4px"
+            >
+              LIVE
+            </n-tag>
+            <n-tag
+              v-else
+              size="small"
+              type="warning"
+              :bordered="false"
+              style="margin-right: 4px"
+            >
+              {{ t('app.tradingMode') }}
+            </n-tag>
             <n-select
               v-model:value="currentLocale"
               :options="SUPPORTED_LOCALES"

@@ -12,9 +12,11 @@ with trade-signer or local-key signing.
 The SDK is optional: scanning and dry-run execution work without it.
 Live order placement raises a clear error if the SDK is not installed.
 """
+
 from __future__ import annotations
 
 import os
+import sys
 import time
 from decimal import Decimal
 from pathlib import Path
@@ -35,8 +37,8 @@ def _get_sdk() -> dict[str, Any]:
     if _sdk_cache is not None:
         return _sdk_cache
     try:
-        from hyperliquid.info import Info
         from hyperliquid.exchange import Exchange
+        from hyperliquid.info import Info
     except ImportError as e:
         raise RuntimeError(
             "Hyperliquid live execution requires 'hyperliquid-python-sdk'. "
@@ -97,8 +99,7 @@ def _make_exchange_client() -> Any:
     wallet = _get_wallet_address()
     if not wallet:
         raise RuntimeError(
-            "HYPERLIQUID_WALLET_ADDRESS not set. "
-            "Set it in .env or environment."
+            "HYPERLIQUID_WALLET_ADDRESS not set. Set it in .env or environment."
         )
     key = (os.environ.get("HYPERLIQUID_PRIVATE_KEY") or "").strip()
     if key:
@@ -115,9 +116,7 @@ def _make_exchange_client() -> Any:
     )
 
 
-def _make_exchange_with_tradesigner(
-    base_url: str, wallet: str, signer_url: str
-) -> Any:
+def _make_exchange_with_tradesigner(base_url: str, wallet: str, signer_url: str) -> Any:
     """Create Exchange client that delegates signing to trade-signer."""
     import hyperliquid.utils.signing as hl_signing
 
@@ -192,9 +191,7 @@ def _make_exchange_with_tradesigner(
 
 
 def _load_env() -> None:
-    env_path = (
-        Path(__file__).resolve().parent.parent.parent / ".env.local"
-    )
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env.local"
     if not env_path.exists():
         return
     for line in env_path.read_text(encoding="utf-8").splitlines():
@@ -214,7 +211,23 @@ _load_env()
 # Constants
 # ---------------------------------------------------------------------------
 
-_BASE_URL = "https://api.hyperliquid.xyz"
+_MAINNET_URL = "https://api.hyperliquid.xyz"
+_TESTNET_URL = "https://api.hyperliquid-testnet.xyz"
+
+
+def _base_url() -> str:
+    """Resolve the Info/Exchange host from env (read at call time so the
+    wallet-connect flow can switch network without a restart).
+
+    HYPERLIQUID_BASE_URL overrides everything; otherwise
+    HYPERLIQUID_NETWORK=testnet selects the testnet host.
+    """
+    override = os.environ.get("HYPERLIQUID_BASE_URL", "").strip()
+    if override:
+        return override
+    net = os.environ.get("HYPERLIQUID_NETWORK", "mainnet").strip().lower()
+    return _TESTNET_URL if net == "testnet" else _MAINNET_URL
+
 
 _DIRECTION_MAP: dict[str, bool] = {
     "open_long": True,
@@ -239,7 +252,8 @@ def _pair_from_coin(coin: str) -> str:
 
 
 def _info_post(body: dict[str, Any]) -> Any:
-    r = requests.post(f"{_BASE_URL}/info", json=body, timeout=20)
+    """Direct HTTP POST to Hyperliquid Info endpoint (bypasses SDK bugs)."""
+    r = requests.post(f"{_base_url()}/info", json=body, timeout=20)
     r.raise_for_status()
     return r.json()
 
@@ -358,15 +372,17 @@ class HyperliquidVenue:
                     continue
                 coin = str(pos.get("coin", ""))
                 side = "long" if size > 0 else "short"
-                positions.append({
-                    "symbol": _pair_from_coin(coin),
-                    "side": side,
-                    "qty": abs(size),
-                    "entry_price": float(pos.get("entryPx", 0) or 0),
-                    "liq_price": float(pos.get("liquidationPx", 0) or 0),
-                    "leverage": float(p.get("leverage", {}).get("value", 1) or 1),
-                    "unrealized_pnl": float(pos.get("unrealizedPnl", 0) or 0),
-                })
+                positions.append(
+                    {
+                        "symbol": _pair_from_coin(coin),
+                        "side": side,
+                        "qty": abs(size),
+                        "entry_price": float(pos.get("entryPx", 0) or 0),
+                        "liq_price": float(pos.get("liquidationPx", 0) or 0),
+                        "leverage": float(p.get("leverage", {}).get("value", 1) or 1),
+                        "unrealized_pnl": float(pos.get("unrealizedPnl", 0) or 0),
+                    }
+                )
             return positions
         except Exception:
             return []

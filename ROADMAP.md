@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-06-12
+Last updated: 2026-06-13
 
 ## Completed
 
@@ -36,11 +36,22 @@ Last updated: 2026-06-12
 
 | Area | Status | Notes |
 |------|--------|-------|
-| FastAPI backend | Done | `server/` — scanner, positions, backtest, settings, WebSocket |
-| Vue 3 web UI | Done | `web/` — Scanner, Positions, Backtest, Docs, Settings |
+| FastAPI backend | Done | `server/` — scanner, positions, backtest, settings, wallet, WebSocket |
+| Vue 3 web UI | Done | `web/` — Scanner, Positions, Backtest, Docs, CEX, DEX, Strategy, Fees, Advanced |
 | Docs (8 articles, 3 langs) | Done | `/docs` + `docs/{zh-CN,en,zh-TW}/`; CI `check_docs_sync.sh` |
 | Dashboard open | Done | Pure Futures + C&C + Unified via `POST /positions/open` |
 | Startup scripts | Done | `start.sh`, `start.ps1` |
+
+### Browser wallet trading
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Wallet connection (Keplr / MetaMask) | Done | `useWallet.ts` — detect, connect, balance via backend proxy |
+| Hyperliquid agent wallet | Done | `useHyperliquidTrade.ts` — EIP-712 approve → session key signing; `@nktkas/hyperliquid` SDK |
+| dYdX Keplr signing | Code done; testnet pending | `useDydxTrade.ts` — Amino signing via Keplr; needs testnet validation |
+| Scanner wallet mode | Done | Open dialog: backend vs wallet execution mode; mixed-leg support |
+| DEX test order modal | Done | `TestOrderModal.vue` — coin/side/size/slippage; mainnet/testnet toggle |
+| Agent status badge | Done | HL card shows "Agent Active" when session key is live |
 
 ### AI / CLI skill
 
@@ -54,7 +65,8 @@ Project CLI skill: [`SKILL.md`](SKILL.md) (repo root)
 |------|-------|-------|
 | **Hyperliquid live keys** | Env-dependent | Sibling `../hyperliquid` + wallet keys for live |
 | **EdgeX live trade** | Unverified | Run `verify_edgex_live.py --read-account` with funded account |
-| **dYdX live orders** | Live code done | Adapter + wallet + SDK order builder implemented; testnet verification pending — see `plans/dydx-trading-plan.md` |
+| **dYdX live orders** | Live code done | Adapter + wallet + SDK order builder implemented; browser Keplr signing implemented; testnet verification pending — see `plans/dydx-trading-plan.md` |
+| **dYdX browser signing** | Code done; testnet pending | `useDydxTrade.ts` Amino message structure needs validation against proto definitions |
 | **Drift** | Not started | Solana perp SDK — P2 |
 
 ---
@@ -85,9 +97,14 @@ Project CLI skill: [`SKILL.md`](SKILL.md) (repo root)
 |------|----------|-------------|
 | Parallel leg execution | Done | `parallelLegs: true` default |
 | Strategy config → live runner | Done | `core/strategy_config.py` |
+| Settings → sub-pages | Done | CEX / DEX / Strategy / Fees / Advanced as separate sidebar pages |
+| DEX scan optimization | Done | Per-venue caching (HL/dYdX 60s, EdgeX 120s); redundant `fetch_interval_map` eliminated; unified cross-scan cache |
+| Positions funding estimate | Done | `_estimate_funding_income` in positions API; displayed in expandable rows + equity curve |
+| Route-level code splitting | Done | Lazy-loaded views; initial bundle 597KB → 344KB gzip |
 | Triangle / 3-venue arb | Low | Position graph solver |
 | ML funding prediction | Low | Optional entry timing |
 | Dynamic position sizing | Low | Kelly / vol-adjusted `trade_usd` |
+| Real funding ledger per position | Medium | Replace estimate with actual settled funding from venue income API |
 | Tauri desktop polish | Low | Native packaging |
 | Spot cross-venue price arb | Low | Reuse `price_oracle` |
 

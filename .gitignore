@@ -43,3 +43,4 @@ infinite_opt.log
 # Scratchpad tests
 scratch/
 .pytest_cache/
+.playwright-cli/

@@ -11,19 +11,51 @@ API docs: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/inf
 from __future__ import annotations
 
 import math
+import os
 import time
 from typing import Any
 
 import requests
 
-_BASE_URL = "https://api.hyperliquid.xyz"
+_MAINNET_URL = "https://api.hyperliquid.xyz"
+_TESTNET_URL = "https://api.hyperliquid-testnet.xyz"
 _INTERVAL_MS = 3600_000  # 1 hour
 
 
-def _post(body: dict[str, Any], base_url: str = _BASE_URL) -> Any:
-    r = requests.post(f"{base_url}/info", json=body, timeout=20)
+def _base_url() -> str:
+    """Resolve the Info host from env (HYPERLIQUID_BASE_URL override, else
+    HYPERLIQUID_NETWORK=testnet selects the testnet host)."""
+    override = os.environ.get("HYPERLIQUID_BASE_URL", "").strip()
+    if override:
+        return override
+    net = os.environ.get("HYPERLIQUID_NETWORK", "mainnet").strip().lower()
+    return _TESTNET_URL if net == "testnet" else _MAINNET_URL
+
+
+def _post(body: dict[str, Any], base_url: str | None = None) -> Any:
+    r = requests.post(f"{base_url or _base_url()}/info", json=body, timeout=20)
     r.raise_for_status()
     return r.json()
+
+
+_META_CACHE: tuple[float, list] | None = None  # (ts, data)
+_META_TTL_SEC = 60.0
+
+
+def _fetch_meta_and_ctxs() -> list:
+    """Cached fetch of metaAndAssetCtxs (60s TTL).
+
+    Shared by fetch_all / fetch_current / fetch_interval_map so a single
+    batch read of the HL universe serves all three within the cache window.
+    """
+    global _META_CACHE
+    now = time.time()
+    if _META_CACHE and now - _META_CACHE[0] < _META_TTL_SEC:
+        return _META_CACHE[1]
+    data = _post({"type": "metaAndAssetCtxs"})
+    if isinstance(data, list) and len(data) >= 2:
+        _META_CACHE = (now, data)
+    return data
 
 
 def _next_hour_ts(now_ms: int | None = None) -> int:
@@ -61,7 +93,7 @@ class HyperliquidFundingProvider:
             next_funding_ts (int) — next settlement timestamp (ms)
             mark_price (float) — current mark price
         """
-        data = _post({"type": "metaAndAssetCtxs"})
+        data = _fetch_meta_and_ctxs()
         if not isinstance(data, list) or len(data) < 2:
             return []
 
@@ -100,14 +132,6 @@ class HyperliquidFundingProvider:
             )
         return out
 
-    def fetch_interval_map(self, quote: str = "USDT") -> dict[str, float]:
-        """Hyperliquid uses 1-hour funding intervals for all perps."""
-        return {
-            _coin_to_symbol(entry.get("name", "")): 1.0
-            for entry in _post({"type": "metaAndAssetCtxs"})[0].get("universe", [])
-            if entry.get("name")
-        }
-
     # ------------------------------------------------------------------
     # fetch_current — single coin
     # ------------------------------------------------------------------
@@ -121,7 +145,7 @@ class HyperliquidFundingProvider:
             {rate_pct, next_funding_ts, interval_ms, mark_price, last_settle_ts}
         """
         coin = _symbol_to_coin(symbol)
-        data = _post({"type": "metaAndAssetCtxs"})
+        data = _fetch_meta_and_ctxs()
         if not isinstance(data, list) or len(data) < 2:
             return {
                 "rate_pct": 0.0,
@@ -229,9 +253,9 @@ class HyperliquidFundingProvider:
     # ------------------------------------------------------------------
 
     def fetch_interval_map(self, quote: str = "USDT") -> dict[str, float]:
-        """All Hyperliquid perps use 1-hour funding."""
+        """All Hyperliquid perps use 1-hour funding intervals."""
         try:
-            data = _post({"type": "metaAndAssetCtxs"})
+            data = _fetch_meta_and_ctxs()
         except Exception:
             return {}
         if not isinstance(data, list) or len(data) < 2:

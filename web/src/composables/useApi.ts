@@ -36,6 +36,8 @@ export interface OpportunityItem {
   same_interval?: boolean;
   long_interval_h?: number;
   short_interval_h?: number;
+  /** clean | caution | high — mark/basis risk vs strategy real-edge bar */
+  basis_risk_level?: "clean" | "caution" | "high";
 }
 
 export interface ScannerOpportunities {
@@ -69,12 +71,37 @@ export interface PositionItem {
   opened_at?: number; // ms timestamp
   open_time?: string; // legacy ISO string
   closed_at?: number;
-  close_info?: Record<string, any>;
   dry_run?: boolean;
   strategy?: string;
   quote?: string;
   long_symbol?: string;
   short_symbol?: string;
+  // ─── Detailed metrics (added for enhanced positions view) ──────
+  /** Close information from executor (close prices, spreads) */
+  close_info?: {
+    long_price?: number;
+    short_price?: number;
+    futures_price?: number;
+    spot_price?: number;
+    open_mark_spread?: number;
+    close_mark_spread?: number;
+    dry_run?: boolean;
+    [key: string]: unknown;
+  };
+  /** Long leg fill quantity (pure futures) */
+  long_qty?: number;
+  /** Short leg fill quantity (pure futures) */
+  short_qty?: number;
+  /** Futures venue (carry/unified strategies) */
+  futures_venue?: string;
+  /** Spot venue (carry/unified strategies) */
+  spot_venue?: string;
+  /** Futures open price (carry/unified) */
+  futures_price?: number;
+  /** Spot open price (carry/unified) */
+  spot_price?: number;
+  /** Whether legs were opened in parallel */
+  parallel_legs?: boolean;
 }
 
 export interface BacktestSummary {
@@ -140,7 +167,7 @@ export interface StrategyParams {
   scan_venues?: string[];
   min_edge_1h?: number;
   min_edge_mismatch?: number;
-  fee_mode?: 'auto' | 'api' | 'vip_tier';
+  fee_mode?: "auto" | "api" | "vip_tier";
   venue_fee_tiers?: Record<string, string>;
 }
 
@@ -157,8 +184,8 @@ export interface ResolvedVenueFee {
   tier: string | null;
   spot_taker_pct: number;
   futures_taker_pct: number;
-  spot_source: 'api' | 'tier' | 'default';
-  futures_source: 'api' | 'tier' | 'default';
+  spot_source: "api" | "tier" | "default";
+  futures_source: "api" | "tier" | "default";
 }
 
 export interface ResolvedFees {
@@ -338,6 +365,77 @@ export interface UnifiedCarryCand {
   fee_pct: number;
   net_edge_pct: number;
   borrow_daily_pct?: number;
+}
+
+// ─── Wallet & Trading Mode types ────────────────────────────────
+
+export interface WalletFieldSchema {
+  key: string;
+  label: string;
+  type: "text" | "password" | "number" | "select";
+  placeholder?: string;
+  options?: string[];
+  default?: string;
+}
+
+export interface WalletVenueSchema {
+  name: string;
+  chain: string;
+  fields: WalletFieldSchema[];
+  extra_fields: WalletFieldSchema[];
+  live_flag: string | null;
+}
+
+export interface WalletVenueStatus {
+  connected: boolean;
+  chain: string;
+  live_enabled: boolean;
+  live_flag: string | null;
+  fields_masked: Record<string, string>;
+  balance_usdc: number;
+}
+
+export interface TradingModeVenue {
+  mode: "backtest" | "dry_run" | "live";
+  wallet_connected: boolean;
+  live_enabled: boolean;
+}
+
+export interface TradingMode {
+  mode: "backtest" | "dry_run" | "live";
+  venues: Record<string, TradingModeVenue>;
+}
+
+export function getWalletSchemas() {
+  return useApi<Record<string, WalletVenueSchema>>("/settings/wallet/schema");
+}
+
+export function getWalletStatus(venue?: string) {
+  const url = venue
+    ? `/settings/wallet/status?venue=${venue}`
+    : "/settings/wallet/status";
+  return useApi<Record<string, WalletVenueStatus>>(url);
+}
+
+export function getTradingMode() {
+  return useApi<TradingMode>("/settings/trading-mode");
+}
+
+export async function connectWallet(
+  venue: string,
+  credentials: Record<string, string>,
+) {
+  return post<{ venue: string; connected: boolean }>(
+    "/settings/wallet/connect",
+    { venue, credentials },
+  );
+}
+
+export async function disconnectWallet(venue: string) {
+  return post<{ venue: string; connected: boolean }>(
+    "/settings/wallet/disconnect",
+    { venue },
+  );
 }
 
 // ─── WebSocket ──────────────────────────────────────────────────────

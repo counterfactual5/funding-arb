@@ -39,6 +39,28 @@ from venues.edgex_funding import EdgexFundingProvider
 
 _DEFAULT_BASE_URL = "https://edgex-prod-v2.edgex.exchange"
 _DEFAULT_ASSET_BASE_URL = "https://spot.edgex.exchange"
+# Testnet hosts (EDGEX_NETWORK=testnet). Override per-host with
+# EDGEX_BASE_URL / EDGEX_ASSET_BASE_URL when the defaults differ.
+_TESTNET_BASE_URL = "https://testnet.edgex.exchange"
+_TESTNET_ASSET_BASE_URL = "https://testnet.edgex.exchange"
+
+
+def _is_testnet() -> bool:
+    return os.environ.get("EDGEX_NETWORK", "mainnet").strip().lower() == "testnet"
+
+
+def _trading_base_url() -> str:
+    override = os.environ.get("EDGEX_BASE_URL", "").strip()
+    if override:
+        return override
+    return _TESTNET_BASE_URL if _is_testnet() else _DEFAULT_BASE_URL
+
+
+def _asset_base_url() -> str:
+    override = os.environ.get("EDGEX_ASSET_BASE_URL", "").strip()
+    if override:
+        return override
+    return _TESTNET_ASSET_BASE_URL if _is_testnet() else _DEFAULT_ASSET_BASE_URL
 
 
 def _base_from_pair(pair: str) -> str:
@@ -129,8 +151,8 @@ class EdgexVenue:
                 "EDGEX_TRADING_PRIVATE_KEY"
             )
         return Client(
-            base_url=os.environ.get("EDGEX_BASE_URL", _DEFAULT_BASE_URL),
-            asset_base_url=os.environ.get("EDGEX_ASSET_BASE_URL", _DEFAULT_ASSET_BASE_URL),
+            base_url=_trading_base_url(),
+            asset_base_url=_asset_base_url(),
             account_id=int(account_id),
             trading_private_key=private_key,
         )

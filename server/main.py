@@ -91,10 +91,13 @@ async def _background_scanner_loop() -> None:
         except Exception as e:
             print(f"[scanner] {strategy} scan failed: {e}", flush=True)
 
+    async def _warmup_carry_unified() -> None:
+        await asyncio.gather(_warm("carry"), _warm("unified"), return_exceptions=True)
+
     # Run initial scans at startup so all three tabs have data on first connect.
     # Pure first (fast, most viewed), then carry/unified warm up concurrently.
     await _warm("pure")
-    warmup = asyncio.create_task(asyncio.gather(_warm("carry"), _warm("unified")))
+    warmup = asyncio.create_task(_warmup_carry_unified())
 
     cycle = 0
     while True:

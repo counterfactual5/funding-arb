@@ -8,6 +8,11 @@ export default defineConfig({
     alias: {
       "@": resolve(__dirname, "src"),
     },
+    fallback: {
+      crypto: false,
+      stream: false,
+      buffer: false,
+    },
   },
   server: {
     port: 1420,
@@ -24,8 +29,11 @@ export default defineConfig({
   },
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_"],
+  optimizeDeps: {
+    target: "esnext",
+  },
   build: {
-    target: ["es2021", "chrome100", "safari13"],
+    target: "es2022",
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_DEBUG,
   },

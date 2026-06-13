@@ -3,9 +3,9 @@
 Cross-exchange **funding rate** arbitrage: Cash-and-Carry, unified cross-venue carry, and **Pure Futures** (perp–perp) spreads — with a **Vue dashboard**, CLI, and optional **Tauri** desktop shell.
 
 **CEX (spot + USDT-M perps):** Binance · Bitget · Bybit · OKX  
-**Perp DEX (scan; trade where supported):** Hyperliquid · Aster · Lighter · EdgeX
+**Perp DEX (scan; trade where supported):** Hyperliquid · dYdX v4 · Aster · Lighter · EdgeX
 
-Default scanner venues are **CEX-only**; DEX venues are opt-in via the UI or `--venues`.
+Default scanner venues are **CEX-only**; DEX venues are opt-in via the UI or `--venues`. Browser wallet signing (MetaMask / Keplr) is available for Hyperliquid and dYdX — see [Wallet Trading](#browser-wallet-trading).
 
 ---
 
@@ -63,14 +63,33 @@ graph LR
     D --> F[WebSocket scanner updates]
 ```
 
-**Dashboard pages:** Scanner · Positions · Backtest · Docs · Settings  
+**Dashboard pages:** Scanner · Positions · Backtest · Docs · CEX · DEX · Strategy · Fees · Advanced
 
 **Scanner highlights:**
 - Three strategy tabs with background warm-up for pure / carry / unified
 - Venue filter (CEX / DEX groups); scans **only selected venues**
 - Min net edge, same-interval / cross-interval filters
 - Fee-aware edge (`net_edge` / `real_edge` tooltips)
-- Open position dialog (dry-run by default)
+- Open position dialog with **backend (auto)** or **wallet (manual)** execution mode
+
+**Positions highlights:**
+- 6 summary cards: open count, total PnL (incl. funding estimate), total fees, win rate, avg hold, total trade
+- Expandable rows with full breakdown: open/close prices, entry/exit spread, gross/net PnL, funding income estimate
+- Cumulative PnL equity curve (echarts)
+
+### Browser Wallet Trading
+
+The DEX connection page supports **browser wallet extension** signing for test orders and Scanner one-click open:
+
+| Venue | Wallet | Signing Mode |
+|-------|--------|-------------|
+| **Hyperliquid** | MetaMask | Agent wallet (one-time approve, then session key signs) |
+| **dYdX v4** | Keplr | Per-tx Amino signing |
+| Lighter / EdgeX / Aster | MetaMask | Address read only; trading needs API keys |
+
+Two parallel execution paths coexist:
+- **Backend (auto):** server signs with configured API keys — for 7×24 automated arbitrage
+- **Wallet (manual):** browser signs via extension — for testing and manual orders without uploading private keys
 
 ### CLI scanning
 
@@ -163,6 +182,11 @@ Configure in **Settings → Strategy**: `fee_mode`, `venue_fee_tiers`, scan thre
 | `GET /api/scanner/status` | Scanning flag, last scan time |
 | `GET/POST /api/settings/strategy` | Thresholds, venues, fee policy |
 | `GET /api/settings/venues` | Scan/trade/live capability per venue |
+| `GET /api/settings/wallet/schema` | Per-venue credential field schemas (CEX + DEX) |
+| `GET /api/settings/wallet/status` | Connection status, masked credentials, balance |
+| `POST /api/settings/wallet/connect` | Set credentials as env vars |
+| `POST /api/settings/wallet/disconnect` | Clear credentials |
+| `GET /api/settings/trading-mode` | Overall + per-venue mode (dry_run/live) |
 | `POST /api/positions/open` | Open hedge (dry-run default) |
 | `POST /api/backtest/run` | Run backtest from history or JSONL |
 | `WS /ws/events` | `scanner.update` push events |

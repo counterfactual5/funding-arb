@@ -141,11 +141,17 @@ class DydxFundingProvider:
 
     def __init__(self, base_url: str = _BASE_URL) -> None:
         self._base_url = base_url.rstrip("/")
+        self._all_cache: tuple[float, list[dict[str, Any]]] | None = None  # (ts, rows)
+        self._all_cache_ttl_sec: float = 60.0
 
     def _get(self, path: str) -> Any:
         return http_get_json(f"{self._base_url}{path}", timeout=25, retries=2)
 
     def fetch_all(self, quote: str = "USDT") -> list[dict[str, Any]]:
+        now = time.time()
+        if self._all_cache and now - self._all_cache[0] < self._all_cache_ttl_sec:
+            return self._all_cache[1]
+
         data = self._get("/v4/perpetualMarkets")
         markets = data.get("markets", {}) if isinstance(data, dict) else {}
         next_ts = _next_hour_ts()
@@ -160,6 +166,8 @@ class DydxFundingProvider:
             out.append(_market_row(str(ticker), m, next_ts=next_ts))
         if _index_mid_enabled():
             self._enrich_index_mids(out)
+
+        self._all_cache = (now, out)
         return out
 
     def _enrich_index_mids(self, rows: list[dict[str, Any]]) -> None:
@@ -193,7 +201,9 @@ class DydxFundingProvider:
                 row["index_price"] = mid
 
     def fetch_interval_map(self, quote: str = "USDT") -> dict[str, float]:
-        return {row["symbol"]: _INTERVAL_H for row in self.fetch_all(quote)}
+        """dYdX v4 uses a fixed 1-hour funding interval for all markets."""
+        rows = self.fetch_all(quote)  # serves from cache if fresh
+        return {row["symbol"]: _INTERVAL_H for row in rows}
 
     def fetch_current(
         self, symbol: str, *, include_index_mid: bool = False

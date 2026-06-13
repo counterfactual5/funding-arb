@@ -31,7 +31,22 @@ from typing import Any
 from venues.http_util import http_get_json
 from venues.lighter_funding import LighterFundingProvider
 
-_BASE_URL = "https://mainnet.zklighter.elliot.ai"
+_MAINNET_URL = "https://mainnet.zklighter.elliot.ai"
+_TESTNET_URL = "https://testnet.zklighter.elliot.ai"
+
+
+def _base_url() -> str:
+    """Resolve the Lighter API host from env (read at call time so the
+    wallet-connect flow can switch network without a restart).
+
+    LIGHTER_BASE_URL overrides everything; otherwise
+    LIGHTER_NETWORK=testnet selects the testnet host.
+    """
+    override = os.environ.get("LIGHTER_BASE_URL", "").strip()
+    if override:
+        return override
+    net = os.environ.get("LIGHTER_NETWORK", "mainnet").strip().lower()
+    return _TESTNET_URL if net == "testnet" else _MAINNET_URL
 
 # Short-TTL last-trade-price cache (orderBookDetails covers all markets at once)
 _price_cache: tuple[float, dict[str, float]] | None = None
@@ -58,7 +73,7 @@ def _account_index() -> int:
             "Lighter credentials missing: set LIGHTER_ACCOUNT_INDEX or LIGHTER_L1_ADDRESS"
         )
     data = http_get_json(
-        f"{_BASE_URL}/api/v1/accountsByL1Address?l1_address={l1}", timeout=20
+        f"{_base_url()}/api/v1/accountsByL1Address?l1_address={l1}", timeout=20
     )
     accounts = data.get("sub_accounts") or data.get("accounts") or []
     if not accounts:
@@ -87,7 +102,7 @@ class LighterVenue:
         now = time.time()
         if _price_cache and now - _price_cache[0] < _PRICE_TTL_SEC:
             return _price_cache[1]
-        payload = http_get_json(f"{_BASE_URL}/api/v1/orderBookDetails", timeout=20)
+        payload = http_get_json(f"{_base_url()}/api/v1/orderBookDetails", timeout=20)
         out: dict[str, float] = {}
         rows = payload.get("order_book_details", []) if isinstance(payload, dict) else []
         for row in rows:
@@ -137,7 +152,7 @@ class LighterVenue:
         import lighter
 
         api_client = lighter.ApiClient(
-            configuration=lighter.Configuration(host=_BASE_URL)
+            configuration=lighter.Configuration(host=_base_url())
         )
         try:
             resp = await lighter.AccountApi(api_client).account(
@@ -206,7 +221,7 @@ class LighterVenue:
             )
         key_index = int(os.environ.get("LIGHTER_API_KEY_INDEX", "2"))
         return lighter.SignerClient(
-            url=_BASE_URL,
+            url=_base_url(),
             account_index=_account_index(),
             api_private_keys={key_index: private_key},
         )

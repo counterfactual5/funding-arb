@@ -208,7 +208,7 @@
       </n-spin>
     </n-card>
 
-    <n-modal v-model:show="showOpenModal" preset="card" :title="t('scanner.openPosition')" style="width: 420px">
+    <n-modal v-model:show="showOpenModal" preset="card" :title="t('scanner.openPosition')" style="width: 460px">
       <n-form label-placement="left" label-width="110" size="small">
         <n-form-item :label="t('scanner.pair')">
           <n-text strong>{{ openModalSummary }}</n-text>
@@ -216,15 +216,54 @@
         <n-form-item :label="t('scanner.amountUsdt')">
           <n-input-number v-model:value="openAmount" :min="10" :step="100" style="width: 100%" />
         </n-form-item>
-        <n-form-item :label="t('scanner.dryRun')">
+
+        <!-- Execution mode selector (only for pure futures with wallet-capable venues) -->
+        <n-form-item v-if="walletCapableVenues.length > 0" :label="t('scanner.openMode')">
+          <n-radio-group v-model:value="openMode" size="small">
+            <n-radio value="backend">{{ t('scanner.openModeBackend') }}</n-radio>
+            <n-radio value="wallet" :disabled="!walletModeAvailable">{{ t('scanner.openModeWallet') }}</n-radio>
+          </n-radio-group>
+        </n-form-item>
+
+        <!-- Wallet leg status -->
+        <n-form-item v-if="openMode === 'wallet'" :label="' '" >
+          <n-space vertical :size="4" style="width: 100%">
+            <n-text v-for="leg in walletLegStatus" :key="leg.venue" depth="3" style="font-size: 12px">
+              <n-tag size="tiny" :type="leg.connected ? 'success' : 'warning'" :bordered="false">
+                {{ leg.venue }}
+              </n-tag>
+              {{ leg.connected ? t('scanner.walletLegReady') : t('scanner.walletLegNeedsKeys') }}
+            </n-text>
+          </n-space>
+        </n-form-item>
+
+        <n-form-item v-if="openMode === 'backend'" :label="t('scanner.dryRun')">
           <n-switch v-model:value="openDryRun" />
           <n-text v-if="!openDryRun" type="error" style="margin-left: 12px; font-size: 12px">{{ t('scanner.realOrdersWarning') }}</n-text>
         </n-form-item>
+
+        <n-alert
+          v-if="openTarget?.kind === 'pure' && openTarget.row.basis_risk_level !== 'clean'"
+          :type="openTarget.row.basis_risk_level === 'high' ? 'error' : 'warning'"
+          :title="openTarget.row.basis_risk_level === 'high' ? t('scanner.riskHigh') : t('scanner.riskCaution')"
+          style="margin-top: 8px"
+        >
+          {{ pureRowRiskHint(openTarget.row) }}
+          <template v-if="openTarget.row.basis_risk_level === 'high'">
+            <br />
+            <n-text depth="3" style="font-size: 12px">
+              {{ t('scanner.riskHighDetail', { mark: openTarget.row.mark_spread_pct.toFixed(4), net: openTarget.row.net_edge_pct.toFixed(4), real: openTarget.row.real_edge_pct.toFixed(4) }) }}
+            </n-text>
+          </template>
+        </n-alert>
       </n-form>
       <template #footer>
         <n-space justify="end">
           <n-button size="small" @click="showOpenModal = false">{{ t('scanner.cancel') }}</n-button>
-          <n-button size="small" :type="openDryRun ? 'primary' : 'error'" :loading="opening" @click="confirmOpen">
+          <n-button v-if="openMode === 'wallet'" size="small" type="info" :loading="opening" @click="confirmOpen">
+            {{ t('scanner.walletSignOpen') }}
+          </n-button>
+          <n-button v-else size="small" :type="openDryRun ? 'primary' : 'error'" :loading="opening" @click="confirmOpen">
             {{ openDryRun ? t('scanner.openDryRun') : t('scanner.openLive') }}
           </n-button>
         </n-space>
@@ -235,17 +274,19 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, h, watch } from 'vue'
-import { NCard, NGrid, NGi, NDataTable, NButton, NSpace, NText, NIcon, NSpin, NTag, NEmpty, NInputNumber, NModal, NForm, NFormItem, NSwitch, NSelect, NTooltip, NTabs, NTab, NAlert, useMessage, type DataTableColumns, type SelectOption, type SelectGroupOption } from 'naive-ui'
+import { NCard, NGrid, NGi, NDataTable, NButton, NSpace, NText, NIcon, NSpin, NTag, NEmpty, NInputNumber, NModal, NForm, NFormItem, NSwitch, NSelect, NTooltip, NTabs, NTab, NAlert, NRadioGroup, NRadio, useMessage, type DataTableColumns, type SelectOption, type SelectGroupOption } from 'naive-ui'
 import { RouterLink } from 'vue-router'
 import { SearchOutline, TrendingUpOutline, FlashOutline, AnalyticsOutline } from '@vicons/ionicons5'
 import { post, useWebSocket, type ScannerOpportunities, type CarryVenue, type CarryCand, type UnifiedCarryCand, type WsMessage } from '@/composables/useApi'
+import { useWalletTrade, WALLET_TRADE_VENUES } from '@/composables/useWalletTrade'
 import { useI18n } from 'vue-i18n'
+import { CEX_VENUE_RANK, DEX_VENUE_RANK } from '@/constants/venueOrder'
 
 const { t } = useI18n()
 
-const CEX_VENUES = ['binance', 'bitget', 'bybit', 'okx'] as const
-const PERP_DEX_VENUES = ['hyperliquid', 'aster', 'lighter', 'edgex', 'dydx'] as const
-const DEX_VENUES = new Set(['hyperliquid', 'aster', 'lighter', 'edgex', 'dydx'])
+const CEX_VENUES = CEX_VENUE_RANK
+const PERP_DEX_VENUES = DEX_VENUE_RANK
+const DEX_VENUES = new Set<string>(DEX_VENUE_RANK)
 // Carry / Unified need spot + borrow — perp-only DEX venues are excluded server-side
 const CARRY_CAPABLE = new Set(['binance', 'bitget', 'bybit', 'okx'])
 
@@ -292,7 +333,7 @@ const intervalOptions = computed<SelectOption[]>(() => [
   { label: t('scanner.sameInterval'), value: 'same' },
   { label: `${t('scanner.cross')} ⚠`, value: 'cross' },
 ])
-// Default to CEX only — DEX venues (hyperliquid/aster/lighter/edgex) are opt-in
+// Default to CEX; DEX venues are opt-in via preset buttons
 const DEFAULT_VENUES = [...CEX_VENUES]
 const selectedVenues = ref<string[]>([...DEFAULT_VENUES])
 const lastScannedVenues = ref<string[]>([])
@@ -669,6 +710,9 @@ const opening = ref(false)
 const openTarget = ref<OpenTarget | null>(null)
 const openAmount = ref<number>(1000)
 const openDryRun = ref(true)
+const openMode = ref<'backend' | 'wallet'>('backend')
+
+const { placeOrder: walletPlaceOrder, ensureAgent, isWalletConnected } = useWalletTrade()
 
 const openModalSummary = computed(() => {
   const tgt = openTarget.value
@@ -687,8 +731,30 @@ const openModalSummary = computed(() => {
 
 function showOpenDialog(target: OpenTarget) {
   openTarget.value = target
+  openMode.value = 'backend'
   showOpenModal.value = true
 }
+
+/** Which venues in the current target support wallet signing? */
+const walletCapableVenues = computed<string[]>(() => {
+  const tgt = openTarget.value
+  if (!tgt) return []
+  if (tgt.kind === 'pure') return [tgt.row.long_venue, tgt.row.short_venue].filter(v => (WALLET_TRADE_VENUES as readonly string[]).includes(v))
+  if (tgt.kind === 'carry') return []
+  const r = tgt.row
+  return [r.futures_venue, r.spot_venue].filter(v => v && (WALLET_TRADE_VENUES as readonly string[]).includes(v))
+})
+
+/** Can we use wallet mode for this pair? */
+const walletModeAvailable = computed(() => walletCapableVenues.value.length > 0 && walletCapableVenues.value.some(v => isWalletConnected(v)))
+
+/** Status per wallet-capable venue in this pair */
+const walletLegStatus = computed(() => {
+  return walletCapableVenues.value.map(v => ({
+    venue: v,
+    connected: isWalletConnected(v),
+  }))
+})
 
 function venueTradeBlock(...venueIds: string[]): string {
   for (const vid of venueIds) {
@@ -703,6 +769,10 @@ async function confirmOpen() {
   if (!tgt) return
   opening.value = true
   try {
+    if (openMode.value === 'wallet') {
+      await confirmOpenWallet(tgt)
+      return
+    }
     let body: Record<string, unknown>
     if (tgt.kind === 'pure') {
       const r = tgt.row
@@ -749,8 +819,98 @@ async function confirmOpen() {
   }
 }
 
+/**
+ * Wallet-signed open: place one leg via browser wallet (HL/dYdX).
+ * The other leg (CEX or non-wallet DEX) is NOT auto-placed here —
+ * the user must manage it separately or use backend mode for both legs.
+ */
+async function confirmOpenWallet(tgt: OpenTarget) {
+  if (tgt.kind !== 'pure') {
+    message.error(t('scanner.walletNoEligible'))
+    opening.value = false
+    return
+  }
+  const r = tgt.row
+  const base = r.base
+
+  // Determine which leg to place via wallet
+  const longWallet = (WALLET_TRADE_VENUES as readonly string[]).includes(r.long_venue) && isWalletConnected(r.long_venue)
+  const shortWallet = (WALLET_TRADE_VENUES as readonly string[]).includes(r.short_venue) && isWalletConnected(r.short_venue)
+
+  if (!longWallet && !shortWallet) {
+    message.error(t('scanner.walletNoEligible'))
+    opening.value = false
+    return
+  }
+
+  // Estimate size in base currency from USD amount
+  const size = openAmount.value / 50000 // fallback: will be refined by SDK market price
+
+  try {
+    // Ensure agent is ready for wallet venues
+    for (const v of [r.long_venue, r.short_venue]) {
+      if ((WALLET_TRADE_VENUES as readonly string[]).includes(v) && isWalletConnected(v)) {
+        await ensureAgent(v)
+      }
+    }
+
+    const results: Array<{ venue: string; success: boolean; error?: string }> = []
+
+    // Place long leg if wallet-capable
+    if (longWallet) {
+      const result = await walletPlaceOrder({
+        venue: r.long_venue,
+        coin: base,
+        isBuy: true,
+        size,
+        slippage: 0.01,
+      })
+      results.push({ venue: r.long_venue, ...result })
+    }
+
+    // Place short leg if wallet-capable
+    if (shortWallet) {
+      const result = await walletPlaceOrder({
+        venue: r.short_venue,
+        coin: base,
+        isBuy: false,
+        size,
+        slippage: 0.01,
+      })
+      results.push({ venue: r.short_venue, ...result })
+    }
+
+    const allOk = results.every(r => r.success)
+    if (allOk) {
+      const venues = results.map(r => r.venue).join(', ')
+      message.success(`${t('scanner.opened', { base, mode: 'wallet' })} (${venues})`)
+      showOpenModal.value = false
+    } else {
+      const failed = results.filter(r => !r.success).map(r => `${r.venue}: ${r.error}`).join('; ')
+      message.error(`${t('scanner.failedToOpen')} — ${failed}`)
+    }
+
+    // Warn about unplaced legs
+    const unplacedLegs: string[] = []
+    if (!longWallet && (WALLET_TRADE_VENUES as readonly string[]).includes(r.long_venue) === false) {
+      unplacedLegs.push(`${r.long_venue} (long)`)
+    }
+    if (!shortWallet && (WALLET_TRADE_VENUES as readonly string[]).includes(r.short_venue) === false) {
+      unplacedLegs.push(`${r.short_venue} (short)`)
+    }
+    if (unplacedLegs.length > 0) {
+      message.warning(`${t('scanner.walletMixedMode')}: ${unplacedLegs.join(', ')}`)
+    }
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : t('scanner.failedToOpen'))
+  } finally {
+    opening.value = false
+  }
+}
+
 // ---- Pure Futures ----
-interface PureRow { base: string; direction: string; long_venue: string; short_venue: string; net_edge_pct: number; mark_spread_pct: number; real_edge_pct: number; annual_apy_pct: number; net_apy_pct: number; breakeven_hours: number | null; long_interval_h: number; short_interval_h: number; settle_mismatch: boolean }
+type BasisRiskLevel = 'clean' | 'caution' | 'high'
+interface PureRow { base: string; direction: string; long_venue: string; short_venue: string; net_edge_pct: number; mark_spread_pct: number; real_edge_pct: number; annual_apy_pct: number; net_apy_pct: number; breakeven_hours: number | null; long_interval_h: number; short_interval_h: number; settle_mismatch: boolean; basis_risk_level: BasisRiskLevel }
 
 function toPureRow(i: import('@/composables/useApi').OpportunityItem, direction: string): PureRow {
   return {
@@ -760,7 +920,42 @@ function toPureRow(i: import('@/composables/useApi').OpportunityItem, direction:
     net_apy_pct: i.net_apy_pct ?? 0, breakeven_hours: i.breakeven_hours ?? null,
     long_interval_h: i.long_interval_h ?? 8, short_interval_h: i.short_interval_h ?? 8,
     settle_mismatch: i.settle_mismatch ?? (i.same_interval === false),
+    basis_risk_level: inferBasisRiskLevel(i),
   }
+}
+
+function inferBasisRiskLevel(i: { basis_risk_level?: BasisRiskLevel; real_edge_pct?: number; net_edge_pct?: number; mark_spread_pct?: number }): BasisRiskLevel {
+  if (i.basis_risk_level === 'clean' || i.basis_risk_level === 'caution' || i.basis_risk_level === 'high') {
+    return i.basis_risk_level
+  }
+  const real = i.real_edge_pct ?? ((i.net_edge_pct ?? 0) - (i.mark_spread_pct ?? 0))
+  if (real >= 0) return real > 0.05 ? 'clean' : 'caution'
+  return 'high'
+}
+
+function basisRiskTag(level: BasisRiskLevel) {
+  if (level === 'clean') {
+    return h(NTooltip, { trigger: 'hover' }, {
+      trigger: () => h(NTag, { size: 'small', type: 'success', bordered: false }, { default: () => t('scanner.riskClean') }),
+      default: () => t('scanner.riskCleanTip'),
+    })
+  }
+  if (level === 'caution') {
+    return h(NTooltip, { trigger: 'hover' }, {
+      trigger: () => h(NTag, { size: 'small', type: 'warning', bordered: false }, { default: () => t('scanner.riskCaution') }),
+      default: () => t('scanner.riskCautionTip'),
+    })
+  }
+  return h(NTooltip, { trigger: 'hover' }, {
+    trigger: () => h(NTag, { size: 'small', type: 'error', bordered: false }, { default: () => t('scanner.riskHigh') }),
+    default: () => t('scanner.riskHighTip'),
+  })
+}
+
+function pureRowRiskHint(row: PureRow): string {
+  if (row.basis_risk_level === 'high') return t('scanner.riskHighTip')
+  if (row.basis_risk_level === 'caution') return t('scanner.riskCautionTip')
+  return ''
 }
 
 const pureRows = computed<PureRow[]>(() => {
@@ -814,6 +1009,8 @@ const pureColumns = computed<DataTableColumns<PureRow>>(() => [
     render: (row) => { const v = row.mark_spread_pct; const c = v > row.net_edge_pct ? '#d03050' : v > row.net_edge_pct * 0.5 ? '#f0a020' : undefined; return h('span', { style: { color: c } }, v.toFixed(4) + '%') } },
   { title: colTitle('scanner.realEdge', 'scanner.realEdgeTip', '/docs/fees-and-edge#fe-edges'), key: 'real_edge_pct', width: 105, sorter: (a, b) => a.real_edge_pct - b.real_edge_pct, defaultSortOrder: 'descend',
     render: (row) => h(NText, { type: row.real_edge_pct > 0.05 ? 'success' : row.real_edge_pct > 0 ? 'warning' : 'error', strong: true }, { default: () => (row.real_edge_pct > 0 ? '+' : '') + row.real_edge_pct.toFixed(4) + '%' }) },
+  { title: colTitle('scanner.basisRisk', 'scanner.basisRiskTip', '/docs/fees-and-edge#fe-edges'), key: 'basis_risk_level', width: 100,
+    render: (row) => basisRiskTag(row.basis_risk_level) },
   { title: t('scanner.apy'), key: 'annual_apy_pct', width: 75, sorter: (a, b) => a.annual_apy_pct - b.annual_apy_pct,
     render: (row) => h(NText, { strong: true }, { default: () => row.annual_apy_pct.toFixed(0) + '%' }) },
   { title: colTitle('scanner.netApy', 'scanner.netApyTip'), key: 'net_apy_pct', width: 90, sorter: (a, b) => a.net_apy_pct - b.net_apy_pct,
@@ -825,10 +1022,11 @@ const pureColumns = computed<DataTableColumns<PureRow>>(() => [
   { title: t('scanner.action'), key: 'actions', width: 80,
     render: (row) => {
       const block = rowTradeBlock(row)
+      const riskHint = pureRowRiskHint(row)
       return h(NButton, {
         size: 'tiny', type: 'primary', secondary: true,
         disabled: !!block,
-        title: block || undefined,
+        title: block || riskHint || undefined,
         onClick: () => showOpenDialog({ kind: 'pure', row }),
       }, { default: () => t('scanner.open') })
     } },

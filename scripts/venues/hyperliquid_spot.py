@@ -13,19 +13,31 @@ Usage notes (see PLAN.md §0.1):
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
 import requests
 
-_BASE_URL = "https://api.hyperliquid.xyz"
+_MAINNET_URL = "https://api.hyperliquid.xyz"
+_TESTNET_URL = "https://api.hyperliquid-testnet.xyz"
 _CACHE_TTL_SEC = 60.0
 
 _cache: tuple[float, list[dict[str, Any]]] | None = None
 
 
-def _post(body: dict[str, Any], base_url: str = _BASE_URL) -> Any:
-    r = requests.post(f"{base_url}/info", json=body, timeout=20)
+def _base_url() -> str:
+    """Resolve the Info host from env (HYPERLIQUID_BASE_URL override, else
+    HYPERLIQUID_NETWORK=testnet selects the testnet host)."""
+    override = os.environ.get("HYPERLIQUID_BASE_URL", "").strip()
+    if override:
+        return override
+    net = os.environ.get("HYPERLIQUID_NETWORK", "mainnet").strip().lower()
+    return _TESTNET_URL if net == "testnet" else _MAINNET_URL
+
+
+def _post(body: dict[str, Any], base_url: str | None = None) -> Any:
+    r = requests.post(f"{base_url or _base_url()}/info", json=body, timeout=20)
     r.raise_for_status()
     return r.json()
 

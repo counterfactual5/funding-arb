@@ -61,6 +61,10 @@ from core.fee_providers import (
     parse_fee_policy,
 )
 
+# Unified cross-scan cache for fetch_all_fee_rate_rows_by_base.
+# Keyed by venue, holds (timestamp, by_base_dict). Populated when cache_ttl_sec > 0.
+_FETCH_ALL_CACHE: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
+
 # USDT-stablecoin / wrapped-asset blacklist (no point arbing against CEX's internal USD)
 SYMBOL_BLACKLIST = {"USDC", "FDUSD", "TUSD", "BTCDOM", "BUSD", "USDP", "DAI"}
 
@@ -98,8 +102,34 @@ def _annual_from_rate(rate_pct: float, interval_h: float) -> float:
 def fetch_all_fee_rate_rows_by_base(
     venues: list[str],
     workers: int,
+    *,
+    cache_ttl_sec: float = 0.0,
 ) -> dict[str, dict[str, dict[str, Any]]]:
-    """Fetch funding info from each venue, return {base: {venue: {rate, next_ts, interval_h, mark}}}."""
+    """Fetch funding info from each venue, return {base: {venue: {rate, next_ts, interval_h, mark}}}.
+
+    If cache_ttl_sec > 0, results are cached at the venue level for that duration.
+    Repeated calls within the TTL window return cached data without hitting the network.
+    This is useful for the scanner loop and positions enrichment which both call this.
+    """
+    # Unified cross-scan cache: avoid re-fetching DEX venues on rapid repeated calls
+    if cache_ttl_sec > 0:
+        now = time.time()
+        cached_venues: list[str] = []
+        out: dict[str, dict[str, dict[str, Any]]] = {}
+        for v in venues:
+            entry = _FETCH_ALL_CACHE.get(v)
+            if entry and now - entry[0] < cache_ttl_sec:
+                for base, info in entry[1].items():
+                    if base not in out:
+                        out[base] = {}
+                    out[base][v] = info
+            else:
+                cached_venues.append(v)
+        if not cached_venues:
+            return out  # all cached
+        venues = cached_venues
+    else:
+        out = {}
 
     def _fetch_one(venue: str) -> tuple[str, dict[str, dict[str, Any]]]:
         fp = get_funding_provider(venue)
@@ -126,10 +156,13 @@ def fetch_all_fee_rate_rows_by_base(
             }
         return venue, by_base
 
-    out: dict[str, dict[str, dict[str, Any]]] = {}
-    for venue, by_base in run_io_parallel(
+    fetched = run_io_parallel(
         venues, _fetch_one, max_workers=workers, swallow_errors=True
-    ).items():
+    )
+    for venue, by_base in fetched.items():
+        # Store in cache
+        if cache_ttl_sec > 0:
+            _FETCH_ALL_CACHE[venue] = (time.time(), by_base)
         for base, info in by_base.items():
             if base not in out:
                 out[base] = {}

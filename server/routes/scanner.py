@@ -303,30 +303,66 @@ def _row_edge_threshold(
     return row_edge_threshold(row, min_edge, min_edge_1h, min_edge_mismatch)
 
 
+def _basis_risk_level(row: dict[str, Any], edge_threshold: float) -> str:
+    """Classify mark/basis risk for display — does not gate inclusion.
+
+    clean: real edge clears the strategy bar (conservative executable margin).
+    caution: net edge passes but real edge is below bar yet still ≥ 0.
+    high: mark divergence exceeds net funding edge (negative real edge).
+    """
+    real = _row_real_edge(row)
+    if real >= edge_threshold:
+        return "clean"
+    if real >= 0:
+        return "caution"
+    return "high"
+
+
+def _annotate_basis_risk(
+    row: dict[str, Any],
+    min_edge: float,
+    min_edge_1h: float | None,
+    min_edge_mismatch: float | None,
+) -> dict[str, Any]:
+    out = dict(row)
+    thr = _row_edge_threshold(row, min_edge, min_edge_1h, min_edge_mismatch)
+    out["basis_risk_level"] = _basis_risk_level(row, thr)
+    return out
+
+
 def _apply_group_thresholds(
     result: dict[str, Any],
     min_edge: float,
     min_edge_1h: float | None,
     min_edge_mismatch: float | None = None,
 ) -> dict[str, Any]:
-    """Re-filter scan output on basis-adjusted real edge with per-interval-group
-    thresholds.
+    """Re-filter scan output on net funding edge with per-interval-group thresholds.
 
-    The scan runs with the loosest net-edge threshold; this is the primary gate:
-    each row must clear its threshold on REAL edge (net edge − mark divergence),
-    so funding edges sitting on a dislocated mark price are dropped. 1h-group
-    pairs may use the lower min_edge_1h; cross-interval (settle_mismatch) pairs
-    must clear the higher min_edge_mismatch risk premium.
+    Rows that pass on net edge but have large cross-venue mark divergence are
+    kept and tagged via ``basis_risk_level`` so the UI can surface basis risk
+    and let the user decide. Sorting still favours higher real edge. 1h-group
+    pairs may use the lower min_edge_1h; cross-interval (settle_mismatch)
+    pairs must clear the higher min_edge_mismatch risk premium.
     """
 
     def _keep(row: dict[str, Any]) -> bool:
-        return _row_real_edge(row) >= _row_edge_threshold(
+        net = float(row.get("net_edge_pct", 0) or 0)
+        return net >= _row_edge_threshold(
             row, min_edge, min_edge_1h, min_edge_mismatch
         )
 
+    def _process(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        kept = [
+            _annotate_basis_risk(r, min_edge, min_edge_1h, min_edge_mismatch)
+            for r in rows
+            if _keep(r)
+        ]
+        kept.sort(key=lambda x: -_row_real_edge(x))
+        return kept
+
     out = dict(result)
-    out["forward"] = [r for r in result.get("forward", []) if _keep(r)]
-    out["reverse"] = [r for r in result.get("reverse", []) if _keep(r)]
+    out["forward"] = _process(result.get("forward", []))
+    out["reverse"] = _process(result.get("reverse", []))
     out["total_spreads_found"] = len(out["forward"]) + len(out["reverse"])
     return out
 

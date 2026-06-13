@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -102,6 +103,99 @@ def _read_positions() -> list[dict[str, Any]]:
     return _read_pure_positions() + _read_cross_positions()
 
 
+# ---------------------------------------------------------------------------
+# Funding income estimate
+# ---------------------------------------------------------------------------
+# /positions is polled frequently, so cache funding rates per venue to avoid
+# hammering upstream APIs. Value: (timestamp, {symbol: rate dict}).
+_FUNDING_CACHE: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
+_FUNDING_CACHE_TTL = 60.0
+
+
+def _get_cached_funding(venue: str, symbol: str) -> dict[str, Any]:
+    """Return the cached funding-rate dict for (venue, symbol), refreshing at
+    most every _FUNDING_CACHE_TTL seconds. Falls back to a stale value when a
+    fresh fetch fails, so PnL enrichment degrades gracefully."""
+    now = time.time()
+    entry = _FUNDING_CACHE.get(venue)
+    if entry is not None:
+        ts, rates = entry
+        if (now - ts) < _FUNDING_CACHE_TTL and symbol in rates:
+            return rates[symbol]
+    try:
+        from backtest.funding_providers import get_funding_provider  # noqa: E402
+
+        fp = get_funding_provider(venue)
+        fresh = fp.fetch_current(symbol) if fp else {}
+    except Exception:
+        # Fetch failed: serve stale value if we have one, else empty.
+        if entry is not None and symbol in entry[1]:
+            return entry[1][symbol]
+        return {}
+    rates = entry[1] if entry is not None else {}
+    rates[symbol] = fresh
+    _FUNDING_CACHE[venue] = (now, rates)
+    return fresh
+
+
+def _estimate_funding_income(
+    pos: dict[str, Any], qty: float, long_mark: float, short_mark: float
+) -> tuple[float, float]:
+    """Estimate cumulative funding income (USD) for an open pure-futures pair.
+
+    Uses current funding rates as an approximation of realized income; real
+    settled income would require querying each venue's funding ledger.
+
+    Returns (estimated_funding_usd, current_spread_annualized_pct).
+    """
+    base = str(pos.get("base", "")).upper()
+    long_id = str(pos.get("long_venue", ""))
+    short_id = str(pos.get("short_venue", ""))
+    opened_at = int(pos.get("opened_at", 0) or 0)
+    if not base or not long_id or not short_id or opened_at <= 0:
+        return 0.0, 0.0
+
+    symbol = f"{base}USDT"
+    long_data = _get_cached_funding(long_id, symbol)
+    short_data = _get_cached_funding(short_id, symbol)
+    long_rate_pct = float(long_data.get("rate_pct", 0) or 0)
+    short_rate_pct = float(short_data.get("rate_pct", 0) or 0)
+
+    # Funding convention: positive rate => longs pay shorts.
+    # forward (long @ long_venue, short @ short_venue):
+    #   pay long_rate, receive short_rate  => net = short_rate - long_rate
+    # reverse (long @ short_venue, short @ long_venue):
+    #   pay short_rate, receive long_rate  => net = long_rate - short_rate
+    direction = str(pos.get("direction", "forward")).lower()
+    if direction == "reverse":
+        net_rate_pct = long_rate_pct - short_rate_pct
+    else:
+        net_rate_pct = short_rate_pct - long_rate_pct
+
+    # Reference interval: prefer long leg, fall back to short, then default 8h.
+    long_interval_ms = int(long_data.get("interval_ms", 0) or 0)
+    short_interval_ms = int(short_data.get("interval_ms", 0) or 0)
+    interval_ms = long_interval_ms or short_interval_ms or (8 * 60 * 60 * 1000)
+    interval_h = interval_ms / (60 * 60 * 1000.0)
+
+    now_ms = int(time.time() * 1000)
+    held_hours = max(0.0, (now_ms - opened_at) / 3600000.0)
+    periods = held_hours / interval_h if interval_h > 0 else 0.0
+
+    periods_per_year = (365.0 * 24.0) / interval_h if interval_h > 0 else 0.0
+    spread_annual = net_rate_pct * periods_per_year
+
+    # Notional ~= avg mark price * qty (use whichever leg has a price).
+    if long_mark > 0 and short_mark > 0:
+        avg_mark = (long_mark + short_mark) / 2.0
+    else:
+        avg_mark = long_mark or short_mark or 0.0
+    notional_usd = avg_mark * qty
+
+    funding_income_usd = (net_rate_pct / 100.0) * notional_usd * periods
+    return round(funding_income_usd, 2), round(spread_annual, 2)
+
+
 def _enrich_positions_with_pnl(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Attach unrealized PnL from live mark prices for open pure-futures positions."""
     open_pos = [
@@ -156,6 +250,10 @@ def _enrich_positions_with_pnl(positions: list[dict[str, Any]]) -> list[dict[str
             p["mark_spread_pct"] = round(
                 abs(long_mark - short_mark) / max(long_mark, short_mark) * 100.0, 4
             )
+        funding_income, spread_annual = _estimate_funding_income(p, qty, long_mark, short_mark)
+        p["funding_pnl_est_usd"] = funding_income
+        p["funding_rate_spread_pct"] = spread_annual
+        p["total_pnl_usd"] = round(unrealized + funding_income, 2)
         enriched.append(p)
     return enriched
 

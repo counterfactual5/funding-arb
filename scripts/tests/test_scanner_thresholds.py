@@ -14,6 +14,7 @@ for p in (str(ROOT), str(SCRIPTS)):
 
 from server.routes.scanner import (
     _apply_group_thresholds,
+    _basis_risk_level,
     _row_edge_threshold,
     _row_real_edge,
 )
@@ -73,10 +74,10 @@ class TestApplyGroupThresholds:
         assert edges == [0.015, 0.025, 0.035]
         assert out["total_spreads_found"] == 3
 
-    def test_base_real_edge_when_no_premiums(self):
+    def test_base_net_edge_when_no_premiums(self):
         out = _apply_group_thresholds(self._result(), 0.02, None, None)
         edges = sorted(r["net_edge_pct"] for r in out["forward"])
-        # All rows judged on base min_edge via real_edge; 1h@0.015 dropped
+        # Judged on net edge; 1h@0.015 dropped (below base 0.02)
         assert edges == [0.025, 0.025, 0.035]
         assert out["total_spreads_found"] == 3
 
@@ -92,20 +93,25 @@ class TestRealEdgeFilter:
     def test_real_edge_is_net_minus_mark(self):
         assert _row_real_edge(_row(8.0, 8.0, 0.05, mark_spread=0.03)) == 0.02
 
-    def test_basis_eaten_edge_dropped(self):
-        # net 0.05% but mark divergence 0.04% → real 0.01% < base 0.02% → dropped,
-        # while a clean 0.03% net (no basis) survives.
+    def test_basis_eaten_edge_kept_with_risk_tag(self):
+        # net passes but mark divergence eats real edge → kept, tagged for UI.
         res = {
             "forward": [
-                _row(8.0, 8.0, 0.05, mark_spread=0.04),  # real 0.01 → drop
-                _row(8.0, 8.0, 0.03, mark_spread=0.00),  # real 0.03 → keep
+                _row(8.0, 8.0, 0.05, mark_spread=0.04),  # real 0.01 → caution
+                _row(8.0, 8.0, 0.03, mark_spread=0.00),  # real 0.03 → clean
             ],
             "reverse": [],
             "total_spreads_found": 2,
         }
         out = _apply_group_thresholds(res, 0.02, None, None)
-        assert [r["net_edge_pct"] for r in out["forward"]] == [0.03]
-        assert out["total_spreads_found"] == 1
+        assert sorted(r["net_edge_pct"] for r in out["forward"]) == [0.03, 0.05]
+        by_net = {r["net_edge_pct"]: r for r in out["forward"]}
+        assert by_net[0.05]["basis_risk_level"] == "caution"
+        assert by_net[0.03]["basis_risk_level"] == "clean"
+
+    def test_negative_real_edge_tagged_high(self):
+        row = _row(8.0, 8.0, 0.03, mark_spread=0.05)  # real -0.02
+        assert _basis_risk_level(row, 0.02) == "high"
 
     def test_falls_back_to_net_when_real_absent(self):
         # Older cached rows without real_edge_pct → net − mark_spread.
