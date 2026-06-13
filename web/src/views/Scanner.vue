@@ -946,14 +946,14 @@ async function confirmOpenWallet(tgt: OpenTarget) {
 
 // ---- Pure Futures ----
 type BasisRiskLevel = 'clean' | 'caution' | 'high'
-interface PureRow { base: string; direction: string; long_venue: string; short_venue: string; net_edge_pct: number; mark_spread_pct: number; real_edge_pct: number; annual_apy_pct: number; net_apy_pct: number; breakeven_hours: number | null; long_interval_h: number; short_interval_h: number; settle_mismatch: boolean; basis_risk_level: BasisRiskLevel }
+interface PureRow { base: string; direction: string; long_venue: string; short_venue: string; net_edge_pct: number; mark_spread_pct: number; real_edge_pct: number; annual_apy_pct: number; net_apy_pct: number; long_interval_h: number; short_interval_h: number; settle_mismatch: boolean; basis_risk_level: BasisRiskLevel }
 
 function toPureRow(i: import('@/composables/useApi').OpportunityItem, direction: string): PureRow {
   return {
     base: i.base, direction, long_venue: i.long_venue, short_venue: i.short_venue,
     net_edge_pct: i.net_edge_pct ?? 0, mark_spread_pct: i.mark_spread_pct ?? 0,
     real_edge_pct: i.real_edge_pct ?? ((i.net_edge_pct ?? 0) - (i.mark_spread_pct ?? 0)), annual_apy_pct: i.annual_apy_pct ?? 0,
-    net_apy_pct: i.net_apy_pct ?? 0, breakeven_hours: i.breakeven_hours ?? null,
+    net_apy_pct: i.net_apy_pct ?? 0,
     long_interval_h: i.long_interval_h ?? 8, short_interval_h: i.short_interval_h ?? 8,
     settle_mismatch: i.settle_mismatch ?? (i.same_interval === false),
     basis_risk_level: inferBasisRiskLevel(i),
@@ -1051,10 +1051,6 @@ const pureColumns = computed<DataTableColumns<PureRow>>(() => [
     render: (row) => h(NText, { strong: true }, { default: () => row.annual_apy_pct.toFixed(0) + '%' }) },
   { title: colTitle('scanner.netApy', 'scanner.netApyTip'), key: 'net_apy_pct', width: 90, sorter: (a, b) => a.net_apy_pct - b.net_apy_pct,
     render: (row) => h(NText, { type: row.net_apy_pct > 0 ? 'success' : 'error' }, { default: () => row.net_apy_pct.toFixed(0) + '%' }) },
-  { title: colTitle('scanner.breakeven', 'scanner.breakevenTip'), key: 'breakeven_hours', width: 95, sorter: (a, b) => (a.breakeven_hours ?? 1e9) - (b.breakeven_hours ?? 1e9),
-    render: (row) => row.breakeven_hours == null
-      ? h(NText, { depth: 3 }, { default: () => '—' })
-      : h(NText, { type: row.breakeven_hours <= 24 ? 'success' : row.breakeven_hours <= 72 ? 'warning' : 'error' }, { default: () => row.breakeven_hours!.toFixed(1) + 'h' }) },
   { title: t('scanner.action'), key: 'actions', width: 80,
     render: (row) => {
       const block = rowTradeBlock(row)

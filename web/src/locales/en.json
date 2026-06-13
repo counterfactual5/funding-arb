@@ -137,8 +137,6 @@
     "apy": "APY",
     "netApy": "Net APY",
     "netApyTip": "Gross APY minus the one-time cost (round-trip fees + entry basis); ≈ first-year return after fees",
-    "breakeven": "Breakeven",
-    "breakevenTip": "Hours of funding needed to cover the one-time cost (round-trip fees + basis). Lower is better; '—' means no positive funding income",
     "action": "Action",
     "open": "Open",
     "forward": "Forward",

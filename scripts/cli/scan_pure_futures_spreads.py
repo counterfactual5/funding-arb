@@ -335,19 +335,8 @@ def _scan_spreads(
                 if mark_spread_pct > 0 and mark_spread_pct > max_mark_spread_pct:
                     continue
 
-                # Fee-amortized economics. Per-cycle net_edge subtracts the full
-                # round-trip fee from ONE funding cycle, which over-penalizes
-                # short-cycle (1h) legs that recoup fees over many periods.
-                #   breakeven_hours = hours of funding to cover the one-time cost
-                #                     (round-trip fees + entry basis)
-                #   net_apy_pct     = gross APY minus that one-time cost (≈1-yr hold)
-                hourly_funding = spread / eff_interval if eff_interval > 0 else 0.0
+                # net_apy_pct = gross APY minus one-time cost (round-trip fees + entry basis)
                 one_time_cost = fee_pct * 2 + mark_spread_pct
-                breakeven_hours = (
-                    round(one_time_cost / hourly_funding, 2)
-                    if hourly_funding > 0
-                    else None
-                )
                 net_apy = round(annual - one_time_cost, 1)
 
                 entry: dict[str, Any] = {
@@ -365,7 +354,6 @@ def _scan_spreads(
                     "net_edge_pct": round(net_edge, 6),
                     "annual_apy_pct": round(annual, 1),
                     "net_apy_pct": net_apy,
-                    "breakeven_hours": breakeven_hours,
                     "long_settle_ms": long_info.get("next_funding_ts", 0),
                     "short_settle_ms": short_info.get("next_funding_ts", 0),
                     "long_interval_h": float(long_info.get("interval_h", 8.0) or 8.0),

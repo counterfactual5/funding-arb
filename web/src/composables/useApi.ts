@@ -24,7 +24,6 @@ export interface OpportunityItem {
   real_edge_pct?: number;
   annual_apy_pct?: number;
   net_apy_pct?: number;
-  breakeven_hours?: number | null;
   long_symbol?: string;
   short_symbol?: string;
   fee_pct?: number;
