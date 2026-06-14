@@ -2,10 +2,10 @@
 import { ref, onMounted, h, computed } from 'vue'
 import {
   NCard, NGrid, NGi, NButton, NForm, NFormItem, NInputNumber, NInput, NText,
-  NStatistic, NDataTable, NEmpty, NIcon, NSelect, NSpace, NSwitch, useMessage,
+  NDataTable, NEmpty, NIcon, NSelect, NSpace, NSwitch, useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import { PlayOutline, RefreshOutline } from '@vicons/ionicons5'
+import { PlayOutline, RefreshOutline, TrendingUpOutline, TrendingDownOutline, PulseOutline, StatsChartOutline } from '@vicons/ionicons5'
 import { use } from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
@@ -40,6 +40,62 @@ const running = ref(false)
 const latestResult = ref<BacktestResult | null>(null)
 
 const hasResult = computed(() => latestResult.value !== null)
+
+// ─── Summary cards (Positions-style) ───────────────────────────
+
+function fmtUsd(v: number, signed = false): string {
+  const prefix = signed ? (v >= 0 ? '+' : '') : ''
+  return prefix + '$' + Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
+
+function fmtPct(v: number, decimals = 2): string {
+  return v.toFixed(decimals) + '%'
+}
+
+const summaryCards = computed(() => {
+  if (!latestResult.value) return []
+  const s = latestResult.value.summary
+  return [
+    {
+      label: t('backtest.totalPnl'),
+      value: fmtUsd(s.total_pnl_usd, true),
+      icon: s.total_pnl_usd >= 0 ? TrendingUpOutline : TrendingDownOutline,
+      color: s.total_pnl_usd >= 0 ? '#18a058' : '#d03050',
+    },
+    {
+      label: t('backtest.totalReturn'),
+      value: fmtPct(s.total_pnl_pct),
+      icon: s.total_pnl_pct >= 0 ? TrendingUpOutline : TrendingDownOutline,
+      color: s.total_pnl_pct >= 0 ? '#18a058' : '#d03050',
+    },
+    {
+      label: t('backtest.annualized'),
+      value: fmtPct(s.annualized_pct),
+      icon: PulseOutline,
+      color: '#f0a020',
+    },
+    {
+      label: t('backtest.sharpe'),
+      value: s.sharpe.toFixed(2),
+      icon: StatsChartOutline,
+      color: '#2080f0',
+    },
+    {
+      label: t('backtest.winRate'),
+      value: (s.win_rate * 100).toFixed(1) + '%',
+      icon: s.win_rate >= 0.5 ? TrendingUpOutline : TrendingDownOutline,
+      color: s.win_rate >= 0.5 ? '#18a058' : '#d03050',
+    },
+    {
+      label: t('backtest.maxDrawdown'),
+      value: fmtPct(s.max_drawdown_pct),
+      icon: TrendingDownOutline,
+      color: '#d03050',
+    },
+  ]
+})
+
+// ─── Equity curve ──────────────────────────────────────────────
 
 const equityChartOption = computed(() => {
   const curve = latestResult.value?.equity_curve ?? []
@@ -77,6 +133,8 @@ const equityChartOption = computed(() => {
     ],
   }
 })
+
+// ─── Actions ───────────────────────────────────────────────────
 
 async function runBacktest() {
   running.value = true
@@ -116,7 +174,7 @@ async function syncFromStrategy() {
       exitEdge.value = s.min_edge_1h ?? exitEdge.value
       tradeUsd.value = s.trade_usd ?? tradeUsd.value
       maxPositions.value = s.max_positions ?? maxPositions.value
-      allowMismatch.value = (s.min_edge_mismatch ?? 0) > 0  // if mismatch threshold > 0, allow mismatch
+      allowMismatch.value = (s.min_edge_mismatch ?? 0) > 0
       message.success('Synced from strategy settings')
     }
   } catch {
@@ -156,180 +214,157 @@ onMounted(() => {
 
 <template>
   <div class="backtest-page">
-    <n-grid :cols="24" :x-gap="16">
-      <n-gi :span="6">
-        <n-card :title="t('backtest.title')" size="small">
-          <n-form label-placement="top" size="small">
-            <n-form-item :label="t('backtest.historicalBases')">
-              <n-input v-model:value="historyBases" :placeholder="t('backtest.historicalBasesPlaceholder')" />
-            </n-form-item>
-            <n-form-item :label="t('backtest.historyDays')">
-              <n-input-number v-model:value="historyDays" :min="1" :max="365" style="width: 100%" />
-            </n-form-item>
-            <n-form-item :label="t('backtest.venues')">
-              <n-select v-model:value="historyVenues" :options="venueOptions" multiple style="width: 100%" />
-            </n-form-item>
-            <n-form-item :label="t('backtest.initialCapital')">
-              <n-input-number v-model:value="capital" :min="1000" :step="10000" style="width: 100%" />
-            </n-form-item>
-            <n-form-item :label="t('backtest.tradeSize')">
-              <n-input-number v-model:value="tradeUsd" :min="100" :step="1000" style="width: 100%" />
-            </n-form-item>
-            <n-form-item :label="t('backtest.minSpread')">
-              <n-input-number v-model:value="minSpread" :min="0" :max="100" style="width: 100%" />
-            </n-form-item>
-            <n-form-item :label="t('backtest.exitEdge')">
-              <n-input-number v-model:value="exitEdge" :min="0" :max="100" style="width: 100%" />
-            </n-form-item>
-            <n-form-item :label="t('backtest.maxPositions')">
-              <n-input-number v-model:value="maxPositions" :min="1" :max="20" style="width: 100%" />
-            </n-form-item>
-            <n-form-item label="Min Edge (%)">
-              <n-input-number v-model:value="minEdge" :min="0" :max="10" :step="0.005" :precision="3" style="width: 100%" />
-            </n-form-item>
-            <n-form-item label="Max Hold (hours)">
-              <n-input-number v-model:value="maxHoldingHours" :min="1" :max="2160" :step="24" style="width: 100%" />
-            </n-form-item>
-            <n-form-item label="Allow Cross-Interval">
-              <n-switch v-model:value="allowMismatch" />
-              <n-text depth="3" style="margin-left: 8px; font-size: 11px">e.g. HL 1h vs CEX 8h</n-text>
-            </n-form-item>
-            <n-form-item>
-              <n-button block secondary size="small" @click="syncFromStrategy">
-                Sync from Strategy
-              </n-button>
-            </n-form-item>
-            <n-form-item>
-              <n-button type="primary" block :loading="running" @click="runBacktest">
-                <template #icon><n-icon><PlayOutline /></n-icon></template>
-                {{ t('backtest.runBacktest') }}
-              </n-button>
-            </n-form-item>
-          </n-form>
-        </n-card>
-      </n-gi>
-      <n-gi :span="18">
-        <n-card :title="t('backtest.results')" size="small" class="results-card">
-          <template #header-extra>
-            <n-space>
-              <n-button v-if="hasResult" size="small" secondary @click="latestResult = null">
-                {{ t('backtest.backToHistory') }}
-              </n-button>
-              <n-button size="small" secondary @click="history.refresh">
-                <template #icon><n-icon><RefreshOutline /></n-icon></template>
-                {{ t('backtest.refreshHistory') }}
-              </n-button>
-            </n-space>
-          </template>
+    <!-- Parameters bar (horizontal, full width) -->
+    <n-card size="small">
+      <n-form label-placement="left" size="small" :show-feedback="false" class="param-form">
+        <div class="param-row">
+          <n-form-item :label="t('backtest.historicalBases')" class="param-item">
+            <n-input v-model:value="historyBases" :placeholder="t('backtest.historicalBasesPlaceholder')" style="width: 140px" />
+          </n-form-item>
+          <n-form-item :label="t('backtest.historyDays')" class="param-item">
+            <n-input-number v-model:value="historyDays" :min="1" :max="365" style="width: 90px" />
+          </n-form-item>
+          <n-form-item :label="t('backtest.venues')" class="param-item param-item-wide">
+            <n-select v-model:value="historyVenues" :options="venueOptions" multiple style="width: 200px" />
+          </n-form-item>
+          <n-form-item :label="t('backtest.initialCapital')" class="param-item">
+            <n-input-number v-model:value="capital" :min="1000" :step="10000" style="width: 110px" />
+          </n-form-item>
+          <n-form-item :label="t('backtest.tradeSize')" class="param-item">
+            <n-input-number v-model:value="tradeUsd" :min="100" :step="1000" style="width: 100px" />
+          </n-form-item>
+          <n-form-item :label="t('backtest.minSpread')" class="param-item">
+            <n-input-number v-model:value="minSpread" :min="0" :max="100" :step="0.01" style="width: 80px" />
+          </n-form-item>
+          <n-form-item :label="t('backtest.exitEdge')" class="param-item">
+            <n-input-number v-model:value="exitEdge" :min="0" :max="100" :step="0.005" style="width: 80px" />
+          </n-form-item>
+          <n-form-item :label="t('backtest.maxPositions')" class="param-item">
+            <n-input-number v-model:value="maxPositions" :min="1" :max="20" style="width: 70px" />
+          </n-form-item>
+          <n-form-item label="Min Edge" class="param-item">
+            <n-input-number v-model:value="minEdge" :min="0" :max="10" :step="0.005" :precision="3" style="width: 80px" />
+          </n-form-item>
+          <n-form-item label="Max Hold (h)" class="param-item">
+            <n-input-number v-model:value="maxHoldingHours" :min="1" :max="2160" :step="24" style="width: 90px" />
+          </n-form-item>
+          <n-form-item label="Cross-Interval" class="param-item">
+            <n-switch v-model:value="allowMismatch" />
+          </n-form-item>
+        </div>
+        <div class="param-actions">
+          <n-button secondary size="small" @click="syncFromStrategy">
+            Sync from Strategy
+          </n-button>
+          <n-button type="primary" size="small" :loading="running" @click="runBacktest">
+            <template #icon><n-icon><PlayOutline /></n-icon></template>
+            {{ t('backtest.runBacktest') }}
+          </n-button>
+        </div>
+      </n-form>
+    </n-card>
 
-          <!-- Latest result summary -->
-          <div v-if="hasResult" class="result-section">
-            <n-grid :cols="4" :x-gap="12" :y-gap="12" class="stat-grid">
-              <n-gi>
-                <n-statistic :label="t('backtest.totalPnl')">
-                  <template #default>
-                    <n-text :type="latestResult!.summary.total_pnl_usd >= 0 ? 'success' : 'error'" :style="{ fontSize: '20px', fontWeight: 700 }">
-                      ${{ latestResult!.summary.total_pnl_usd.toFixed(2) }}
-                    </n-text>
-                  </template>
-                </n-statistic>
-              </n-gi>
-              <n-gi>
-                <n-statistic :label="t('backtest.annualized')">
-                  <n-text :style="{ fontSize: '20px', fontWeight: 700, color: '#f0a020' }">{{ latestResult!.summary.annualized_pct.toFixed(2) }}%</n-text>
-                </n-statistic>
-              </n-gi>
-              <n-gi>
-                <n-statistic :label="t('backtest.sharpe')">
-                  <n-text :style="{ fontSize: '20px', fontWeight: 700, color: '#2080f0' }">{{ latestResult!.summary.sharpe.toFixed(2) }}</n-text>
-                </n-statistic>
-              </n-gi>
-              <n-gi>
-                <n-statistic :label="t('backtest.winRate')">
-                  <n-text :style="{ fontSize: '20px', fontWeight: 700, color: '#18a058' }">{{ (latestResult!.summary.win_rate * 100).toFixed(1) }}%</n-text>
-                </n-statistic>
-              </n-gi>
-            </n-grid>
-            <n-grid :cols="4" :x-gap="12" :y-gap="12" class="stat-grid" style="margin-top: 12px">
-              <n-gi>
-                <n-statistic :label="t('backtest.maxDrawdown')">
-                  <n-text :style="{ fontSize: '16px', fontWeight: 600, color: '#d03050' }">{{ latestResult!.summary.max_drawdown_pct.toFixed(2) }}%</n-text>
-                </n-statistic>
-              </n-gi>
-              <n-gi>
-                <n-statistic :label="t('backtest.totalTrades')">
-                  <n-text :style="{ fontSize: '16px', fontWeight: 600 }">{{ latestResult!.summary.total_trades }}</n-text>
-                </n-statistic>
-              </n-gi>
-              <n-gi>
-                <n-statistic :label="t('backtest.avgHold')">
-                  <n-text :style="{ fontSize: '16px', fontWeight: 600 }">{{ latestResult!.summary.avg_hold_days.toFixed(1) }}d</n-text>
-                </n-statistic>
-              </n-gi>
-              <n-gi>
-                <n-statistic :label="t('backtest.totalReturn')">
-                  <n-text :style="{ fontSize: '16px', fontWeight: 600, color: '#18a058' }">{{ latestResult!.summary.total_pnl_pct.toFixed(2) }}%</n-text>
-                </n-statistic>
-              </n-gi>
-            </n-grid>
-
-            <n-card v-if="equityChartOption" :title="t('backtest.equityCurve')" size="small" style="margin-top: 12px">
-              <v-chart :option="equityChartOption" autoresize style="height: 240px; width: 100%" />
-            </n-card>
-
-            <!-- Trades table -->
-            <n-card :title="t('backtest.tradeDetails')" size="small" style="margin-top: 12px">
-              <n-data-table
-                v-if="latestResult!.trades.length > 0"
-                :columns="tradeColumns"
-                :data="latestResult!.trades"
-                :bordered="false"
-                :scroll-x="800"
-                size="small"
-                striped
-                :max-height="200"
-              />
-              <n-empty v-else :description="t('backtest.noTrades')" style="padding: 20px 0" />
-            </n-card>
-          </div>
-
-          <!-- Placeholder -->
-          <div v-if="!hasResult && history.data.value?.length === 0" class="placeholder">
-            <n-text depth="3">{{ t('backtest.placeholder') }}</n-text>
-          </div>
-
-          <!-- History -->
-          <div v-if="history.data.value && history.data.value.length > 0 && !hasResult" class="history-section">
-            <n-card :title="t('backtest.historyTitle')" size="small">
-              <n-data-table
-                :row-props="historyRowProps"
-                :columns="[
-                  { title: t('backtest.id'), key: 'id', width: 150 },
-                  { title: t('backtest.runTime'), key: 'run_time', width: 200 },
-                  { title: t('backtest.pnl'), key: 'summary', width: 120, sorter: (a, b) => a.summary.total_pnl_usd - b.summary.total_pnl_usd, render: (row) => h(NText, { type: row.summary.total_pnl_usd >= 0 ? 'success' : 'error' }, { default: () => '$' + row.summary.total_pnl_usd.toFixed(2) }) },
-                  { title: t('backtest.sharpe'), key: 'summary', width: 80, render: (row) => row.summary.sharpe.toFixed(2) },
-                  { title: t('backtest.winRate'), key: 'summary', width: 100, render: (row) => (row.summary.win_rate * 100).toFixed(0) + '%' },
-                  { title: t('backtest.trades'), key: 'summary', width: 80, render: (row) => row.summary.total_trades },
-                ]"
-                :data="history.data.value"
-                :bordered="false"
-                size="small"
-                striped
-              />
-            </n-card>
+    <!-- Result summary cards (Positions-style) -->
+    <n-grid v-if="hasResult" :cols="3" :x-gap="16" :y-gap="16" responsive="screen">
+      <n-gi v-for="(card, i) in summaryCards" :key="i">
+        <n-card size="small">
+          <div class="summary-card-inner">
+            <div class="summary-icon" :style="{ backgroundColor: card.color + '22', color: card.color }">
+              <n-icon size="22"><component :is="card.icon" /></n-icon>
+            </div>
+            <div class="summary-stat">
+              <n-text depth="3" class="summary-label">{{ card.label }}</n-text>
+              <n-text strong class="summary-value">{{ card.value }}</n-text>
+            </div>
           </div>
         </n-card>
       </n-gi>
     </n-grid>
+
+    <!-- Equity curve -->
+    <n-card v-if="hasResult && equityChartOption" :title="t('backtest.equityCurve')" size="small">
+      <template #header-extra>
+        <n-space>
+          <n-button size="small" secondary @click="latestResult = null">
+            {{ t('backtest.backToHistory') }}
+          </n-button>
+          <n-button size="small" secondary @click="history.refresh">
+            <template #icon><n-icon><RefreshOutline /></n-icon></template>
+            {{ t('backtest.refreshHistory') }}
+          </n-button>
+        </n-space>
+      </template>
+      <v-chart :option="equityChartOption" autoresize style="height: 260px; width: 100%" />
+    </n-card>
+
+    <!-- Trade details -->
+    <n-card v-if="hasResult" :title="t('backtest.tradeDetails')" size="small">
+      <n-data-table
+        v-if="latestResult!.trades.length > 0"
+        :columns="tradeColumns"
+        :data="latestResult!.trades"
+        :bordered="false"
+        :scroll-x="800"
+        :max-height="400"
+        virtual
+        size="small"
+        striped
+      />
+      <n-empty v-else :description="t('backtest.noTrades')" style="padding: 20px 0" />
+    </n-card>
+
+    <!-- Placeholder (no results yet) -->
+    <n-card v-if="!hasResult && history.data.value?.length === 0" size="small" class="placeholder-card">
+      <n-empty :description="t('backtest.placeholder')" style="padding: 60px 0" />
+    </n-card>
+
+    <!-- History list (no active result) -->
+    <n-card v-if="!hasResult && history.data.value && history.data.value.length > 0" :title="t('backtest.historyTitle')" size="small">
+      <template #header-extra>
+        <n-button size="small" secondary @click="history.refresh">
+          <template #icon><n-icon><RefreshOutline /></n-icon></template>
+          {{ t('backtest.refreshHistory') }}
+        </n-button>
+      </template>
+      <n-data-table
+        :row-props="historyRowProps"
+        :columns="[
+          { title: t('backtest.id'), key: 'id', width: 150 },
+          { title: t('backtest.runTime'), key: 'run_time', width: 200 },
+          { title: t('backtest.pnl'), key: 'summary', width: 120, sorter: (a, b) => a.summary.total_pnl_usd - b.summary.total_pnl_usd, render: (row) => h(NText, { type: row.summary.total_pnl_usd >= 0 ? 'success' : 'error' }, { default: () => '$' + row.summary.total_pnl_usd.toFixed(2) }) },
+          { title: t('backtest.sharpe'), key: 'summary', width: 80, render: (row) => row.summary.sharpe.toFixed(2) },
+          { title: t('backtest.winRate'), key: 'summary', width: 100, render: (row) => (row.summary.win_rate * 100).toFixed(0) + '%' },
+          { title: t('backtest.trades'), key: 'summary', width: 80, render: (row) => row.summary.total_trades },
+        ]"
+        :data="history.data.value"
+        :bordered="false"
+        size="small"
+        striped
+      />
+    </n-card>
   </div>
 </template>
 
 <style scoped>
-.backtest-page { height: 100%; }
-.results-card { min-height: 200px; }
-.placeholder {
-  height: calc(100vh - 300px);
-  display: flex; align-items: center; justify-content: center;
+.backtest-page { display: flex; flex-direction: column; gap: 16px; height: 100%; }
+
+.param-form { display: flex; flex-direction: column; gap: 12px; }
+.param-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
 }
-.stat-grid { margin-bottom: 8px; }
+.param-item { margin-bottom: 0; }
+.param-item-wide { flex: 1; min-width: 200px; }
+.param-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.summary-card-inner { display: flex; align-items: center; gap: 14px; }
+.summary-icon {
+  width: 44px; height: 44px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.summary-stat { display: flex; flex-direction: column; gap: 2px; }
+.summary-label { font-size: 12px; }
+.summary-value { font-size: 18px; font-weight: 700; }
 </style>
