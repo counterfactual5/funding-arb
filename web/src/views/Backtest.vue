@@ -338,6 +338,7 @@ onMounted(() => {
         ]"
         :data="history.data.value"
         :bordered="false"
+        :max-height="300"
         size="small"
         striped
       />
@@ -350,8 +351,8 @@ onMounted(() => {
 
 .param-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 8px 16px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px 20px;
   align-items: flex-end;
 }
 .param-actions {
