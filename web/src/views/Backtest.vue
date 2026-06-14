@@ -214,52 +214,52 @@ onMounted(() => {
 
 <template>
   <div class="backtest-page">
-    <!-- Parameters bar (horizontal, full width) -->
+    <!-- Parameters (uniform grid) -->
     <n-card size="small">
-      <n-form label-placement="left" size="small" :show-feedback="false" class="param-form">
-        <div class="param-row">
-          <n-form-item :label="t('backtest.historicalBases')" class="param-item">
-            <n-input v-model:value="historyBases" :placeholder="t('backtest.historicalBasesPlaceholder')" style="width: 140px" />
+      <n-form label-placement="left" :label-width="110" size="small" :show-feedback="false">
+        <div class="param-grid">
+          <n-form-item :label="t('backtest.historicalBases')">
+            <n-input v-model:value="historyBases" :placeholder="t('backtest.historicalBasesPlaceholder')" style="width: 100%" />
           </n-form-item>
-          <n-form-item :label="t('backtest.historyDays')" class="param-item">
-            <n-input-number v-model:value="historyDays" :min="1" :max="365" style="width: 90px" />
+          <n-form-item :label="t('backtest.historyDays')">
+            <n-input-number v-model:value="historyDays" :min="1" :max="365" style="width: 100%" />
           </n-form-item>
-          <n-form-item :label="t('backtest.venues')" class="param-item param-item-wide">
-            <n-select v-model:value="historyVenues" :options="venueOptions" multiple style="width: 200px" />
+          <n-form-item :label="t('backtest.venues')">
+            <n-select v-model:value="historyVenues" :options="venueOptions" multiple style="width: 100%" />
           </n-form-item>
-          <n-form-item :label="t('backtest.initialCapital')" class="param-item">
-            <n-input-number v-model:value="capital" :min="1000" :step="10000" style="width: 110px" />
+          <n-form-item :label="t('backtest.initialCapital')">
+            <n-input-number v-model:value="capital" :min="1000" :step="10000" style="width: 100%" />
           </n-form-item>
-          <n-form-item :label="t('backtest.tradeSize')" class="param-item">
-            <n-input-number v-model:value="tradeUsd" :min="100" :step="1000" style="width: 100px" />
+          <n-form-item :label="t('backtest.tradeSize')">
+            <n-input-number v-model:value="tradeUsd" :min="100" :step="1000" style="width: 100%" />
           </n-form-item>
-          <n-form-item :label="t('backtest.minSpread')" class="param-item">
-            <n-input-number v-model:value="minSpread" :min="0" :max="100" :step="0.01" style="width: 80px" />
+          <n-form-item :label="t('backtest.maxPositions')">
+            <n-input-number v-model:value="maxPositions" :min="1" :max="20" style="width: 100%" />
           </n-form-item>
-          <n-form-item :label="t('backtest.exitEdge')" class="param-item">
-            <n-input-number v-model:value="exitEdge" :min="0" :max="100" :step="0.005" style="width: 80px" />
+          <n-form-item :label="t('backtest.minSpread')">
+            <n-input-number v-model:value="minSpread" :min="0" :max="100" :step="0.01" style="width: 100%" />
           </n-form-item>
-          <n-form-item :label="t('backtest.maxPositions')" class="param-item">
-            <n-input-number v-model:value="maxPositions" :min="1" :max="20" style="width: 70px" />
+          <n-form-item :label="t('backtest.exitEdge')">
+            <n-input-number v-model:value="exitEdge" :min="0" :max="100" :step="0.005" style="width: 100%" />
           </n-form-item>
-          <n-form-item label="Min Edge" class="param-item">
-            <n-input-number v-model:value="minEdge" :min="0" :max="10" :step="0.005" :precision="3" style="width: 80px" />
+          <n-form-item label="Min Edge">
+            <n-input-number v-model:value="minEdge" :min="0" :max="10" :step="0.005" :precision="3" style="width: 100%" />
           </n-form-item>
-          <n-form-item label="Max Hold (h)" class="param-item">
-            <n-input-number v-model:value="maxHoldingHours" :min="1" :max="2160" :step="24" style="width: 90px" />
+          <n-form-item label="Max Hold (h)">
+            <n-input-number v-model:value="maxHoldingHours" :min="1" :max="2160" :step="24" style="width: 100%" />
           </n-form-item>
-          <n-form-item label="Cross-Interval" class="param-item">
+          <n-form-item label="Cross-Interval">
             <n-switch v-model:value="allowMismatch" />
           </n-form-item>
-        </div>
-        <div class="param-actions">
-          <n-button secondary size="small" @click="syncFromStrategy">
-            Sync from Strategy
-          </n-button>
-          <n-button type="primary" size="small" :loading="running" @click="runBacktest">
-            <template #icon><n-icon><PlayOutline /></n-icon></template>
-            {{ t('backtest.runBacktest') }}
-          </n-button>
+          <div class="param-actions">
+            <n-button secondary size="small" @click="syncFromStrategy">
+              Sync from Strategy
+            </n-button>
+            <n-button type="primary" size="small" :loading="running" @click="runBacktest">
+              <template #icon><n-icon><PlayOutline /></n-icon></template>
+              {{ t('backtest.runBacktest') }}
+            </n-button>
+          </div>
         </div>
       </n-form>
     </n-card>
@@ -348,16 +348,20 @@ onMounted(() => {
 <style scoped>
 .backtest-page { display: flex; flex-direction: column; gap: 16px; height: 100%; }
 
-.param-form { display: flex; flex-direction: column; gap: 12px; }
-.param-row {
-  display: flex;
-  flex-wrap: wrap;
+.param-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px 16px;
   align-items: flex-end;
-  gap: 12px 16px;
 }
-.param-item { margin-bottom: 0; }
-.param-item-wide { flex: 1; min-width: 200px; }
-.param-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.param-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  grid-column: -1 / -3;
+  padding-top: 4px;
+}
 
 .summary-card-inner { display: flex; align-items: center; gap: 14px; }
 .summary-icon {
