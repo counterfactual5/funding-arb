@@ -338,7 +338,6 @@ onMounted(() => {
         ]"
         :data="history.data.value"
         :bordered="false"
-        :max-height="300"
         size="small"
         striped
       />
