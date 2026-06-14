@@ -2,7 +2,7 @@
 import { ref, onMounted, h, computed } from 'vue'
 import {
   NCard, NGrid, NGi, NButton, NForm, NFormItem, NInputNumber, NInput, NText,
-  NStatistic, NDataTable, NEmpty, NIcon, NSelect, NSpace, useMessage,
+  NStatistic, NDataTable, NEmpty, NIcon, NSelect, NSpace, NSwitch, useMessage,
   type DataTableColumns,
 } from 'naive-ui'
 import { PlayOutline, RefreshOutline } from '@vicons/ionicons5'
@@ -30,6 +30,9 @@ const tradeUsd = ref<number>(5000)
 const minSpread = ref<number>(0.08)
 const exitEdge = ref<number>(0.02)
 const maxPositions = ref<number>(3)
+const minEdge = ref<number>(0.01)
+const maxHoldingHours = ref<number>(720)
+const allowMismatch = ref<boolean>(false)
 const historyBases = ref<string>('')
 const historyDays = ref<number>(90)
 const historyVenues = ref<string[]>([])
@@ -88,6 +91,9 @@ async function runBacktest() {
       min_spread: minSpread.value,
       exit_edge: exitEdge.value,
       max_positions: maxPositions.value,
+      min_edge_pct: minEdge.value,
+      max_holding_hours: maxHoldingHours.value,
+      allow_mismatch: allowMismatch.value,
     })
     latestResult.value = result
     message.success(t('backtest.backtestComplete'))
@@ -96,6 +102,25 @@ async function runBacktest() {
     message.error(e instanceof Error ? e.message : t('backtest.backtestFailed'))
   } finally {
     running.value = false
+  }
+}
+
+async function syncFromStrategy() {
+  try {
+    const resp = await fetch('/api/settings/strategy')
+    const json = await resp.json()
+    if (json.success && json.data) {
+      const s = json.data
+      minSpread.value = s.min_spread_annual ?? minSpread.value
+      minEdge.value = s.min_edge_annual ?? minEdge.value
+      exitEdge.value = s.min_edge_1h ?? exitEdge.value
+      tradeUsd.value = s.trade_usd ?? tradeUsd.value
+      maxPositions.value = s.max_positions ?? maxPositions.value
+      allowMismatch.value = (s.min_edge_mismatch ?? 0) > 0  // if mismatch threshold > 0, allow mismatch
+      message.success('Synced from strategy settings')
+    }
+  } catch {
+    message.error('Failed to sync strategy settings')
   }
 }
 
@@ -158,6 +183,21 @@ onMounted(() => {
             </n-form-item>
             <n-form-item :label="t('backtest.maxPositions')">
               <n-input-number v-model:value="maxPositions" :min="1" :max="20" style="width: 100%" />
+            </n-form-item>
+            <n-form-item label="Min Edge (%)">
+              <n-input-number v-model:value="minEdge" :min="0" :max="10" :step="0.005" :precision="3" style="width: 100%" />
+            </n-form-item>
+            <n-form-item label="Max Hold (hours)">
+              <n-input-number v-model:value="maxHoldingHours" :min="1" :max="2160" :step="24" style="width: 100%" />
+            </n-form-item>
+            <n-form-item label="Allow Cross-Interval">
+              <n-switch v-model:value="allowMismatch" />
+              <n-text depth="3" style="margin-left: 8px; font-size: 11px">e.g. HL 1h vs CEX 8h</n-text>
+            </n-form-item>
+            <n-form-item>
+              <n-button block secondary size="small" @click="syncFromStrategy">
+                Sync from Strategy
+              </n-button>
             </n-form-item>
             <n-form-item>
               <n-button type="primary" block :loading="running" @click="runBacktest">

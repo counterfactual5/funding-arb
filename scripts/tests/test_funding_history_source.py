@@ -22,6 +22,7 @@ def test_no_public_history_venue_skipped():
     """EdgeX has no public funding history → fetch returns [] without network."""
     assert fetch_leg_history("edgex", "BTC", 30) == []
 
+
 H = 3600 * 1000
 T0 = int(datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
 

@@ -65,6 +65,13 @@ class BacktestRequest(BaseModel):
     min_spread: float = Field(0.08, description="Minimum annualized spread (%)")
     exit_edge: float = Field(0.02, description="Exit annualized threshold (%)")
     max_positions: int = Field(3, ge=1, description="Maximum concurrent positions")
+    min_edge_pct: float = Field(
+        0.01, description="Minimum net edge percentage to enter"
+    )
+    max_holding_hours: int = Field(720, description="Maximum holding time in hours")
+    allow_mismatch: bool = Field(
+        False, description="Allow cross-interval pairs (e.g. 1h vs 8h)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +89,9 @@ _DEFAULT_JSONL = (
 def _load_snapshots_for_request(req: BacktestRequest) -> list[dict[str, Any]]:
     """Load snapshots either from exchange funding history or a scanner JSONL file."""
     if req.history_bases:
-        from backtest.funding_history_source import fetch_history_snapshots  # noqa: E402
+        from backtest.funding_history_source import (
+            fetch_history_snapshots,  # noqa: E402
+        )
 
         bases = [b.strip().upper() for b in req.history_bases.split(",") if b.strip()]
         if req.history_venues:
@@ -183,6 +192,10 @@ async def run_backtest(req: BacktestRequest):
                 max_concurrent_pairs=req.max_positions,
                 min_spread_pct=req.min_spread,
                 exit_edge_pct=req.exit_edge,
+                min_edge_pct=req.min_edge_pct,
+                max_holding_hours=req.max_holding_hours,
+                allow_mismatch=req.allow_mismatch,
+                basis_cost_pct=0.05,  # estimated 0.05% mark divergence cost per round-trip
             )
             return _adapt_result(bt.to_dict(), req)
 

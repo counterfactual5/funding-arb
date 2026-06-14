@@ -60,6 +60,7 @@ class OpenPair:
     amount_usd: float
     open_edge_pct: float
     open_spread_pct: float
+    open_mark_spread_pct: float  # cross-venue mark divergence at entry (for basis risk)
     open_ts: datetime
     open_fee_pct: float
     # Per-leg funding state (interval-accurate accrual)
@@ -265,6 +266,11 @@ def run_backtest(
     exit_edge_pct: float = 0.01,
     max_holding_hours: float = 720.0,  # 30 days
     allow_mismatch: bool = False,
+    # Basis risk: estimated one-time mark divergence cost at exit (%).
+    # When mark prices are available in snapshots, the actual spread is used.
+    # When mark_price=0 (historical mode), this value is used as a fixed cost.
+    # Default 0.0 = disabled (backward compatible); set via API to enable.
+    basis_cost_pct: float = 0.0,
     strategies: set[str] | None = None,
     verbose: bool = False,
 ) -> BacktestResult:
@@ -288,7 +294,17 @@ def run_backtest(
     prev_date: str | None = None
     day_start_equity = capital
 
-    FEE_RATES = {"bitget": 0.06, "binance": 0.05, "okx": 0.05, "bybit": 0.055}
+    FEE_RATES = {
+        "bitget": 0.06,
+        "binance": 0.05,
+        "okx": 0.05,
+        "bybit": 0.055,
+        "hyperliquid": 0.035,
+        "dydx": 0.05,
+        "lighter": 0.035,
+        "aster": 0.05,
+        "edgex": 0.05,
+    }
 
     for snap_idx, snap in enumerate(snapshots):
         ts: datetime = snap["_ts"]
@@ -382,9 +398,28 @@ def run_backtest(
             if should_close:
                 to_close.append(pair_id)
 
+                # Basis/mark risk: model the cross-venue mark divergence cost at exit.
+                # When snapshots have real mark_spread_pct (> 0), use the actual change.
+                # When mark data is absent (historical mode, mark_spread=0), use the
+                # configured basis_cost_pct as a fixed estimated cost.
+                exit_mark_spread = (
+                    float(current_row.get("mark_spread_pct", 0) or 0)
+                    if current_row
+                    else 0.0
+                )
+                if exit_mark_spread > 0 and pair.open_mark_spread_pct > 0:
+                    # Both have real mark data — cost is the change in spread
+                    basis_cost = abs(exit_mark_spread - pair.open_mark_spread_pct)
+                else:
+                    # No mark data available — use estimated basis cost
+                    basis_cost = basis_cost_pct
+
                 total_fee = pair.open_fee_pct * 2  # open + close
                 net_pnl = (
-                    pair.accumulated_funding_pct - pair.borrow_paid_pct - total_fee
+                    pair.accumulated_funding_pct
+                    - pair.borrow_paid_pct
+                    - total_fee
+                    - basis_cost
                 )
                 pnl_usd = pair.amount_usd * net_pnl / 100.0
                 # Return margin locked at open + settlement PnL
@@ -461,6 +496,7 @@ def run_backtest(
                     row.get("adjusted_net_edge_pct", row.get("net_edge_pct", 0)) or 0
                 ),
                 open_spread_pct=float(row.get("spread_pct", 0)),
+                open_mark_spread_pct=float(row.get("mark_spread_pct", 0) or 0),
                 open_ts=ts,
                 open_fee_pct=open_fee,
                 last_accrual_ts=ts,
@@ -505,7 +541,15 @@ def run_backtest(
     final_equity = capital
     for pair in open_pairs.values():
         total_fee = pair.open_fee_pct * 2
-        net_pnl = pair.accumulated_funding_pct - pair.borrow_paid_pct - total_fee
+        # Apply basis cost at end-of-backtest forced close too
+        basis_cost = (
+            basis_cost_pct
+            if pair.open_mark_spread_pct == 0
+            else pair.open_mark_spread_pct
+        )
+        net_pnl = (
+            pair.accumulated_funding_pct - pair.borrow_paid_pct - total_fee - basis_cost
+        )
         pnl_usd = pair.amount_usd * net_pnl / 100.0
         final_equity += pair.amount_usd + pnl_usd
 
