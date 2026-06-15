@@ -740,6 +740,26 @@ const openMode = ref<'backend' | 'wallet'>('backend')
 // Synchronous wallet connection check — uses useWallet (no ethers import).
 const { hasKeplr, hasMetaMask, keplrState, metamaskState } = useWallet()
 
+// Fetch current mark price from backend scanner cache for size estimation.
+async function fetchBasePrice(base: string): Promise<number> {
+  try {
+    const resp = await fetch('/api/scanner/opportunities?strategy=pure')
+    const json = await resp.json()
+    if (json.success && json.data) {
+      const rows = [...(json.data.forward || []), ...(json.data.reverse || [])]
+      const row = rows.find((r: any) => r.base === base)
+      if (row) {
+        const lm = row.long_mark || 0
+        const sm = row.short_mark || 0
+        if (lm > 0 && sm > 0) return (lm + sm) / 2
+        if (lm > 0) return lm
+        if (sm > 0) return sm
+      }
+    }
+  } catch { /* ignore */ }
+  return 0
+}
+
 function isWalletConnected(venue: string): boolean {
   if (venue === 'hyperliquid') return hasMetaMask.value && metamaskState.connected
   if (venue === 'dydx') return hasKeplr.value && keplrState.connected
@@ -875,8 +895,14 @@ async function confirmOpenWallet(tgt: OpenTarget) {
     return
   }
 
-  // Estimate size in base currency from USD amount
-  const size = openAmount.value / 50000 // fallback: will be refined by SDK market price
+  // Get real price for size conversion (USD → base currency)
+  let price = await fetchBasePrice(base)
+  if (price <= 0) {
+    message.error('Cannot determine market price for size calculation. Please scan first.')
+    opening.value = false
+    return
+  }
+  const size = openAmount.value / price
 
   try {
     // Lazy-load the wallet trade module (ethers + @nktkas/hyperliquid)

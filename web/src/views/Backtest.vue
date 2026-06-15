@@ -14,6 +14,7 @@ import VChart from 'vue-echarts'
 import { getBacktestHistory, post, getVenues, type BacktestResult, type BacktestTrade } from '@/composables/useApi'
 import { useI18n } from 'vue-i18n'
 
+// Lazy-load echarts only when needed (reduces initial bundle)
 use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 const { t } = useI18n()

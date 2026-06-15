@@ -1,5 +1,5 @@
 import type { Ref } from "vue";
-import { ref } from "vue";
+import { ref, onUnmounted } from "vue";
 
 const API_BASE = "/api";
 
@@ -437,80 +437,113 @@ export async function disconnectWallet(venue: string) {
   );
 }
 
-// ─── WebSocket ──────────────────────────────────────────────────────
+// ─── WebSocket (shared singleton) ─────────────────────────────────
+//
+// Only one WS connection is maintained per browser tab. Multiple callers
+// (App.vue for connection status, Scanner.vue for scanner updates) share
+// the same connection via a subscribe/unsubscribe pattern.
 
 export interface WsMessage {
   event: string;
   data: Record<string, any>;
 }
 
+type WsSubscriber = (msg: WsMessage) => void;
+
+const _wsState = {
+  ws: null as WebSocket | null,
+  connected: ref(false),
+  subscribers: new Set<WsSubscriber>(),
+  connectCallbacks: new Set<() => void>(),
+  disconnectCallbacks: new Set<() => void>(),
+  reconnectTimer: null as ReturnType<typeof setTimeout> | null,
+  pingTimer: null as ReturnType<typeof setInterval> | null,
+};
+
+function _wsConnect() {
+  if (_wsState.ws?.readyState === WebSocket.OPEN) return;
+
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host = window.location.host;
+  const url = `${protocol}//${host}/ws/events`;
+
+  _wsState.ws = new WebSocket(url);
+
+  _wsState.ws.onopen = () => {
+    _wsState.connected.value = true;
+    _wsState.connectCallbacks.forEach((cb) => cb());
+    _wsState.pingTimer = setInterval(() => {
+      if (_wsState.ws?.readyState === WebSocket.OPEN) {
+        _wsState.ws.send("ping");
+      }
+    }, 30000);
+  };
+
+  _wsState.ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data) as WsMessage;
+      if (msg.event === "pong") return;
+      _wsState.subscribers.forEach((cb) => cb(msg));
+    } catch {
+      // ignore non-JSON messages
+    }
+  };
+
+  _wsState.ws.onclose = () => {
+    _wsState.connected.value = false;
+    if (_wsState.pingTimer) {
+      clearInterval(_wsState.pingTimer);
+      _wsState.pingTimer = null;
+    }
+    _wsState.disconnectCallbacks.forEach((cb) => cb());
+    _wsState.reconnectTimer = setTimeout(() => _wsConnect(), 3000);
+  };
+
+  _wsState.ws.onerror = () => {
+    _wsState.ws?.close();
+  };
+}
+
+function _wsDisconnect() {
+  if (_wsState.reconnectTimer) {
+    clearTimeout(_wsState.reconnectTimer);
+    _wsState.reconnectTimer = null;
+  }
+  if (_wsState.pingTimer) {
+    clearInterval(_wsState.pingTimer);
+    _wsState.pingTimer = null;
+  }
+  _wsState.ws?.close();
+  _wsState.ws = null;
+  _wsState.connected.value = false;
+}
+
 export function useWebSocket(
-  onMessage?: (msg: WsMessage) => void,
+  onMessage?: WsSubscriber,
   onConnect?: () => void,
   onDisconnect?: () => void,
 ) {
-  const connected = ref(false);
-  let ws: WebSocket | null = null;
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  let pingTimer: ReturnType<typeof setInterval> | null = null;
-
-  function connect() {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    const url = `${protocol}//${host}/ws/events`;
-
-    ws = new WebSocket(url);
-
-    ws.onopen = () => {
-      connected.value = true;
-      onConnect?.();
-      // Send ping every 30s to keep alive
-      pingTimer = setInterval(() => {
-        if (ws?.readyState === WebSocket.OPEN) {
-          ws.send("ping");
-        }
-      }, 30000);
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data) as WsMessage;
-        if (msg.event === "pong") return;
-        onMessage?.(msg);
-      } catch {
-        // ignore non-JSON messages
-      }
-    };
-
-    ws.onclose = () => {
-      connected.value = false;
-      if (pingTimer) {
-        clearInterval(pingTimer);
-        pingTimer = null;
-      }
-      onDisconnect?.();
-      // Auto reconnect after 3s
-      reconnectTimer = setTimeout(() => connect(), 3000);
-    };
-
-    ws.onerror = () => {
-      ws?.close();
-    };
+  // Subscribe if callbacks provided
+  if (onMessage) {
+    _wsState.subscribers.add(onMessage);
+  }
+  if (onConnect) {
+    _wsState.connectCallbacks.add(onConnect);
+  }
+  if (onDisconnect) {
+    _wsState.disconnectCallbacks.add(onDisconnect);
   }
 
-  function disconnect() {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    if (pingTimer) {
-      clearInterval(pingTimer);
-      pingTimer = null;
-    }
-    ws?.close();
-    ws = null;
-    connected.value = false;
-  }
+  // Cleanup on unmount
+  onUnmounted(() => {
+    if (onMessage) _wsState.subscribers.delete(onMessage);
+    if (onConnect) _wsState.connectCallbacks.delete(onConnect);
+    if (onDisconnect) _wsState.disconnectCallbacks.delete(onDisconnect);
+  });
 
-  return { connected, connect, disconnect };
+  return {
+    connected: _wsState.connected,
+    connect: _wsConnect,
+    disconnect: _wsDisconnect,
+  };
 }
