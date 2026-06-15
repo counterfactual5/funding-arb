@@ -32,7 +32,7 @@ const {
 } = useWallet()
 
 // Initialize wallet trade composable (sets up agent session checks)
-const { hlTradeState } = useWalletTrade()
+const { hlTradeState, init: initWalletTrade } = useWalletTrade()
 
 // Agent approval status per venue (session-scoped)
 const agentStatus = computed<Record<string, { active: boolean; address: string }>>(() => ({
@@ -210,6 +210,8 @@ onMounted(async () => {
       if (showManualEntry[vid] === undefined) showManualEntry[vid] = defaultManualOpen(vid)
     }
   }
+  // Restore agent session from sessionStorage (if wallet is still connected)
+  initWalletTrade()
 })
 </script>
 

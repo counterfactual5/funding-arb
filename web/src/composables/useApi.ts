@@ -461,7 +461,7 @@ const _wsState = {
 };
 
 function _wsConnect() {
-  if (_wsState.ws?.readyState === WebSocket.OPEN) return;
+  if (_wsState.ws && _wsState.ws.readyState <= WebSocket.OPEN) return;
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const host = window.location.host;
@@ -505,17 +505,9 @@ function _wsConnect() {
 }
 
 function _wsDisconnect() {
-  if (_wsState.reconnectTimer) {
-    clearTimeout(_wsState.reconnectTimer);
-    _wsState.reconnectTimer = null;
-  }
-  if (_wsState.pingTimer) {
-    clearInterval(_wsState.pingTimer);
-    _wsState.pingTimer = null;
-  }
-  _wsState.ws?.close();
-  _wsState.ws = null;
-  _wsState.connected.value = false;
+  // Don't actually disconnect — the shared singleton stays alive as long
+  // as the app is running. Individual components just unsubscribe via
+  // onUnmounted. Real cleanup happens on page unload via the browser.
 }
 
 export function useWebSocket(

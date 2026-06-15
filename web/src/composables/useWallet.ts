@@ -190,6 +190,32 @@ export function useWallet() {
     detectKeplr();
     detectMetaMask();
     setupListeners();
+    // Silently restore previously-authorized MetaMask accounts without popup.
+    // eth_accounts is read-only (no popup) and returns already-connected accounts.
+    const ethereum = (window as any).ethereum;
+    if (ethereum) {
+      ethereum
+        .request({ method: "eth_accounts" })
+        .then((accounts: string[]) => {
+          if (accounts.length > 0) {
+            metamaskState.address = accounts[0];
+            ethereum
+              .request({ method: "eth_chainId" })
+              .then((cid: string) => {
+                metamaskState.chainId = cid;
+                metamaskState.connected = true;
+                fetchHlBalance(accounts[0]).then((b) => {
+                  metamaskState.balance = b;
+                });
+              })
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }
+    // Same for Keplr — try to silently get the key without enable popup.
+    // Keplr's getKey requires enable() which DOES popup, so we can't silently restore.
+    // The user must click Connect Keplr again after refresh.
   });
 
   onUnmounted(() => {
