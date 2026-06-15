@@ -102,7 +102,16 @@ PERP_TIERS: dict[str, VenueTiers] = {
         "default": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.045},
     },
     "aster": {
+        # Aster uses Binance-fapi-compatible fee schedule.
+        # These mirror Binance VIP tiers for futures taker.
         "default": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.04},
+        "vip0": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.050},
+        "vip1": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.045},
+        "vip2": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.040},
+        "vip3": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.035},
+        "vip4": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.030},
+        "vip5": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.025},
+        "vip6": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.020},
     },
     "lighter": {
         "default": {"spot_taker_pct": 0.0, "futures_taker_pct": 0.0},
