@@ -225,12 +225,6 @@ class StrategyParams(BaseModel):
 # ---------------------------------------------------------------------------
 # Strategy config, persisted to scripts/data/strategy_config.json
 # ---------------------------------------------------------------------------
-from core.strategy_config import (  # noqa: E402
-    DEFAULT_STRATEGY as _DEFAULT_STRATEGY,
-)
-from core.strategy_config import (
-    STRATEGY_CONFIG_PATH as _CONFIG_PATH,
-)
 from core.strategy_config import (
     load_strategy_config as _load_strategy_config,
 )
@@ -294,14 +288,14 @@ async def credentials_status():
     backends: dict[str, Any] = {}
 
     # Check keyring
-    try:
-        import keyring  # noqa: E402
+    import importlib.util
 
+    if importlib.util.find_spec("keyring") is not None:
         backends["keyring"] = {
             "available": True,
             "description": "macOS Keychain / System Key Management",
         }
-    except ImportError:
+    else:
         backends["keyring"] = {
             "available": False,
             "description": "keyring package not installed",

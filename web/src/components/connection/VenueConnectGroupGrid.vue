@@ -7,7 +7,7 @@ import {
   type WalletSchemaFields,
 } from '@/constants/venueOrder'
 import type { VenueConfig, WalletVenueSchema, WalletVenueStatus } from '@/composables/useApi'
-import VenueConnectCard from '@/components/VenueConnectCard.vue'
+import VenueConnectCard from './VenueConnectCard.vue'
 
 const props = defineProps<{
   venueIds: readonly string[]

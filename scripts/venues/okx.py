@@ -17,7 +17,6 @@ import urllib.request
 from typing import Any, Optional
 
 from core.config import resolve_timeframes
-from venues.base import make_pair
 from venues.http_util import http_get_json, parse_kline_ohlcv, rules_for_price
 
 BASE = "https://www.okx.com"

@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import json
 import time
-import urllib.request
 from typing import Any, Optional
 
 import requests

@@ -1,7 +1,7 @@
 import { reactive } from "vue";
 import { ethers } from "ethers";
 import { ExchangeClient, HttpTransport, InfoClient } from "@nktkas/hyperliquid";
-import { useWallet } from "@/composables/useWallet";
+import { useWallet } from "./useWallet";
 
 // ─── Types ────────────────────────────────────────────────────
 

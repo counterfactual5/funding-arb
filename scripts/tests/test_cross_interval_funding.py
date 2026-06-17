@@ -11,7 +11,6 @@ sys.path.insert(0, str(ROOT))
 
 from core.cross_interval_funding import (
     DEFAULT_BASIS_CAP_PCT,
-    VENUE_BASIS_CAP_PCT,
     basis_pct,
     blended_hourly_rate,
     infer_last_settle_ts,

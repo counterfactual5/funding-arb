@@ -6,10 +6,9 @@ import {
   getVenues, getWalletSchemas, getWalletStatus, connectWallet, disconnectWallet, getTradingMode,
 } from '@/composables/useApi'
 import { useI18n } from 'vue-i18n'
-import { useWallet } from '@/composables/useWallet'
-import { useWalletTrade, WALLET_TRADE_VENUES } from '@/composables/useWalletTrade'
-import VenueConnectGroupGrid from '@/components/VenueConnectGroupGrid.vue'
-import TestOrderModal from '@/components/TestOrderModal.vue'
+import { useWallet, useWalletTrade } from '@/composables/wallet'
+import { WALLET_TRADE_VENUES } from '@/constants/walletTrade'
+import { VenueConnectGroupGrid, TestOrderModal } from '@/components/connection'
 import { DEX_VENUE_RANK } from '@/constants/venueOrder'
 
 const { t } = useI18n()

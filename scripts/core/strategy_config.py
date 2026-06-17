@@ -8,7 +8,6 @@ same file so thresholds, venues, and fee policy stay aligned.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any, Callable
 
 from core.config import SKILL_ROOT

@@ -9,9 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from core.notify import (
-    _cache_lock,
     _dedup_key,
-    _notification_cache,
     clear_notification_cache,
     send_notification,
 )

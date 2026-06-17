@@ -6,7 +6,7 @@ import {
   NButton, NSpace, NAlert, NIcon, NDivider, NSwitch, useMessage,
 } from 'naive-ui'
 import { SwapHorizontalOutline } from '@vicons/ionicons5'
-import { useWalletTrade } from '@/composables/useWalletTrade'
+import { useWalletTrade } from '@/composables/wallet'
 
 const props = defineProps<{
   show: boolean

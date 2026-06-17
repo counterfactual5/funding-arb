@@ -9,7 +9,6 @@ from typing import Any
 from transfer.chain_aliases import common_canonicals, native_chain
 from transfer.transfer_providers import (
     DepositAddress,
-    TransferProvider,
     WithdrawResult,
     get_transfer_provider,
 )

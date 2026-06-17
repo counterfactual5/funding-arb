@@ -279,16 +279,16 @@ import { RouterLink } from 'vue-router'
 import { SearchOutline, TrendingUpOutline, FlashOutline, AnalyticsOutline } from '@vicons/ionicons5'
 import { post, useWebSocket, type ScannerOpportunities, type CarryVenue, type CarryCand, type UnifiedCarryCand, type WsMessage } from '@/composables/useApi'
 import { WALLET_TRADE_VENUES } from '@/constants/walletTrade'
-import { useWallet } from '@/composables/useWallet'
+import { useWallet } from '@/composables/wallet'
 import { useI18n } from 'vue-i18n'
 import { CEX_VENUE_RANK, DEX_VENUE_RANK } from '@/constants/venueOrder'
 
 // Lazy-loaded wallet trade module — avoids pulling ethers + @nktkas/hyperliquid
 // into the initial bundle (Scanner is eagerly loaded on the / route).
-let _walletTradeModule: typeof import('@/composables/useWalletTrade') | null = null
+let _walletTradeModule: typeof import('@/composables/wallet/useWalletTrade') | null = null
 async function getWalletTrade() {
   if (!_walletTradeModule) {
-    _walletTradeModule = await import('@/composables/useWalletTrade')
+    _walletTradeModule = await import('@/composables/wallet/useWalletTrade')
   }
   return _walletTradeModule
 }

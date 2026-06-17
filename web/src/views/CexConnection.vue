@@ -6,7 +6,7 @@ import {
   connectWallet, disconnectWallet, getTradingMode,
 } from '@/composables/useApi'
 import { useI18n } from 'vue-i18n'
-import VenueConnectGroupGrid from '@/components/VenueConnectGroupGrid.vue'
+import { VenueConnectGroupGrid } from '@/components/connection'
 import { CEX_VENUE_RANK } from '@/constants/venueOrder'
 
 const { t } = useI18n()

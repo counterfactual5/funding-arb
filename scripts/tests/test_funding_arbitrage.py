@@ -10,14 +10,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from accounting.futures.delta_neutral_portfolio import (
-    apply_borrow_fees,
     apply_funding_fees,
     apply_simulated_futures_trades,
-    calculate_futures_nav,
-    check_liquidations,
     default_futures_state,
-    liquidation_price,
-    margin_health,
     normalize_executed_for_ledger,
 )
 from execution.run_cash_and_carry import apply_live_safety

@@ -9,7 +9,7 @@
  * signDirect (protobuf) path with @dydxprotocol/v4-client-js.
  */
 import { reactive } from "vue";
-import { useWallet } from "@/composables/useWallet";
+import { useWallet } from "./useWallet";
 
 // ─── Types ─────────────────────────────────────────────────────────
 

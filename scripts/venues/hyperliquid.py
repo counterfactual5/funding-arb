@@ -16,7 +16,6 @@ Live order placement raises a clear error if the SDK is not installed.
 from __future__ import annotations
 
 import os
-import sys
 import time
 from decimal import Decimal
 from pathlib import Path
@@ -127,7 +126,6 @@ def _make_exchange_with_tradesigner(base_url: str, wallet: str, signer_url: str)
     _original_sign = hl_signing.sign_inner
 
     def _patched_sign(wallet_obj: Any, data: dict[str, Any]) -> dict[str, str]:
-        import json as _json
 
         import requests as _requests
 

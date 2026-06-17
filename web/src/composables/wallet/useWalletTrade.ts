@@ -9,9 +9,9 @@
  * and are excluded here.
  */
 import { reactive } from "vue";
-import { useWallet } from "@/composables/useWallet";
-import { useHyperliquidTrade } from "@/composables/useHyperliquidTrade";
-import { useDydxTrade } from "@/composables/useDydxTrade";
+import { useWallet } from "./useWallet";
+import { useHyperliquidTrade } from "./useHyperliquidTrade";
+import { useDydxTrade } from "./useDydxTrade";
 import {
   WALLET_TRADE_VENUES,
   type WalletTradeVenue,
