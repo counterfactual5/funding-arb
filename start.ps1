@@ -103,7 +103,7 @@ if ($ApiOnly) {
     Write-Host ""
     Check-Python; Install-PythonDeps
     Write-Host "  -> Starting API server..." -ForegroundColor Cyan
-    & $Python -m uvicorn server.main:app --host 0.0.0.0 --port 8787
+    & $Python -m uvicorn server.main:app --host 127.0.0.1 --port 8787
     exit 0
 }
 

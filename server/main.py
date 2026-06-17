@@ -83,6 +83,25 @@ async def _background_scanner_loop() -> None:
 
     print("[scanner] background loop started", flush=True)
 
+    # Track fire-and-forget scans so their exceptions surface in logs and they
+    # can be cancelled cleanly on shutdown (instead of being silently dropped).
+    bg_tasks: set[asyncio.Task] = set()
+
+    def _spawn(coro) -> asyncio.Task:
+        t = asyncio.create_task(coro)
+        bg_tasks.add(t)
+
+        def _done(task: asyncio.Task) -> None:
+            bg_tasks.discard(task)
+            if not task.cancelled() and task.exception() is not None:
+                print(
+                    f"[scanner] background task crashed: {task.exception()!r}",
+                    flush=True,
+                )
+
+        t.add_done_callback(_done)
+        return t
+
     async def _warm(strategy: str) -> None:
         try:
             r = await scanner_trigger(strategy=strategy)
@@ -97,7 +116,7 @@ async def _background_scanner_loop() -> None:
     # Run initial scans at startup so all three tabs have data on first connect.
     # Pure first (fast, most viewed), then carry/unified warm up concurrently.
     await _warm("pure")
-    warmup = asyncio.create_task(_warmup_carry_unified())
+    _spawn(_warmup_carry_unified())
 
     cycle = 0
     while True:
@@ -108,10 +127,11 @@ async def _background_scanner_loop() -> None:
             # Carry/unified are heavier — refresh them every other cycle
             cycle += 1
             if cycle % 2 == 0:
-                asyncio.create_task(_warm("carry"))
-                asyncio.create_task(_warm("unified"))
+                _spawn(_warm("carry"))
+                _spawn(_warm("unified"))
         except asyncio.CancelledError:
-            warmup.cancel()
+            for t in list(bg_tasks):
+                t.cancel()
             break
         except Exception as e:
             print(f"[scanner] background scan failed: {e}")
@@ -212,13 +232,17 @@ def _mount_static(app: FastAPI, dist_dir: Path) -> None:
         "/assets", StaticFiles(directory=dist_dir / "assets"), name="static-assets"
     )
 
+    dist_root = dist_dir.resolve()
+
     @app.get("/{path:path}")
     async def spa_fallback(path: str):
         """SPA fallback: Any unknown path returns index.html for Vue Router to handle."""
-        file = dist_dir / path
-        if file.is_file():
+        file = (dist_root / path).resolve()
+        # Contain within dist/ — a path-traversal (../) request must not be
+        # allowed to read arbitrary files off disk.
+        if file.is_file() and file.is_relative_to(dist_root):
             return FileResponse(file)
-        return FileResponse(dist_dir / "index.html")
+        return FileResponse(dist_root / "index.html")
 
 
 if _WEB_DIST.exists() and (_WEB_DIST / "index.html").exists():
@@ -240,19 +264,21 @@ if __name__ == "__main__":
         "--port", type=int, default=8787, help="Port number (default: 8787)"
     )
     parser.add_argument(
-        "--host", default="0.0.0.0", help="Listen address (default: 0.0.0.0)"
+        "--host",
+        default="127.0.0.1",
+        help="Listen address (default: 127.0.0.1; pass 0.0.0.0 to expose on the LAN)",
     )
     parser.add_argument("--no-reload", action="store_true", help="Disable hot reload")
     args = parser.parse_args()
 
     mode_info = "Desktop + Web UI" if _HAS_WEB_UI else "API Only (Web UI not built)"
-    print(f"\n  Funding Arb Dashboard")
+    print("\n  Funding Arb Dashboard")
     print(f"  Mode: {mode_info}")
     print(f"  URL: http://{args.host}:{args.port}")
     if _HAS_WEB_UI:
-        print(f"  Open the above URL in your browser to use the dashboard")
+        print("  Open the above URL in your browser to use the dashboard")
     else:
-        print(f"  Hint: cd web && npm run build to build the Web UI")
+        print("  Hint: cd web && npm run build to build the Web UI")
     print()
 
     import uvicorn

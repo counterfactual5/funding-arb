@@ -531,7 +531,7 @@ async def scanner_trigger(
 
     _scanning_strategies.add(strategy)
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         min_spread, min_edge, max_mark = _scan_thresholds()
 

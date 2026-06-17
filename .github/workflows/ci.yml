@@ -8,14 +8,21 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pytest
-      - run: python3 -m pytest scripts/tests/ -q
+      # requests is a real runtime dep (venue adapters import it at module load);
+      # without it collection fails. Windows is covered so the file-lock path
+      # (fcntl on Unix / msvcrt on Windows) stays green on both platforms.
+      - run: pip install pytest requests
+      - run: python -m pytest scripts/tests/ -q
 
   docs-sync:
     runs-on: ubuntu-latest

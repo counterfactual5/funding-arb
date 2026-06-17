@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-TMP = Path("/tmp/funding-arb-test-hyperliquid")
+TMP = Path(tempfile.gettempdir()) / "funding-arb-test-hyperliquid"
 
 # ---------------------------------------------------------------------------
 # Helpers

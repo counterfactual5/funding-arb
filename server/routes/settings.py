@@ -754,7 +754,14 @@ async def get_wallet_status(venue: str | None = None):
 
 @router.post("/settings/wallet/connect")
 async def connect_wallet(req: WalletConnectRequest):
-    """Connect a wallet for a DEX venue by setting credentials in the session."""
+    """Connect a venue by setting its credentials as process env vars.
+
+    Session-scoped only: the credentials live in this server process's
+    environment and are NOT persisted to disk, so they are lost on restart.
+    Reconnect after a restart, or store them via ``setup_credentials.py``
+    (keyring/age) for unattended 7x24 use. This keeps secrets typed into the
+    browser off disk by default.
+    """
     schema = _WALLET_SCHEMAS.get(req.venue)
     if not schema:
         return {"success": False, "error": f"Unknown venue: {req.venue}"}

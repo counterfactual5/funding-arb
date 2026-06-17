@@ -134,7 +134,7 @@ def print_report(
     if compare:
         improved = [c for c in compare if c["improvement_pct"] > 0.001]
         if improved:
-            print(f"\n  CROSS vs SINGLE-VENUE (improvement > 0):")
+            print("\n  CROSS vs SINGLE-VENUE (improvement > 0):")
             for c in improved[:12]:
                 same = "same-venue" if c["cross_same_venue"] else "cross-venue"
                 print(

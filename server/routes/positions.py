@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -387,7 +386,7 @@ async def open_position(req: OpenPositionRequest):
             from execution.pure_futures_executor import open_pure_futures_pair  # noqa: E402
 
             exec_config, max_mark = _executor_config()
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
                 lambda: open_pure_futures_pair(
@@ -427,7 +426,7 @@ async def open_position(req: OpenPositionRequest):
         try:
             import asyncio
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
                 lambda: _open_cross_fn(
@@ -473,12 +472,15 @@ async def close_position(position_id: str, req: ClosePositionRequest | None = No
         return {"success": False, "error": "Position already closed"}
 
     kind = _position_kind(position_id, positions)
-    dry_run = bool(target.get("dry_run", True)) if os.environ.get("DCA_LIVE") != "1" else False
+    # Close in the same mode the position was opened in. Never escalate a
+    # dry-run (paper) position to a live close just because DCA_LIVE is set —
+    # there is no real exchange position behind it, so a live order would be wrong.
+    dry_run = bool(target.get("dry_run", True))
 
     try:
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         if kind in ("carry", "unified") and _close_cross_fn is not None:
             result = await loop.run_in_executor(

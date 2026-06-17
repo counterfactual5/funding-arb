@@ -32,6 +32,15 @@ def http_get_json(
             resp = _session.get(url, timeout=timeout)
             resp.raise_for_status()
             return resp.json()
+        except requests.HTTPError as e:
+            last_err = e
+            status = e.response.status_code if e.response is not None else 0
+            # Client errors (bad symbol, auth, 404...) won't change on retry —
+            # fail fast. 429 (rate limit) is transient, so keep retrying it.
+            if 400 <= status < 500 and status != 429:
+                break
+            if attempt < retries - 1:
+                time.sleep(backoff * (attempt + 1))
         except Exception as e:
             last_err = e
             if attempt < retries - 1:

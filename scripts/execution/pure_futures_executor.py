@@ -13,7 +13,6 @@ liquidation monitoring, or funding period mismatch (Phase 2 risk controls)."""
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import sys
@@ -28,6 +27,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from core.file_lock import lock_exclusive, unlock  # noqa: E402
 from core.notify import send_notification  # noqa: E402
 from execution.cross_venue_executor import (  # noqa: E402
     CrossVenueResult,
@@ -81,7 +81,7 @@ def _with_position_lock(path: Path):
     lock_path = path.with_suffix(".lock")
     lock_fd = open(lock_path, "w")
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        lock_exclusive(lock_fd)
     except BaseException:
         lock_fd.close()
         raise
@@ -95,7 +95,7 @@ def _record_position(record: dict[str, Any], path: Path = POSITIONS_PATH) -> Non
         positions.append(record)
         _save_positions(positions, path)
     finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        unlock(lock_fd)
         lock_fd.close()
 
 
@@ -114,7 +114,7 @@ def _mark_closed(
                 return True
         return False
     finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        unlock(lock_fd)
         lock_fd.close()
 
 
@@ -140,7 +140,7 @@ def _update_position(
                 return True
         return False
     finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        unlock(lock_fd)
         lock_fd.close()
 
 

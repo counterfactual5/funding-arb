@@ -336,14 +336,14 @@ def print_report(result: dict[str, Any], verbose: bool = False):
             )
 
     if near_fwd:
-        print(f"\n  NEAR FORWARD (fee-adj break-even):")
+        print("\n  NEAR FORWARD (fee-adj break-even):")
         for x in near_fwd[:5]:
             print(
                 f"    {x['base']:10s} rate={x['rate_pct']:+.4f}%  net={x['net_edge_pct']:+.4f}%  "
                 f"px={x['spot_price']:.6f}"
             )
     if near_rev:
-        print(f"\n  NEAR REVERSE (borrowable, below entry):")
+        print("\n  NEAR REVERSE (borrowable, below entry):")
         for x in near_rev[:5]:
             print(
                 f"    {x['base']:10s} rate={x['rate_pct']:+.4f}%  borrow={x.get('borrow_per_period_pct', 0):.4f}%  "

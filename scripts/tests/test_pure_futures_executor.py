@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,7 +18,7 @@ from execution.pure_futures_executor import (  # noqa: E402
     rebalance_pure_futures_pair,
 )
 
-TMP = Path("/tmp/funding-arb-test-pure-futures")
+TMP = Path(tempfile.gettempdir()) / "funding-arb-test-pure-futures"
 
 
 class FakeFuturesVenue:

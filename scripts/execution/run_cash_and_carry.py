@@ -11,7 +11,6 @@ It periodically syncs real NAV using `fetch_live_state`.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import sys
@@ -45,6 +44,7 @@ from backtest.funding_providers import (  # noqa: E402
     get_funding_provider,
 )
 from core.config import resolve_config_path, runs_base, strategy_dir  # noqa: E402
+from core.file_lock import lock_exclusive, unlock  # noqa: E402
 from core.notify import send_notification  # noqa: E402
 from execution.delta_neutral_executor import execute_delta_neutral_trades  # noqa: E402
 from market.funding_batch import (  # noqa: E402
@@ -999,19 +999,15 @@ def run_once(cfg: dict[str, Any], paths: dict[str, Path]) -> dict[str, Any]:
     paths["lock"].parent.mkdir(parents=True, exist_ok=True)
     lock_fd = os.open(str(paths["lock"]), os.O_CREAT | os.O_RDWR, 0o644)
     try:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+        if not lock_exclusive(lock_fd, blocking=False):
             return {
                 "status": "skipped",
                 "reason": "Another instance is running (lock not acquired), skipping this cycle",
             }
         return run_cycle(cfg, paths)
     finally:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        finally:
-            os.close(lock_fd)
+        unlock(lock_fd)
+        os.close(lock_fd)
 
 
 def main() -> None:

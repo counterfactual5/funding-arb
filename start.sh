@@ -114,7 +114,7 @@ case "$MODE" in
         install_python_deps
         check_hyperliquid_repo
         info "Starting API server..."
-        $PYTHON -m uvicorn server.main:app --host 0.0.0.0 --port 8787
+        $PYTHON -m uvicorn server.main:app --host 127.0.0.1 --port 8787
         ;;
 
     --build-web)

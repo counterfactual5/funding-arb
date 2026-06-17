@@ -8,6 +8,9 @@ same file so thresholds, venues, and fee policy stay aligned.
 from __future__ import annotations
 
 import json
+import os
+import sys
+import tempfile
 from typing import Any, Callable
 
 from core.config import SKILL_ROOT
@@ -43,17 +46,38 @@ def load_strategy_config() -> dict[str, Any]:
 
 
 def save_strategy_config(cfg: dict[str, Any]) -> None:
-    """Persist strategy config (used by Dashboard API)."""
+    """Persist strategy config (used by Dashboard API).
+
+    Atomic write (temp file + rename) so a crash or concurrent writer can never
+    leave a truncated/half-written config on disk. A write failure is logged to
+    stderr instead of being silently swallowed.
+    """
     merged = dict(DEFAULT_STRATEGY)
     merged.update({k: v for k, v in cfg.items() if k in DEFAULT_STRATEGY})
+    content = json.dumps(merged, indent=2, ensure_ascii=False)
     try:
         STRATEGY_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        STRATEGY_CONFIG_PATH.write_text(
-            json.dumps(merged, indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        fd, tmp = tempfile.mkstemp(
+            dir=str(STRATEGY_CONFIG_PATH.parent),
+            prefix=".strategy_config-",
+            suffix=".tmp",
         )
-    except Exception:
-        pass
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp, str(STRATEGY_CONFIG_PATH))
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except Exception as e:
+        print(
+            f"[strategy_config] failed to save {STRATEGY_CONFIG_PATH}: {e}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def strategy_fee_policy(cfg: dict[str, Any] | None = None) -> dict[str, Any]:

@@ -268,7 +268,7 @@ funding-arb/
 ```bash
 pip install -r requirements.txt   # or: bash setup.sh
 .venv/bin/python -m pytest scripts/tests/ -q
-# 245+ tests — scanners, fees, venues (incl. HL/Aster/Lighter/EdgeX), executor, backtest
+# 290+ tests — scanners, fees, venues (incl. HL/Aster/Lighter/EdgeX), executor, backtest
 ```
 
 ---
@@ -294,7 +294,7 @@ npx tsx scripts/tools/export_docs_md.mts           # docs/zh-CN, en, zh-TW
 
 ## Origin
 
-Spun off from [cex-adaptive-dca](https://github.com/counterfactual5/cex-adaptive-dca). See [`MIGRATION_FROM_DCA.md`](MIGRATION_FROM_DCA.md).
+Spun off from [cex-adaptive-dca](https://github.com/counterfactual5/cex-adaptive-dca) — the funding-rate arbitrage engine extracted into a standalone repo with its own dashboard, CLI, and zero runtime dependency on the DCA project.
 
 ## License
 

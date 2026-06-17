@@ -176,7 +176,7 @@ async def run_backtest(req: BacktestRequest):
     try:
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _run() -> dict[str, Any]:
             snapshots = _load_snapshots_for_request(req)
