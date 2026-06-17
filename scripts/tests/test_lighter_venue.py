@@ -113,7 +113,14 @@ class TestPositions:
                 SimpleNamespace(symbol="ETH", sign=1, position="0"),
             ],
         )
-        with patch.object(lighter_mod, "_run_async", return_value=account):
+        with (
+            patch.object(lighter_mod, "_run_async", return_value=account),
+            patch.object(
+                LighterVenue,
+                "_fetch_account",
+                return_value=None,  # avoid creating un-awaited coroutine
+            ),
+        ):
             v = LighterVenue()
             positions = v.fetch_futures_positions()
             bal = v.fetch_usdt_account_balances()
@@ -125,8 +132,15 @@ class TestPositions:
         assert bal == {"spot": 0.0, "futures": 2500.75}
 
     def test_positions_failure_returns_empty(self):
-        with patch.object(
-            lighter_mod, "_run_async", side_effect=RuntimeError("no creds")
+        with (
+            patch.object(
+                lighter_mod, "_run_async", side_effect=RuntimeError("no creds")
+            ),
+            patch.object(
+                LighterVenue,
+                "_fetch_account",
+                return_value=None,  # avoid creating un-awaited coroutine
+            ),
         ):
             v = LighterVenue()
             assert v.fetch_futures_positions() == []
@@ -238,8 +252,9 @@ class TestDepth:
             ],
         }
 
-        with patch.object(lf, "http_get_json", return_value=_ORDER_BOOK_DETAILS), patch.object(
-            fd, "http_get_json", return_value=book_payload
+        with (
+            patch.object(lf, "http_get_json", return_value=_ORDER_BOOK_DETAILS),
+            patch.object(fd, "http_get_json", return_value=book_payload),
         ):
             book = fd.fetch_futures_depth("lighter", "BTC")
         assert book["bids"] == [(59999.0, 0.5)]

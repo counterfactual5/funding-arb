@@ -14,7 +14,12 @@ sys.path.insert(0, str(ROOT))
 
 import venues.edgex as edgex_mod
 import venues.edgex_funding as ef
-from venues.edgex import EdgexVenue, _base_from_pair, _decimals_from_step, _pair_from_base
+from venues.edgex import (
+    EdgexVenue,
+    _base_from_pair,
+    _decimals_from_step,
+    _pair_from_base,
+)
 
 _META = {
     "code": "SUCCESS",
@@ -81,9 +86,18 @@ class TestMarketData:
         }
 
     def test_ticker(self):
-        ticker = {"code": "SUCCESS", "data": [{"contractId": "10000001",
-                  "fundingRate": "0.00005", "markPrice": "63541.93",
-                  "nextFundingTime": "1781208000000", "fundingTime": "1781193600000"}]}
+        ticker = {
+            "code": "SUCCESS",
+            "data": [
+                {
+                    "contractId": "10000001",
+                    "fundingRate": "0.00005",
+                    "markPrice": "63541.93",
+                    "nextFundingTime": "1781208000000",
+                    "fundingTime": "1781193600000",
+                }
+            ],
+        }
 
         def fake_get(url, **_):
             return _META if "getMetaData" in url else ticker
@@ -94,15 +108,37 @@ class TestMarketData:
 
 class TestPositions:
     def test_positions_parsing(self):
-        resp = {"data": {"positionList": [
-            {"contractId": "10000001", "openSize": "0.5", "openValue": "30000",
-             "liquidatePrice": "50000", "leverage": "10", "unrealizePnl": "12.5"},
-            {"contractId": "10000001", "openSize": "-1", "openValue": "60000",
-             "liquidatePrice": "90000", "leverage": "5", "unrealizePnl": "-3"},
-            {"contractId": "10000001", "openSize": "0"},  # flat → dropped
-        ]}}
-        with patch.object(ef, "http_get_json", return_value=_META), patch.object(
-            edgex_mod, "_run_async", return_value=resp
+        resp = {
+            "data": {
+                "positionList": [
+                    {
+                        "contractId": "10000001",
+                        "openSize": "0.5",
+                        "openValue": "30000",
+                        "liquidatePrice": "50000",
+                        "leverage": "10",
+                        "unrealizePnl": "12.5",
+                    },
+                    {
+                        "contractId": "10000001",
+                        "openSize": "-1",
+                        "openValue": "60000",
+                        "liquidatePrice": "90000",
+                        "leverage": "5",
+                        "unrealizePnl": "-3",
+                    },
+                    {"contractId": "10000001", "openSize": "0"},  # flat → dropped
+                ]
+            }
+        }
+        with (
+            patch.object(ef, "http_get_json", return_value=_META),
+            patch.object(edgex_mod, "_run_async", return_value=resp),
+            patch.object(
+                EdgexVenue,
+                "_get_positions",
+                return_value=None,  # avoid creating un-awaited coroutine
+            ),
         ):
             positions = _fresh().fetch_futures_positions()
         assert len(positions) == 2
@@ -114,11 +150,25 @@ class TestPositions:
 
     def test_balance_parsing(self):
         resp = {"data": {"collateralList": [{"availableAmount": "2500.75"}]}}
-        with patch.object(edgex_mod, "_run_async", return_value=resp):
-            assert _fresh().fetch_usdt_account_balances() == {"spot": 0.0, "futures": 2500.75}
+        with (
+            patch.object(edgex_mod, "_run_async", return_value=resp),
+            patch.object(
+                EdgexVenue,
+                "_get_asset",
+                return_value=None,  # avoid creating un-awaited coroutine
+            ),
+        ):
+            assert _fresh().fetch_usdt_account_balances() == {
+                "spot": 0.0,
+                "futures": 2500.75,
+            }
 
     def test_positions_failure_returns_empty(self):
-        with patch.object(edgex_mod, "_run_async", side_effect=RuntimeError("no creds")):
+        with (
+            patch.object(edgex_mod, "_run_async", side_effect=RuntimeError("no creds")),
+            patch.object(EdgexVenue, "_get_positions", return_value=None),
+            patch.object(EdgexVenue, "_get_asset", return_value=None),
+        ):
             v = _fresh()
             assert v.fetch_futures_positions() == []
             assert v.fetch_usdt_account_balances() == {"spot": 0.0, "futures": 0.0}
@@ -138,7 +188,9 @@ class TestExecution:
         v = EdgexVenue()
         results = v.execute_trades(
             [{"symbol": "BTCUSDT", "type": "rebalance", "amount_base": 1}],
-            {"BTCUSDT": {"price": 1.0}}, dry_run=False)
+            {"BTCUSDT": {"price": 1.0}},
+            dry_run=False,
+        )
         assert results[0]["status"] == "failed"
         assert "Unknown trade type" in results[0]["error"]
 
@@ -157,14 +209,17 @@ class TestExecution:
                 captured: dict = {}
 
                 async def fake_submit(contract_id, size, price, side):
-                    captured.update(contract_id=contract_id, size=size,
-                                    price=price, side=side)
+                    captured.update(
+                        contract_id=contract_id, size=size, price=price, side=side
+                    )
                     return {"data": {"orderId": "ord-123"}}
 
                 v._submit_limit_order = fake_submit  # type: ignore[method-assign]
                 results = v.execute_trades(
                     [{"symbol": "BTCUSDT", "type": typ, "amount_base": 0.01}],
-                    {"BTCUSDT": {"price": 63500.0}}, dry_run=False)
+                    {"BTCUSDT": {"price": 63500.0}},
+                    dry_run=False,
+                )
             assert results[0]["status"] == "filled", (typ, results[0].get("error"))
             assert results[0]["order_id"] == "ord-123"
             assert captured["contract_id"] == "10000001"
@@ -183,7 +238,9 @@ class TestExecution:
             v._submit_limit_order = fake_submit  # type: ignore[method-assign]
             results = v.execute_trades(
                 [{"symbol": "BTCUSDT", "type": "open_long", "amount_base": 0.01}],
-                {"BTCUSDT": {"price": 63500.0}}, dry_run=False)
+                {"BTCUSDT": {"price": 63500.0}},
+                dry_run=False,
+            )
         assert results[0]["status"] == "failed"
         assert "signature rejected" in results[0]["error"]
 
