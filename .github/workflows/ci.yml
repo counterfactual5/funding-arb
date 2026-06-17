@@ -18,10 +18,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # requests is a real runtime dep (venue adapters import it at module load);
-      # without it collection fails. Windows is covered so the file-lock path
-      # (fcntl on Unix / msvcrt on Windows) stays green on both platforms.
-      - run: pip install pytest requests
+      # Tests import venue adapters (requests) and server.routes (fastapi),
+      # so collection needs the runtime + server deps — not just pytest.
+      # The optional venue SDKs are intentionally omitted (tests guard them).
+      # Windows is covered so the file-lock path (fcntl on Unix / msvcrt on
+      # Windows) stays green on both platforms.
+      - run: pip install -r server/requirements.txt requests pytest
       - run: python -m pytest scripts/tests/ -q
 
   docs-sync:
