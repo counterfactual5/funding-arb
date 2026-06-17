@@ -58,7 +58,7 @@ const routes = [
   },
   {
     path: "/docs",
-    redirect: "/docs/readme",
+    redirect: "/docs/overview",
   },
   {
     path: "/docs/:slug",
