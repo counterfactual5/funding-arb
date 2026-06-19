@@ -6,7 +6,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -118,7 +118,11 @@ class TestPositions:
             patch.object(
                 LighterVenue,
                 "_fetch_account",
-                return_value=None,  # avoid creating un-awaited coroutine
+                # MagicMock (not the auto-detected AsyncMock): a plain callable so
+                # _fetch_account() returns None directly without creating a coroutine
+                # that _run_async (also mocked) would never await.
+                new_callable=MagicMock,
+                return_value=None,
             ),
         ):
             v = LighterVenue()
@@ -139,7 +143,8 @@ class TestPositions:
             patch.object(
                 LighterVenue,
                 "_fetch_account",
-                return_value=None,  # avoid creating un-awaited coroutine
+                new_callable=MagicMock,  # plain callable, no coroutine created
+                return_value=None,
             ),
         ):
             v = LighterVenue()

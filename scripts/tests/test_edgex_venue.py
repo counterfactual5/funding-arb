@@ -7,7 +7,7 @@ import sys
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -137,7 +137,11 @@ class TestPositions:
             patch.object(
                 EdgexVenue,
                 "_get_positions",
-                return_value=None,  # avoid creating un-awaited coroutine
+                # MagicMock (not the auto-detected AsyncMock): plain callable so
+                # _get_positions() returns None directly without creating a coroutine
+                # that _run_async (also mocked) would never await.
+                new_callable=MagicMock,
+                return_value=None,
             ),
         ):
             positions = _fresh().fetch_futures_positions()
@@ -155,7 +159,8 @@ class TestPositions:
             patch.object(
                 EdgexVenue,
                 "_get_asset",
-                return_value=None,  # avoid creating un-awaited coroutine
+                new_callable=MagicMock,  # plain callable, no coroutine created
+                return_value=None,
             ),
         ):
             assert _fresh().fetch_usdt_account_balances() == {
@@ -166,8 +171,12 @@ class TestPositions:
     def test_positions_failure_returns_empty(self):
         with (
             patch.object(edgex_mod, "_run_async", side_effect=RuntimeError("no creds")),
-            patch.object(EdgexVenue, "_get_positions", return_value=None),
-            patch.object(EdgexVenue, "_get_asset", return_value=None),
+            patch.object(
+                EdgexVenue, "_get_positions", new_callable=MagicMock, return_value=None
+            ),
+            patch.object(
+                EdgexVenue, "_get_asset", new_callable=MagicMock, return_value=None
+            ),
         ):
             v = _fresh()
             assert v.fetch_futures_positions() == []
