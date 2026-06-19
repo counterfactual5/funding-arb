@@ -11,7 +11,6 @@ Usage:
   python3 scripts/cli/setup_credentials.py                # Interactive setup wizard
   python3 scripts/cli/setup_credentials.py --check         # Check status + current backend
   python3 scripts/cli/setup_credentials.py --delete bitget
-  python3 scripts/cli/setup_credentials.py --migrate       # Migrate from funding-arb.json
   python3 scripts/cli/setup_credentials.py --backend age   # Force specific backend
 """
 
@@ -29,11 +28,8 @@ from pathlib import Path
 _APP_DIR = Path.home() / ".funding-arb"
 _IDENTITY_FILE = _APP_DIR / "credentials.key"
 _ENCRYPTED_FILE = _APP_DIR / "credentials.enc"
-# Legacy plaintext store — still read by --migrate / --check for back-compat.
-_LEGACY_JSON = Path.home() / ".funding-arb" / "funding-arb.json"
 _SYSTEMD_CREDS_DIR = Path("/etc/funding-arb/creds")
 SERVICE_NAME = "funding-arb"
-_LEGACY_SERVICE = "funding-arb"
 
 VENUE_FIELDS: dict[str, list[str]] = {
     "binance": [
@@ -139,9 +135,7 @@ def _kr_load_all() -> dict[str, str]:
 
     result = {}
     for k in ALL_KEYS:
-        v = keyring.get_password(SERVICE_NAME, k) or keyring.get_password(
-            _LEGACY_SERVICE, k
-        )
+        v = keyring.get_password(SERVICE_NAME, k)
         if v:
             result[k] = v
     return result
@@ -420,34 +414,9 @@ def delete_venue(venue: str, backend: str) -> None:
         print("  No credentials to delete")
 
 
-def migrate_from_json(backend: str) -> None:
-    if not _LEGACY_JSON.exists():
-        print(f"  Not found {_LEGACY_JSON}; migration skipped")
-        return
-
-    creds = load_all(backend)
-
-    with open(_LEGACY_JSON, encoding="utf-8") as f:
-        legacy_env = json.load(f).get("env", {})
-
-    migrated = 0
-    for k, v in legacy_env.items():
-        if v and not creds.get(k):
-            creds[k] = str(v)
-            migrated += 1
-
-    if migrated:
-        save_all(creds, backend)
-        print(f"  Migrated {migrated} credential(s) from funding-arb.json to {backend}")
-        print(f"  Verify correctness then delete: rm {_LEGACY_JSON}")
-    else:
-        print("  No new credentials to migrate")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="funding-arb Credential Manager")
     parser.add_argument("--check", action="store_true", help="Check status + current backend")
-    parser.add_argument("--migrate", action="store_true", help="Migrate from funding-arb.json")
     parser.add_argument("--delete", metavar="VENUE", help="Delete credentials for a venue")
     parser.add_argument(
         "--backend",
@@ -469,8 +438,6 @@ def main() -> None:
 
     if args.check:
         check_status(backend)
-    elif args.migrate:
-        migrate_from_json(backend)
     elif args.delete:
         delete_venue(args.delete, backend)
     else:

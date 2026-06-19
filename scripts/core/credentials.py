@@ -5,7 +5,7 @@ Backend priority (highest security first):
   1. keyring       — macOS Keychain / Windows Credential Manager / Linux Secret Service
   2. systemd-creds — Linux machine-bound (TPM2 / machine-id), recommended for headless servers
   3. age           — encrypted files, protects against accidental exposure but not malicious same-user processes
-  4. credentials.json — plaintext JSON fallback (also reads legacy ~/.funding-arb/funding-arb.json)
+  4. credentials.json — plaintext JSON fallback
 
 Usage (in venue modules):
   from core.credentials import ensure_env
@@ -24,16 +24,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Credential store locations. New installs use ~/.funding-arb (keyring service
-# "funding-arb"); the legacy ~/.funding-arb paths and "funding-arb" service are still
-# read for backward compatibility so existing setups keep working. Each list is
-# ordered highest priority first (new overrides legacy).
+# Credential store location: ~/.funding-arb (keyring service "funding-arb").
 _APP_DIR = Path.home() / ".funding-arb"
-_LEGACY_DIR = Path.home() / ".funding-arb"
-_AGE_DIRS = [_APP_DIR, _LEGACY_DIR]
-_SYSTEMD_CREDS_DIRS = [Path("/etc/funding-arb/creds"), Path("/etc/funding-arb/creds")]
-_SERVICES = ["funding-arb", "funding-arb"]
-_JSON_FILES = [_APP_DIR / "credentials.json", _LEGACY_DIR / "funding-arb.json"]
+_AGE_DIRS = [_APP_DIR]
+_SYSTEMD_CREDS_DIRS = [Path("/etc/funding-arb/creds")]
+_SERVICES = ["funding-arb"]
+_JSON_FILES = [_APP_DIR / "credentials.json"]
 
 _KNOWN_PREFIXES = (
     "BINANCE_",
@@ -82,11 +78,9 @@ def _load_keyring() -> dict[str, str] | None:
     result: dict[str, str] = {}
     try:
         for k in _ALL_KEYS:
-            for svc in _SERVICES:  # new service wins, fall back to legacy
-                v = keyring.get_password(svc, k)
-                if v:
-                    result[k] = v
-                    break
+            v = keyring.get_password(_SERVICES[0], k)
+            if v:
+                result[k] = v
     except Exception:
         return None
     return result
@@ -103,7 +97,7 @@ def _load_systemd_creds() -> dict[str, str]:
         return {}
 
     result: dict[str, str] = {}
-    for creds_dir in _SYSTEMD_CREDS_DIRS:  # new dir wins, fall back to legacy
+    for creds_dir in _SYSTEMD_CREDS_DIRS:
         for key_name in _ALL_KEYS:
             if key_name in result:
                 continue
@@ -126,7 +120,7 @@ def _load_systemd_creds() -> dict[str, str]:
 
 # Backend 3: age encrypted files
 def _load_age() -> dict[str, str]:
-    """Read from age encrypted files (new dir first, legacy ~/.funding-arb fallback)."""
+    """Read from age encrypted files."""
     age = shutil.which("age")
     if not age:
         return {}
@@ -150,11 +144,10 @@ def _load_age() -> dict[str, str]:
     return {}
 
 
-# Backend 4: JSON plaintext (fallback). Reads new credentials.json and legacy
-# funding-arb.json; values from the new file override the legacy one.
+# Backend 4: JSON plaintext (fallback)
 def _load_json() -> dict[str, str]:
     merged: dict[str, str] = {}
-    for path in reversed(_JSON_FILES):  # legacy first, new overrides
+    for path in _JSON_FILES:
         try:
             with open(path, encoding="utf-8") as f:
                 env = json.load(f).get("env", {})

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/counterfactual5/funding-arb/security/advisories/new
+    about: Report a security vulnerability privately. Do NOT open a public issue for security problems.
+  - name: Questions & discussions
+    url: https://github.com/counterfactual5/funding-arb/discussions
+    about: Ask questions or discuss ideas in GitHub Discussions.

@@ -36,7 +36,7 @@ Cross-interval pairs use a **basis-blend model** (mark vs index, weighted by set
 ## Quick Start
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/counterfactual5/funding-arb.git
 cd funding-arb
 bash setup.sh
 ```
@@ -217,10 +217,9 @@ Configure in **Settings → Strategy**: `fee_mode`, `venue_fee_tiers`, scan thre
 ```bash
 .venv/bin/python scripts/cli/setup_credentials.py              # Interactive wizard
 .venv/bin/python scripts/cli/setup_credentials.py --check
-.venv/bin/python scripts/cli/setup_credentials.py --migrate    # From legacy ~/.funding-arb/funding-arb.json
 ```
 
-Backends (auto-selected, most secure first): **keyring** → **systemd-creds** → **age** → plaintext `~/.funding-arb/credentials.json` (the legacy `~/.funding-arb/funding-arb.json` is still read for backward compatibility). Loaded into the environment at server start via `ensure_env()`.
+Backends (auto-selected, most secure first): **keyring** → **systemd-creds** → **age** → plaintext `~/.funding-arb/credentials.json`. Loaded into the environment at server start via `ensure_env()`.
 
 | Variable | Description |
 |----------|-------------|

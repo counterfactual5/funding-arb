@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Credential loader back-compat: new ~/.funding-arb store + legacy ~/.funding-arb."""
+"""Credential loader: ~/.funding-arb store."""
 
 from __future__ import annotations
 
@@ -19,24 +19,14 @@ def _write_json(path: Path, env: dict) -> None:
     path.write_text(json.dumps({"env": env}), encoding="utf-8")
 
 
-def test_new_json_overrides_legacy(tmp_path, monkeypatch):
-    new = tmp_path / "funding-arb" / "credentials.json"
-    legacy = tmp_path / "funding-arb" / "funding-arb.json"
-    _write_json(legacy, {"BINANCE_API_KEY": "legacy", "OKX_API_KEY": "legacy-only"})
-    _write_json(new, {"BINANCE_API_KEY": "new"})
-    # _JSON_FILES is ordered highest-priority first.
-    monkeypatch.setattr(creds, "_JSON_FILES", [new, legacy])
+def test_json_loads_values(tmp_path, monkeypatch):
+    store = tmp_path / "funding-arb" / "credentials.json"
+    _write_json(store, {"BINANCE_API_KEY": "k", "OKX_API_KEY": "o"})
+    monkeypatch.setattr(creds, "_JSON_FILES", [store])
 
     out = creds._load_json()
-    assert out["BINANCE_API_KEY"] == "new"  # new store wins
-    assert out["OKX_API_KEY"] == "legacy-only"  # legacy still read
-
-
-def test_legacy_only_still_loads(tmp_path, monkeypatch):
-    legacy = tmp_path / "funding-arb.json"
-    _write_json(legacy, {"BYBIT_API_KEY": "k"})
-    monkeypatch.setattr(creds, "_JSON_FILES", [tmp_path / "missing.json", legacy])
-    assert creds._load_json() == {"BYBIT_API_KEY": "k"}
+    assert out["BINANCE_API_KEY"] == "k"
+    assert out["OKX_API_KEY"] == "o"
 
 
 def test_missing_files_return_empty(tmp_path, monkeypatch):

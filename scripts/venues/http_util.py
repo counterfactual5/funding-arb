@@ -13,18 +13,8 @@ _DEFAULT_UA = "Mozilla/5.0 (compatible; funding-arb/1.0)"
 
 
 def credentials_file() -> str:
-    """Plaintext credentials JSON path used by venue adapters as an env fallback.
-
-    Prefers ~/.funding-arb/credentials.json; falls back to the legacy
-    ~/.funding-arb/funding-arb.json for backward compatibility.
-    """
-    new = os.path.expanduser("~/.funding-arb/credentials.json")
-    legacy = os.path.expanduser("~/.funding-arb/funding-arb.json")
-    if os.path.exists(new):
-        return new
-    if os.path.exists(legacy):
-        return legacy
-    return new
+    """Plaintext credentials JSON path used by venue adapters as an env fallback."""
+    return os.path.expanduser("~/.funding-arb/credentials.json")
 
 # Module-level session with connection pooling and keep-alive.
 # Thread-safe: requests.Session is safe for concurrent use across threads.

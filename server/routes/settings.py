@@ -319,16 +319,14 @@ async def credentials_status():
     else:
         backends["age"] = {"available": False, "description": "age tool not installed"}
 
-    # Check legacy JSON
+    # Check plaintext JSON
     from pathlib import Path
 
     json_path = Path.home() / ".funding-arb" / "credentials.json"
-    legacy_json = Path.home() / ".funding-arb" / "funding-arb.json"
-    active_json = json_path if json_path.exists() else legacy_json
     backends["plaintext_json"] = {
-        "available": json_path.exists() or legacy_json.exists(),
+        "available": json_path.exists(),
         "description": "Plaintext JSON (fallback)",
-        "path": str(active_json),
+        "path": str(json_path),
     }
 
     # Determine which venues have credentials

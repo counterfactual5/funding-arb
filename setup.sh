@@ -19,8 +19,8 @@ fi
 
 echo ""
 echo "Setup complete."
-echo "  Scan:      python3 scripts/cli/scan_funding_arbitrage.py --venues bitget,bybit,okx"
-echo "  Scan unified: python3 scripts/cli/scan_unified_funding.py --verbose"
-echo "  Paper run: python3 scripts/execution/run_cash_and_carry.py --config templates/config.cash_and_carry.btc.json --verbose"
-echo "  Orch:      python3 scripts/cli/orchestrate_funding.py --venues bitget,bybit"
-echo "  Tests:     python3 -m pytest scripts/tests/test_funding_arbitrage.py scripts/tests/test_reverse_margin.py -q"
+echo "  Scan:      python3 scripts/cli/scan_pure_futures_spreads.py --verbose"
+echo "  Scan C&C:  python3 scripts/cli/scan_funding_arbitrage.py --venues bitget,bybit,okx,binance"
+echo "  Paper run: python3 scripts/execution/run_pure_futures_spread.py --config templates/config.pure_futures.spread.json --once --verbose"
+echo "  Dashboard: bash start.sh"
+echo "  Tests:     python3 -m pytest scripts/tests/ -q"
