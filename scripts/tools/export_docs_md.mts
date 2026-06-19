@@ -95,8 +95,8 @@ function buildIndex(locale: Locale, locales: LocaleFile): string {
     '',
     '| Doc | Path |',
     '| --- | --- |',
-    '| Project README | [../README.md](../README.md) |',
-    '| CLI playbook (SKILL) | [../SKILL.md](../SKILL.md) |',
+    '| Project README | [../../README.md](../../README.md) |',
+    '| CLI playbook (SKILL) | [../../SKILL.md](../../SKILL.md) |',
   )
   if (locale === 'zh-CN') {
     lines.push(

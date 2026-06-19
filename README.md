@@ -294,10 +294,6 @@ npx tsx scripts/tools/export_docs_md.mts           # docs/zh-CN, en, zh-TW
 
 ---
 
-## Origin
-
-Spun off from [cex-adaptive-dca](https://github.com/counterfactual5/cex-adaptive-dca) — the funding-rate arbitrage engine extracted into a standalone repo with its own dashboard, CLI, and zero runtime dependency on the DCA project.
-
 ## Disclaimer
 
 This software is for **educational and research purposes**. When configured for
