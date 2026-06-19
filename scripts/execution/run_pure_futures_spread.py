@@ -5,7 +5,7 @@ MVP runner, defaults to dry-run:
   python3 scripts/execution/run_pure_futures_spread.py \
     --config templates/config.pure_futures.spread.json --once --verbose
 
-Live requires dry_run=false or DCA_LIVE=1. Recommend using scanner/watch + report to confirm spread persistence first.
+Live requires dry_run=false or FARB_LIVE=1 (legacy DCA_LIVE still honored). Recommend using scanner/watch + report to confirm spread persistence first.
 """
 
 from __future__ import annotations
@@ -51,9 +51,9 @@ def _load_json(path: str | Path) -> dict[str, Any]:
 
 
 def _dry_run(cfg: dict[str, Any]) -> bool:
-    if os.environ.get("DCA_LIVE") == "1":
+    if os.environ.get("FARB_LIVE") == "1" or os.environ.get("DCA_LIVE") == "1":
         return False
-    if os.environ.get("DCA_DRY_RUN") == "1":
+    if os.environ.get("FARB_DRY_RUN") == "1" or os.environ.get("DCA_DRY_RUN") == "1":
         return True
     return bool(cfg.get("dry_run", True))
 

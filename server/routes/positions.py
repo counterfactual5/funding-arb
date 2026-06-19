@@ -473,7 +473,7 @@ async def close_position(position_id: str, req: ClosePositionRequest | None = No
 
     kind = _position_kind(position_id, positions)
     # Close in the same mode the position was opened in. Never escalate a
-    # dry-run (paper) position to a live close just because DCA_LIVE is set —
+    # dry-run (paper) position to a live close based on a global env flag —
     # there is no real exchange position behind it, so a live order would be wrong.
     dry_run = bool(target.get("dry_run", True))
 

@@ -14,10 +14,15 @@ from typing import Any, Optional
 
 from core.config import resolve_timeframes
 from venues.base import make_pair
-from venues.http_util import http_get_json, parse_kline_ohlcv, rules_for_price
+from venues.http_util import (
+    credentials_file,
+    http_get_json,
+    parse_kline_ohlcv,
+    rules_for_price,
+)
 
 BASE = "https://api.bitget.com"
-CONFIG_PATH = os.path.expanduser("~/.funding-arb/funding-arb.json")
+CONFIG_PATH = credentials_file()
 _symbol_rules_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _futures_rules_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _spot_ticker_loaded_at: float = 0.0
@@ -81,7 +86,7 @@ def _api_call(
     if not (key and secret and passp):
         raise RuntimeError(
             "Bitget API credentials missing: please set environment variables BITGET_API_KEY / BITGET_SECRET_KEY / "
-            "BITGET_PASSPHRASE, or configure them in ~/.funding-arb/funding-arb.json under env."
+            "BITGET_PASSPHRASE, or configure them in ~/.funding-arb/credentials.json under env."
         )
 
     p = "?" + urlencode(params) if params else ""

@@ -713,9 +713,9 @@ def main() -> int:
     # Determine dry-run: explicit flag > env > config
     if args.dry_run:
         dry_run = True
-    elif os.environ.get("DCA_LIVE") == "1":
+    elif os.environ.get("FARB_LIVE") == "1" or os.environ.get("DCA_LIVE") == "1":
         dry_run = False
-    elif os.environ.get("DCA_DRY_RUN") == "1":
+    elif os.environ.get("FARB_DRY_RUN") == "1" or os.environ.get("DCA_DRY_RUN") == "1":
         dry_run = True
     else:
         dry_run = bool(cfg.get("dry_run", True))

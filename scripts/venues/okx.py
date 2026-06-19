@@ -17,10 +17,15 @@ import urllib.request
 from typing import Any, Optional
 
 from core.config import resolve_timeframes
-from venues.http_util import http_get_json, parse_kline_ohlcv, rules_for_price
+from venues.http_util import (
+    credentials_file,
+    http_get_json,
+    parse_kline_ohlcv,
+    rules_for_price,
+)
 
 BASE = "https://www.okx.com"
-CONFIG_PATH = os.path.expanduser("~/.funding-arb/funding-arb.json")
+CONFIG_PATH = credentials_file()
 _symbol_rules_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _futures_rules_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _initialized_symbols: set[str] = set()
@@ -76,7 +81,7 @@ def _api_call(
     if not (key and secret and passp):
         raise RuntimeError(
             "OKX API credentials missing: please set OKX_API_KEY / OKX_SECRET_KEY / OKX_PASSPHRASE, "
-            "or configure them in ~/.funding-arb/funding-arb.json under env."
+            "or configure them in ~/.funding-arb/credentials.json under env."
         )
 
     query = urllib.parse.urlencode(params) if params else ""
@@ -94,7 +99,7 @@ def _api_call(
             "OK-ACCESS-TIMESTAMP": ts,
             "OK-ACCESS-PASSPHRASE": passp,
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (compatible; funding-arb-cex/1.0)",
+            "User-Agent": "Mozilla/5.0 (compatible; funding-arb/1.0)",
         }
         url = BASE + full_path
         req = urllib.request.Request(url, headers=headers, method=method)

@@ -151,9 +151,10 @@ def load_config(path: Path) -> dict[str, Any]:
     cc = {**cfg["cashAndCarry"], **(user.get("cashAndCarry") or {})}
     cfg.update(user)
     cfg["cashAndCarry"] = cc
-    if os.environ.get("DCA_DRY_RUN", "").strip().lower() in ("1", "true", "yes"):
+    _truthy = ("1", "true", "yes")
+    if (os.environ.get("FARB_DRY_RUN", "") or os.environ.get("DCA_DRY_RUN", "")).strip().lower() in _truthy:
         cfg["dry_run"] = True
-    if os.environ.get("DCA_LIVE", "").strip().lower() in ("1", "true", "yes"):
+    if (os.environ.get("FARB_LIVE", "") or os.environ.get("DCA_LIVE", "")).strip().lower() in _truthy:
         cfg["dry_run"] = False
 
     cfg = normalize_arb_cfg(cfg)

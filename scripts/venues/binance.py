@@ -17,10 +17,10 @@ from typing import Any, Optional
 
 from core.config import resolve_timeframes
 from venues.base import make_pair
-from venues.http_util import parse_kline_ohlcv, rules_for_price
+from venues.http_util import credentials_file, parse_kline_ohlcv, rules_for_price
 
 BASE = "https://api.binance.com"
-CONFIG_PATH = os.path.expanduser("~/.funding-arb/funding-arb.json")
+CONFIG_PATH = credentials_file()
 _symbol_rules_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _futures_rules_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _exchange_info_loaded_at: float = 0.0
@@ -91,7 +91,7 @@ def _api_call(
         if not (key and secret):
             raise RuntimeError(
                 "Binance API credentials missing: please set BINANCE_API_KEY / BINANCE_API_SECRET, "
-                "or configure them in ~/.funding-arb/funding-arb.json under env."
+                "or configure them in ~/.funding-arb/credentials.json under env."
             )
     # GET can be safely retried; POST (orders) are not retried to avoid duplicate orders
     retries = 3 if method == "GET" else 1

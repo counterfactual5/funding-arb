@@ -7,6 +7,8 @@ Cross-exchange **funding rate** arbitrage: Cash-and-Carry, unified cross-venue c
 
 Default scanner venues are **CEX-only**; DEX venues are opt-in via the UI or `--venues`. Browser wallet signing (MetaMask / Keplr) is available for Hyperliquid and dYdX — see [Wallet Trading](#browser-wallet-trading).
 
+> ⚠️ **Disclaimer:** This is trading software that can place **real orders and lose money**. Educational/research use only; not financial advice; use at your own risk. See [Disclaimer](#disclaimer).
+
 ---
 
 ## Strategies
@@ -215,16 +217,16 @@ Configure in **Settings → Strategy**: `fee_mode`, `venue_fee_tiers`, scan thre
 ```bash
 .venv/bin/python scripts/cli/setup_credentials.py              # Interactive wizard
 .venv/bin/python scripts/cli/setup_credentials.py --check
-.venv/bin/python scripts/cli/setup_credentials.py --migrate    # From funding-arb.json
+.venv/bin/python scripts/cli/setup_credentials.py --migrate    # From legacy ~/.funding-arb/funding-arb.json
 ```
 
-Backends (auto-selected): **keyring** → **systemd-creds** → **age** → legacy `funding-arb.json`. See diagram in previous docs; loaded at server start via `ensure_env()`.
+Backends (auto-selected, most secure first): **keyring** → **systemd-creds** → **age** → plaintext `~/.funding-arb/credentials.json` (the legacy `~/.funding-arb/funding-arb.json` is still read for backward compatibility). Loaded into the environment at server start via `ensure_env()`.
 
 | Variable | Description |
 |----------|-------------|
-| `DCA_HOME` | Runtime data root (state, journal, backtest output) |
-| `DCA_RUNS_NAMESPACE` | Subdirectory name (default `cex-bitget`) |
-| `DCA_DRY_RUN=1` / `DCA_LIVE=1` | Force paper / live |
+| `FARB_HOME` | Runtime data root (state, journal, backtest output); legacy `DCA_HOME` still works |
+| `FARB_RUNS_NAMESPACE` | Subdirectory name (default `funding-arb`); legacy `DCA_RUNS_NAMESPACE` |
+| `FARB_DRY_RUN=1` / `FARB_LIVE=1` | Force paper / live (legacy `DCA_DRY_RUN` / `DCA_LIVE`) |
 
 Strategy JSON: `scripts/data/strategy_config.json` (also editable in Settings UI).
 
@@ -296,6 +298,20 @@ npx tsx scripts/tools/export_docs_md.mts           # docs/zh-CN, en, zh-TW
 
 Spun off from [cex-adaptive-dca](https://github.com/counterfactual5/cex-adaptive-dca) — the funding-rate arbitrage engine extracted into a standalone repo with its own dashboard, CLI, and zero runtime dependency on the DCA project.
 
+## Disclaimer
+
+This software is for **educational and research purposes**. When configured for
+live trading it places **real orders against live exchange accounts and can lose
+money**. Nothing here is financial advice. You are solely responsible for your
+API keys, private keys, funds, and any executed trades.
+
+- Start with `dry_run` / testnet and verify behaviour before going live.
+- Use exchange API keys with **trade-only** permission — **no withdrawal**.
+- Review the code before trusting it with real capital.
+
+The software is provided **"AS IS", without warranty of any kind**, and the
+authors accept **no liability** for any losses — see [`LICENSE`](LICENSE).
+
 ## License
 
-Private repository — all rights reserved unless otherwise noted.
+[MIT](LICENSE) © 2026 counterfactual5

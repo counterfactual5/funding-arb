@@ -5,7 +5,7 @@ Backends (by security):
   keyring        — macOS Keychain / Windows Credential Manager / Linux Secret Service
   systemd-creds  — Linux machine-bound (TPM2 / machine-id)
   age            — Encrypted file (cross-platform)
-  funding-arb.json  — Plaintext (backward compatible)
+  credentials.json — Plaintext (backward compatible)
 
 Usage:
   python3 scripts/cli/setup_credentials.py                # Interactive setup wizard
@@ -26,12 +26,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-_FUNDING-ARB_DIR = Path.home() / ".funding-arb"
-_IDENTITY_FILE = _FUNDING-ARB_DIR / "credentials.key"
-_ENCRYPTED_FILE = _FUNDING-ARB_DIR / "credentials.enc"
-_LEGACY_JSON = _FUNDING-ARB_DIR / "funding-arb.json"
+_APP_DIR = Path.home() / ".funding-arb"
+_IDENTITY_FILE = _APP_DIR / "credentials.key"
+_ENCRYPTED_FILE = _APP_DIR / "credentials.enc"
+# Legacy plaintext store — still read by --migrate / --check for back-compat.
+_LEGACY_JSON = Path.home() / ".funding-arb" / "funding-arb.json"
 _SYSTEMD_CREDS_DIR = Path("/etc/funding-arb/creds")
 SERVICE_NAME = "funding-arb"
+_LEGACY_SERVICE = "funding-arb"
 
 VENUE_FIELDS: dict[str, list[str]] = {
     "binance": [
@@ -137,7 +139,9 @@ def _kr_load_all() -> dict[str, str]:
 
     result = {}
     for k in ALL_KEYS:
-        v = keyring.get_password(SERVICE_NAME, k)
+        v = keyring.get_password(SERVICE_NAME, k) or keyring.get_password(
+            _LEGACY_SERVICE, k
+        )
         if v:
             result[k] = v
     return result
@@ -237,7 +241,7 @@ def _age_find() -> str:
 def _age_generate_identity() -> None:
     if _IDENTITY_FILE.exists():
         return
-    _FUNDING-ARB_DIR.mkdir(parents=True, exist_ok=True)
+    _APP_DIR.mkdir(parents=True, exist_ok=True)
     _age_find()
 
     keygen = shutil.which("age-keygen")
@@ -366,7 +370,7 @@ def interactive_setup(backend: str) -> None:
 
     print()
     print("=" * 55)
-    print("  Funding-Arb Credential Import (one-time)")
+    print("  funding-arb Credential Import (one-time)")
     print(f"  Backend: {backend}")
     for line in _backend_security_note(backend).split("\n"):
         print(f"  {line}")
@@ -441,7 +445,7 @@ def migrate_from_json(backend: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Funding-Arb Credential Manager")
+    parser = argparse.ArgumentParser(description="funding-arb Credential Manager")
     parser.add_argument("--check", action="store_true", help="Check status + current backend")
     parser.add_argument("--migrate", action="store_true", help="Migrate from funding-arb.json")
     parser.add_argument("--delete", metavar="VENUE", help="Delete credentials for a venue")
@@ -453,7 +457,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    _FUNDING-ARB_DIR.mkdir(parents=True, exist_ok=True)
+    _APP_DIR.mkdir(parents=True, exist_ok=True)
 
     backend = args.backend if args.backend != "auto" else _detect_backend()
     if backend == "none":

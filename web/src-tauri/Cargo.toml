@@ -2,8 +2,8 @@
 name = "funding-arb"
 version = "0.1.0"
 description = "Funding Rate Arbitrage Engine"
-authors = ["Funding-Arb"]
-license = "private"
+authors = ["funding-arb contributors"]
+license = "MIT"
 repository = ""
 edition = "2021"
 

@@ -25,9 +25,6 @@ venv/
 .idea/
 .vscode/
 
-# Funding-Arb cron manifest (machine-local job IDs)
-funding-arb-cron-manifest.json
-
 # Kline cache (re-fetchable)
 cache/
 *.log

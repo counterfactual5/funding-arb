@@ -5,7 +5,7 @@ Backend priority (highest security first):
   1. keyring       — macOS Keychain / Windows Credential Manager / Linux Secret Service
   2. systemd-creds — Linux machine-bound (TPM2 / machine-id), recommended for headless servers
   3. age           — encrypted files, protects against accidental exposure but not malicious same-user processes
-  4. funding-arb.json — plaintext JSON, backward-compatible fallback
+  4. credentials.json — plaintext JSON fallback (also reads legacy ~/.funding-arb/funding-arb.json)
 
 Usage (in venue modules):
   from core.credentials import ensure_env
@@ -24,12 +24,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-_FUNDING-ARB_DIR = Path.home() / ".funding-arb"
-_IDENTITY_FILE = _FUNDING-ARB_DIR / "credentials.key"
-_ENCRYPTED_FILE = _FUNDING-ARB_DIR / "credentials.enc"
-_LEGACY_JSON = _FUNDING-ARB_DIR / "funding-arb.json"
-_SYSTEMD_CREDS_DIR = Path("/etc/funding-arb/creds")
-_SERVICE = "funding-arb"
+# Credential store locations. New installs use ~/.funding-arb (keyring service
+# "funding-arb"); the legacy ~/.funding-arb paths and "funding-arb" service are still
+# read for backward compatibility so existing setups keep working. Each list is
+# ordered highest priority first (new overrides legacy).
+_APP_DIR = Path.home() / ".funding-arb"
+_LEGACY_DIR = Path.home() / ".funding-arb"
+_AGE_DIRS = [_APP_DIR, _LEGACY_DIR]
+_SYSTEMD_CREDS_DIRS = [Path("/etc/funding-arb/creds"), Path("/etc/funding-arb/creds")]
+_SERVICES = ["funding-arb", "funding-arb"]
+_JSON_FILES = [_APP_DIR / "credentials.json", _LEGACY_DIR / "funding-arb.json"]
 
 _KNOWN_PREFIXES = (
     "BINANCE_",
@@ -78,9 +82,11 @@ def _load_keyring() -> dict[str, str] | None:
     result: dict[str, str] = {}
     try:
         for k in _ALL_KEYS:
-            v = keyring.get_password(_SERVICE, k)
-            if v:
-                result[k] = v
+            for svc in _SERVICES:  # new service wins, fall back to legacy
+                v = keyring.get_password(svc, k)
+                if v:
+                    result[k] = v
+                    break
     except Exception:
         return None
     return result
@@ -97,55 +103,65 @@ def _load_systemd_creds() -> dict[str, str]:
         return {}
 
     result: dict[str, str] = {}
-    for key_name in _ALL_KEYS:
-        cred_file = _SYSTEMD_CREDS_DIR / f"{key_name}.cred"
-        if not cred_file.exists():
-            continue
-        try:
-            proc = subprocess.run(
-                [sd_creds, "decrypt", str(cred_file)],
-                capture_output=True,
-                timeout=5,
-            )
-            if proc.returncode == 0:
-                result[key_name] = proc.stdout.decode().strip()
-        except (subprocess.TimeoutExpired, OSError):
-            pass
+    for creds_dir in _SYSTEMD_CREDS_DIRS:  # new dir wins, fall back to legacy
+        for key_name in _ALL_KEYS:
+            if key_name in result:
+                continue
+            cred_file = creds_dir / f"{key_name}.cred"
+            if not cred_file.exists():
+                continue
+            try:
+                proc = subprocess.run(
+                    [sd_creds, "decrypt", str(cred_file)],
+                    capture_output=True,
+                    timeout=5,
+                )
+                if proc.returncode == 0:
+                    result[key_name] = proc.stdout.decode().strip()
+            except (subprocess.TimeoutExpired, OSError):
+                pass
 
     return result
 
 
 # Backend 3: age encrypted files
 def _load_age() -> dict[str, str]:
-    """Read from age encrypted files."""
-    if not _ENCRYPTED_FILE.exists() or not _IDENTITY_FILE.exists():
-        return {}
-
+    """Read from age encrypted files (new dir first, legacy ~/.funding-arb fallback)."""
     age = shutil.which("age")
     if not age:
         return {}
 
-    try:
-        result = subprocess.run(
-            [age, "-d", "-i", str(_IDENTITY_FILE), str(_ENCRYPTED_FILE)],
-            capture_output=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            return json.loads(result.stdout.decode())
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
-        pass
+    for d in _AGE_DIRS:
+        identity_file = d / "credentials.key"
+        encrypted_file = d / "credentials.enc"
+        if not encrypted_file.exists() or not identity_file.exists():
+            continue
+        try:
+            result = subprocess.run(
+                [age, "-d", "-i", str(identity_file), str(encrypted_file)],
+                capture_output=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return json.loads(result.stdout.decode())
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+            pass
 
     return {}
 
 
-# Backend 4: JSON plaintext (fallback)
+# Backend 4: JSON plaintext (fallback). Reads new credentials.json and legacy
+# funding-arb.json; values from the new file override the legacy one.
 def _load_json() -> dict[str, str]:
-    try:
-        with open(_LEGACY_JSON, encoding="utf-8") as f:
-            return {k: str(v) for k, v in json.load(f).get("env", {}).items() if v}
-    except (OSError, json.JSONDecodeError):
-        return {}
+    merged: dict[str, str] = {}
+    for path in reversed(_JSON_FILES):  # legacy first, new overrides
+        try:
+            with open(path, encoding="utf-8") as f:
+                env = json.load(f).get("env", {})
+            merged.update({k: str(v) for k, v in env.items() if v})
+        except (OSError, json.JSONDecodeError):
+            pass
+    return merged
 
 
 # Unified loading (with cache, merges low-to-high security, higher overwrites lower)

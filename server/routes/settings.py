@@ -322,11 +322,13 @@ async def credentials_status():
     # Check legacy JSON
     from pathlib import Path
 
-    legacy_path = Path.home() / ".funding-arb" / "funding-arb.json"
-    backends["funding-arb_json"] = {
-        "available": legacy_path.exists(),
+    json_path = Path.home() / ".funding-arb" / "credentials.json"
+    legacy_json = Path.home() / ".funding-arb" / "funding-arb.json"
+    active_json = json_path if json_path.exists() else legacy_json
+    backends["plaintext_json"] = {
+        "available": json_path.exists() or legacy_json.exists(),
         "description": "Plaintext JSON (fallback)",
-        "path": str(legacy_path),
+        "path": str(active_json),
     }
 
     # Determine which venues have credentials
