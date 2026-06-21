@@ -181,6 +181,23 @@ class TestFormatDigest:
         assert "300% gross" in body
         assert "150% net" in body
 
+    def test_one_cycle_net_uses_round_trip_fee(self):
+        # spread 0.1441, round-trip 0.10 → eat-once net = +0.0441%
+        result = _make_result(
+            rows=[_make_spread(spread_pct=0.1441, round_trip_fee_pct=0.10)]
+        )
+        body = format_digest(result)[0]
+        assert "1-cycle net" in body
+        assert "+0.0441%" in body
+
+    def test_one_cycle_net_negative_when_spread_below_round_trip(self):
+        # spread 0.06 < round-trip 0.10 → eating one cycle loses money
+        result = _make_result(
+            rows=[_make_spread(spread_pct=0.06, round_trip_fee_pct=0.10)]
+        )
+        body = format_digest(result)[0]
+        assert "1-cycle net <b>-0.0400%</b>" in body
+
     def test_ranks_by_real_edge_not_net_edge(self):
         # A row with a big net_edge but huge mark divergence (small real_edge)
         # must rank BELOW a clean row with a smaller net_edge.

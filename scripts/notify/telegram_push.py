@@ -159,18 +159,31 @@ def _format_one(spread: dict[str, Any]) -> str:
     else:
         real_line = ""
 
+    # One-cycle net: profit if you enter and exit after a single settlement —
+    # this must clear the *round-trip* fee (open + close, both legs), not just
+    # the open leg. A transient funding spike is only worth eating once if this
+    # is positive; otherwise it only pays as a multi-cycle carry.
+    spread_val = spread.get("spread_pct")
+    rt_fee = spread.get("round_trip_fee_pct")
+    if isinstance(spread_val, (int, float)) and isinstance(rt_fee, (int, float)):
+        one_cycle_line = (
+            f"\n   1-cycle net <b>{_fmt_pct(spread_val - rt_fee)}</b> "
+            f"(eat once, after round-trip fee)"
+        )
+    else:
+        one_cycle_line = ""
+
     # Gross vs net APR — net (net_apy_pct) deducts round-trip fees + entry basis.
     gross = spread.get("annual_apy_pct")
     net_apy = spread.get("net_apy_pct")
     gross_str = f"{gross:.0f}%" if isinstance(gross, (int, float)) else "n/a"
     net_str = f"{net_apy:.0f}%" if isinstance(net_apy, (int, float)) else "n/a"
-    rt_fee = spread.get("round_trip_fee_pct")
     fee_str = f" · fee rt {rt_fee:.3f}%" if isinstance(rt_fee, (int, float)) else ""
 
     return (
         f"{arrow} <b>{base}</b>  {long_venue}L / {short_venue}S{flag}\n"
         f"   rate {long_rate} vs {short_rate}  →  spread {spread_pct}\n"
-        f"   net_edge <b>{net_edge}</b>{real_line}\n"
+        f"   net_edge <b>{net_edge}</b>{real_line}{one_cycle_line}\n"
         f"   APR {gross_str} gross / {net_str} net{fee_str}"
     )
 
@@ -251,10 +264,11 @@ def format_digest(
         current += block
 
     footer = (
-        "\n<i>net_edge = spread − open-leg taker fee · "
+        "\n<i>net_edge = spread − open-leg fee (carry, fee amortized) · "
         "real_edge = net_edge − markΔ (basis risk)\n"
-        "APR net deducts round-trip fee · fees = standard taker tier "
-        "(VIP lower) · ⚠️ = settlement-interval mismatch.</i>"
+        "1-cycle net = spread − round-trip fee (profit if you eat one cycle) · "
+        "fees = standard taker tier (VIP lower) · "
+        "⚠️ = settlement-interval mismatch.</i>"
     )
     if len(current) + len(footer) > TG_MESSAGE_LIMIT:
         chunks.append(current.rstrip())
