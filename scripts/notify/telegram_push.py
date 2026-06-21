@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+"""Telegram channel broadcaster for Pure-Futures funding spreads.
+
+A thin "scan → format → push" wrapper around the existing
+:func:`scripts.cli.scan_pure_futures_spreads.scan_pure_futures_spreads`.
+Designed for cron / serverless invocation (GitHub Actions, systemd timers,
+cron, Airflow, …) — runs one scan, pushes a Markdown digest to a Telegram
+chat, and exits. No long-running state, no WebSocket, no order execution.
+
+Environment variables
+---------------------
+``TELEGRAM_BOT_TOKEN``
+    Bot token from ``@BotFather``.
+``TELEGRAM_CHAT_ID``
+    Target chat / channel id (use ``@channelname`` or numeric id).
+
+Both must be set; otherwise the script prints a warning and exits 0 so a
+forgotten secret in CI does not turn the workflow red.
+
+Usage
+-----
+::
+
+    python3 scripts/notify/telegram_push.py
+    python3 scripts/notify/telegram_push.py --venues binance,bybit,okx,bitget,hyperliquid
+    python3 scripts/notify/telegram_push.py --top 5 --min-edge 0.05
+    python3 scripts/notify/telegram_push.py --include-dex
+    python3 scripts/notify/telegram_push.py --dry-run    # skip the HTTP POST
+
+Exit codes
+----------
+``0``
+    Success, or skipped (missing secrets, no spreads, ``--dry-run``).
+``2``
+    Scan raised an exception — workflow should surface the logs.
+``3``
+    Telegram API rejected the message (auth / chat_id / network).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from typing import Any, Iterable
+
+ROOT = __import__("pathlib").Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from cli.scan_pure_futures_spreads import scan_pure_futures_spreads  # noqa: E402
+
+# Telegram hard limit for ``sendMessage`` — we leave headroom for the header.
+TG_MESSAGE_LIMIT = 4096
+TG_CHUNK_LIMIT = 3800
+
+DEFAULT_CEX_VENUES = ["binance", "bitget", "bybit", "okx"]
+DEFAULT_DEX_VENUES = ["hyperliquid", "aster", "lighter", "edgex", "dydx"]
+
+DEFAULT_TOP_N = 10
+DEFAULT_MIN_EDGE = 0.03  # 0.03% per settlement cycle — same as CLI default band
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+
+def _load_config() -> dict[str, str]:
+    """Read Telegram credentials from environment.
+
+    Matches the key names used by :mod:`scripts.core.notify` so users only
+    need to configure secrets once.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    return {"telegram_bot_token": token, "telegram_chat_id": chat_id}
+
+
+# ---------------------------------------------------------------------------
+# Formatting
+# ---------------------------------------------------------------------------
+
+
+def _fmt_pct(x: float | None, plus: bool = True) -> str:
+    """Format a percentage value, tolerant of None / NaN."""
+    if x is None:
+        return "n/a"
+    try:
+        if plus and x >= 0:
+            return f"+{x:.4f}%"
+        return f"{x:.4f}%"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _escape_html(text: str) -> str:
+    """Telegram sendMessage parse_mode=HTML needs the five XML entities."""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )
+
+
+def _format_one(spread: dict[str, Any]) -> str:
+    """One spread entry → one Telegram line (HTML)."""
+    base = _escape_html(str(spread.get("base", "?")))
+    long_venue = _escape_html(str(spread.get("long_venue", "?")))
+    short_venue = _escape_html(str(spread.get("short_venue", "?")))
+    direction = spread.get("direction", "forward")
+    arrow = "🟢" if direction == "forward" else "🔴"
+
+    long_rate = _fmt_pct(spread.get("long_rate_pct"))
+    short_rate = _fmt_pct(spread.get("short_rate_pct"))
+    spread_pct = _fmt_pct(spread.get("spread_pct"), plus=False)
+    net_edge = _fmt_pct(spread.get("net_edge_pct"))
+    annual = spread.get("annual_apy_pct")
+    annual_str = f"{annual:.0f}% APR" if isinstance(annual, (int, float)) else "n/a"
+
+    mark_spread = spread.get("mark_spread_pct")
+    mark_str = (
+        f" | markΔ {mark_spread:.3f}%" if isinstance(mark_spread, (int, float)) else ""
+    )
+
+    settle_flag = " ⚠️" if spread.get("settle_mismatch") else ""
+
+    return (
+        f"{arrow} <b>{base}</b>  {long_venue}L / {short_venue}S{settle_flag}\n"
+        f"   rate {long_rate} vs {short_rate}  →  spread {spread_pct}\n"
+        f"   net_edge <b>{net_edge}</b>  ({annual_str}{mark_str})"
+    )
+
+
+def format_digest(
+    result: dict[str, Any],
+    top_n: int = DEFAULT_TOP_N,
+    title: str | None = None,
+) -> list[str]:
+    """Build one or more Telegram HTML messages.
+
+    Splits the digest into multiple messages if it would exceed Telegram's
+    4096-char limit. Returns a list so callers can post sequentially.
+
+    Always returns at least one message (an empty-result notice when no
+    spreads crossed the threshold).
+    """
+    venues = result.get("venues", [])
+    ts = result.get("timestamp", "")
+    try:
+        parsed = datetime.fromisoformat(ts).astimezone(timezone.utc)
+        ts_human = parsed.strftime("%Y-%m-%d %H:%M UTC")
+    except (TypeError, ValueError):
+        ts_human = ts or datetime.now(timezone.utc).isoformat()
+
+    all_rows: list[dict[str, Any]] = []
+    for x in result.get("forward", []):
+        x = dict(x)
+        x.setdefault("direction", "forward")
+        all_rows.append(x)
+    for x in result.get("reverse", []):
+        x = dict(x)
+        x.setdefault("direction", "reverse")
+        all_rows.append(x)
+    all_rows.sort(key=lambda x: -float(x.get("net_edge_pct", -1e9)))
+
+    top = all_rows[:top_n]
+    total = len(all_rows)
+    assets = result.get("total_assets_scanned", "?")
+    header_venues = ", ".join(venues) if venues else "n/a"
+
+    head = (
+        f"📊 <b>Funding Spread Digest</b>\n"
+        f"<i>{_escape_html(ts_human)}</i>\n"
+        f"venues: {_escape_html(header_venues)} · assets: {assets} · "
+        f"candidates: {total}\n"
+        f"{'─' * 24}"
+    )
+    if title:
+        head = f"{title}\n{head}"
+
+    if not top:
+        return [f"{head}\n\nNo spreads above threshold this cycle. 🌱"]
+
+    chunks: list[str] = []
+    current = head + "\n\n"
+    for i, row in enumerate(top, start=1):
+        block = f"<b>{i}.</b>  " + _format_one(row) + "\n\n"
+        if len(current) + len(block) > TG_CHUNK_LIMIT:
+            chunks.append(current.rstrip())
+            current = ""
+        current += block
+
+    footer = (
+        f"\n<i>net_edge = funding spread − open-leg taker fees; "
+        f"⚠️ = settlement mismatch (e.g. 1h vs 8h).</i>"
+    )
+    if len(current) + len(footer) > TG_MESSAGE_LIMIT:
+        chunks.append(current.rstrip())
+        chunks.append(footer.strip())
+    else:
+        chunks.append((current + footer).rstrip())
+
+    return chunks
+
+
+# ---------------------------------------------------------------------------
+# Sending
+# ---------------------------------------------------------------------------
+
+
+def send_telegram_message(
+    text: str,
+    config: dict[str, str],
+    *,
+    timeout: float = 10.0,
+) -> bool:
+    """POST a single ``sendMessage`` to Telegram.
+
+    Returns True on HTTP 200. Raises on network errors so callers can
+    decide between retry / abort.
+    """
+    token = config["telegram_bot_token"]
+    chat_id = config["telegram_chat_id"]
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    payload = json.dumps(
+        {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+    ).encode("utf-8")
+
+    req = urllib.request.Request(
+        url, data=payload, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return response.status == 200
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")[:300]
+        raise RuntimeError(f"Telegram HTTP {e.code}: {body}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Telegram network error: {e.reason}") from e
+
+
+def broadcast(
+    messages: Iterable[str],
+    config: dict[str, str],
+    *,
+    dry_run: bool = False,
+    sleep_between: float = 0.5,
+) -> tuple[int, int]:
+    """Send a sequence of messages. Returns (sent, failed)."""
+    sent, failed = 0, 0
+    for msg in messages:
+        if dry_run:
+            print(f"[dry-run] Would post {len(msg)} chars:\n{msg}\n")
+            sent += 1
+            continue
+        try:
+            ok = send_telegram_message(msg, config)
+        except RuntimeError as e:
+            print(f"[push] failed: {e}", file=sys.stderr)
+            failed += 1
+            continue
+        if ok:
+            sent += 1
+        else:
+            failed += 1
+        time.sleep(sleep_between)
+    return sent, failed
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def _resolve_venues(venues_arg: str | None, include_dex: bool) -> list[str]:
+    if venues_arg:
+        return [v.strip().lower() for v in venues_arg.split(",") if v.strip()]
+    if include_dex:
+        return DEFAULT_CEX_VENUES + DEFAULT_DEX_VENUES
+    return DEFAULT_CEX_VENUES + ["hyperliquid"]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Push funding-spread digest to a Telegram chat (cron-friendly)."
+    )
+    parser.add_argument(
+        "--venues",
+        default=None,
+        help="Comma-separated venues (default: CEX + hyperliquid)",
+    )
+    parser.add_argument(
+        "--include-dex",
+        action="store_true",
+        help="Include all perp DEX venues (hyperliquid,aster,lighter,edgex,dydx)",
+    )
+    parser.add_argument(
+        "--min-edge",
+        type=float,
+        default=DEFAULT_MIN_EDGE,
+        help=f"Minimum net edge %% after fees (default {DEFAULT_MIN_EDGE}%%)",
+    )
+    parser.add_argument(
+        "--min-spread",
+        type=float,
+        default=0.03,
+        help="Minimum raw funding spread %% (default 0.03%%)",
+    )
+    parser.add_argument(
+        "--max-mark-spread",
+        type=float,
+        default=1.0,
+        help="Max mark price spread %% between venues (default 1.0%%)",
+    )
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=DEFAULT_TOP_N,
+        help=f"Top-N rows to publish (default {DEFAULT_TOP_N})",
+    )
+    parser.add_argument(
+        "--title",
+        default=None,
+        help="Optional extra title line at the top of the digest",
+    )
+    parser.add_argument(
+        "--workers",
+        "-w",
+        type=int,
+        default=16,
+        help="Parallel I/O workers (passed to scanner)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Format the digest and print it, but do not POST to Telegram",
+    )
+    args = parser.parse_args()
+
+    config = _load_config()
+    if not args.dry_run and not (
+        config["telegram_bot_token"] and config["telegram_chat_id"]
+    ):
+        print(
+            "[push] TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — "
+            "nothing to do (exit 0).",
+            file=sys.stderr,
+        )
+        return 0
+
+    venues = _resolve_venues(args.venues, args.include_dex)
+    print(f"[push] scanning venues={venues} min_edge={args.min_edge}", file=sys.stderr)
+
+    t0 = time.time()
+    try:
+        result = scan_pure_futures_spreads(
+            venues=venues,
+            min_spread=args.min_spread,
+            min_edge=args.min_edge,
+            max_mark_spread_pct=args.max_mark_spread,
+            workers=args.workers,
+        )
+    except Exception as e:
+        print(f"[push] scanner raised: {e}", file=sys.stderr)
+        return 2
+    elapsed = time.time() - t0
+    print(
+        f"[push] scan done in {elapsed:.1f}s — "
+        f"{result.get('total_spreads_found', 0)} candidates",
+        file=sys.stderr,
+    )
+
+    messages = format_digest(result, top_n=args.top, title=args.title)
+    print(
+        f"[push] formatted {len(messages)} message(s) for top {args.top} candidates",
+        file=sys.stderr,
+    )
+
+    sent, failed = broadcast(messages, config, dry_run=args.dry_run)
+    print(f"[push] sent={sent} failed={failed}", file=sys.stderr)
+    if failed > 0 and not args.dry_run:
+        return 3
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

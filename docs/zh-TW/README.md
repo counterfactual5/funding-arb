@@ -12,6 +12,7 @@ Algorithm and strategy reference for the Funding Arb scanner. Generated from `we
 | [Pure Futures 永續套利](./pure-futures.md) | 雙永續費率差、net / real edge |
 | [跨週期資金費率套利](./cross-interval.md) | basis blend、real_edge 與程式實作 |
 | [費率與邊際計算](./fees-and-edge.md) | fee_mode、VIP 等級與各類邊際欄位 |
+| [無伺服器資料管線](./serverless-pipeline.md) | GitHub Actions → gh-pages → jsDelivr → Vercel 的零成本即時 demo 架構 |
 
 ## Repository docs
 

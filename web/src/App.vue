@@ -31,6 +31,8 @@ import {
   LockClosedOutline,
 } from '@vicons/ionicons5'
 import { useWebSocket, type TradingMode } from '@/composables/useApi'
+import { isDemoMode, useDemoSnapshot } from '@/composables/useDemoSnapshot'
+import DemoBanner from '@/components/DemoBanner.vue'
 import i18n, { setLocale, SUPPORTED_LOCALES, type SupportedLocale } from '@/i18n'
 
 const { t } = useI18n()
@@ -97,10 +99,24 @@ const currentLocale = computed({
 
 const { connected, connect: wsConnect, disconnect: wsDisconnect } = useWebSocket()
 
+// Demo-mode snapshot state (drives the banner + suppresses backend calls).
+// Unwrap refs here so the template can use plain values (Vue auto-unwraps
+// top-level refs in templates, but not nested refs inside a plain object).
+const _demoApi = isDemoMode ? useDemoSnapshot() : null
+const demoUrl = _demoApi?.url ?? ''
+const demoSnapshot = _demoApi?.snapshot ?? null
+const demoLoading = _demoApi?.loading ?? null
+const demoScanTime = computed(() => demoSnapshot?.value?.meta.scan_timestamp ?? null)
+
 const tradingMode = ref<TradingMode | null>(null)
 let tradingModeTimer: ReturnType<typeof setInterval> | null = null
 
 async function fetchTradingMode() {
+  // Demo mode: stub trading mode so the header badge renders cleanly.
+  if (isDemoMode) {
+    tradingMode.value = { mode: 'dry_run', venues: {} }
+    return
+  }
   try {
     const response = await fetch('/api/settings/trading-mode')
     const json = await response.json()
@@ -115,9 +131,15 @@ function handleMenuUpdate(key: string) {
 }
 
 onMounted(() => {
-  wsConnect()
-  fetchTradingMode()
-  tradingModeTimer = setInterval(fetchTradingMode, 30000)
+  // Skip the WebSocket / trading-mode polls in demo mode — there is no
+  // backend to talk to, and the static host would 404 on /ws and /api/*.
+  if (!isDemoMode) {
+    wsConnect()
+    fetchTradingMode()
+    tradingModeTimer = setInterval(fetchTradingMode, 30000)
+  } else {
+    _demoApi?.ensure()
+  }
 })
 
 onUnmounted(() => {
@@ -201,6 +223,12 @@ onUnmounted(() => {
         </n-layout-header>
 
         <n-layout-content class="app-content" :native-scrollbar="false">
+          <DemoBanner
+            v-if="isDemoMode"
+            :source="demoUrl"
+            :scan-time="demoScanTime"
+            :loading="demoLoading ?? false"
+          />
           <n-message-provider>
             <router-view />
           </n-message-provider>

@@ -142,6 +142,84 @@ Two parallel execution paths coexist:
 .venv/bin/python scripts/cli/pure_futures_trade.py close <position_id> --dry-run
 ```
 
+### Telegram digest bot (cron-friendly)
+
+A thin scan-and-push wrapper that runs once, formats the top-N pure-futures
+spreads, posts a Markdown digest to a Telegram chat/channel, and exits. No
+long-running state, no order execution — perfect for GitHub Actions cron,
+systemd timers, or any serverless scheduler.
+
+```bash
+# 1. Configure secrets (any of: .env, shell export, GitHub Actions secrets)
+export TELEGRAM_BOT_TOKEN="123456:ABC-..."        # from @BotFather
+export TELEGRAM_CHAT_ID="@your_channel"          # or numeric -100...
+
+# 2. Smoke-test locally without posting
+.venv/bin/python scripts/notify/telegram_push.py --dry-run --top 5
+
+# 3. Real push
+.venv/bin/python scripts/notify/telegram_push.py --top 10 --min-edge 0.03
+
+# 4. Include perp DEX venues (HL / Aster / Lighter / EdgeX / dYdX)
+.venv/bin/python scripts/notify/telegram_push.py --include-dex
+```
+
+**GitHub Actions cron** — see [`.github/workflows/telegram-push.yml`](.github/workflows/telegram-push.yml).
+Runs hourly at `:07`. Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` under
+`Settings → Secrets and variables → Actions`, then trigger via
+`Actions → TG Funding Push → Run workflow`.
+
+> 💡 GitHub-hosted runners are outside China, so they reach `api.telegram.org`
+> without a proxy. If you self-host the cron from a mainland CN network,
+> route through a HK / SG box or configure an HTTPS proxy.
+
+Tests: `scripts/tests/test_telegram_push.py` (32 cases — formatting, chunking,
+HTML escaping, venue resolution; no network).
+
+### Live Demo (Vercel + GitHub Actions data pipeline)
+
+A read-only public demo of the dashboard runs on Vercel, refreshed hourly by
+the same GitHub Actions cron that drives the Telegram bot. Zero ongoing cost,
+zero servers, **zero Vercel rebuilds** — fresh data lands via a CDN fetch at
+runtime.
+
+```mermaid
+graph LR
+    A[GitHub Actions<br/>cron hourly :07] -->|scan 9 venues| B[scanner-latest.json]
+    A -->|push top-N digest| C[Telegram channel]
+    B -->|commit to orphan branch| D[gh-pages]
+    D -->|mirror| E[jsDelivr CDN]
+    F[Vercel static site] -->|runtime fetch<br/>no rebuild| E
+    G[User opens URL] --> F
+```
+
+**One-time setup:**
+
+1. Push to `main` — the workflow (`telegram-push.yml`) creates the `gh-pages`
+   orphan branch automatically on first run.
+2. Import the repo on Vercel → set framework to **Vite** → add env vars:
+   - `VITE_DEMO_MODE=1`
+   - `VITE_DEMO_SNAPSHOT_PATH=/gh/<USER>/funding-arb@gh-pages/scanner-latest.json`
+3. Deploy. Open the URL — you'll see the `🎭 Demo Mode` banner with the last
+   scan timestamp, refreshed every 10 minutes.
+
+**Local demo smoke-test:**
+
+```bash
+# Generate a snapshot from real exchange data
+.venv/bin/python scripts/notify/snapshot_to_pages.py --out /tmp/s.json --top 30
+
+# Run the dev server in demo mode
+cd web && VITE_DEMO_MODE=1 npm run dev
+
+# Or force demo mode on any deployment via query string
+open 'http://localhost:1420/?demo=1'
+```
+
+See [`docs/zh-CN/serverless-pipeline.md`](docs/zh-CN/serverless-pipeline.md)
+(or [en](docs/en/serverless-pipeline.md) / [zh-TW](docs/zh-TW/serverless-pipeline.md))
+for the full architecture write-up.
+
 ### Reports & backtesting
 
 ```bash

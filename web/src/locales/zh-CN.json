@@ -57,6 +57,11 @@
         "title": "费率与边际计算",
         "desc": "fee_mode、VIP 档位与各类边际字段",
         "tag": "参考"
+      },
+      "serverlessPipeline": {
+        "title": "无服务器数据流水线",
+        "desc": "GitHub Actions → gh-pages → jsDelivr → Vercel 的零成本实时 demo 架构",
+        "tag": "部署"
       }
     }
   },

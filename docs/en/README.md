@@ -12,6 +12,7 @@ Algorithm and strategy reference for the Funding Arb scanner. Generated from `we
 | [Pure Futures Spread](./pure-futures.md) | Perp-perp rate differential, net / real edge |
 | [Cross-Interval Funding Arbitrage](./cross-interval.md) | Basis blend, real_edge, and implementation |
 | [Fees & Edge Calculation](./fees-and-edge.md) | fee_mode, VIP tiers, and edge fields |
+| [Serverless Data Pipeline](./serverless-pipeline.md) | GitHub Actions → gh-pages → jsDelivr → Vercel: zero-cost live demo architecture |
 
 ## Repository docs
 

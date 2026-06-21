@@ -1,7 +1,22 @@
 import type { Ref } from "vue";
 import { ref, onUnmounted } from "vue";
+import {
+  isDemoMode,
+  resolveDemoRoute,
+  useDemoSnapshot,
+} from "@/composables/useDemoSnapshot";
 
 const API_BASE = "/api";
+
+// In demo mode, prime the snapshot cache on module load so the very first
+// `useApi(...)` call already has data to resolve against.
+if (isDemoMode) {
+  useDemoSnapshot()
+    .ensure()
+    .catch(() => {
+      /* surfaced via useDemoSnapshot().error */
+    });
+}
 
 // ─── Types (aligned with backend) ───────────────────────────────────
 
@@ -216,6 +231,17 @@ export interface ApiResponse<T> {
 // ─── Request helpers ────────────────────────────────────────────────
 
 async function request<T>(url: string): Promise<T> {
+  // Demo mode: short-circuit known GET paths against the snapshot cache.
+  // Falls through for unknown paths (POST endpoints, write APIs, etc.) so
+  // they fail loudly against the static host rather than silently stubbing.
+  if (isDemoMode) {
+    // Make sure the snapshot is loaded (no-op if already cached).
+    await useDemoSnapshot().ensure();
+    const demoData = resolveDemoRoute(url);
+    if (demoData !== undefined) {
+      return demoData as T;
+    }
+  }
   const response = await fetch(`${API_BASE}${url}`);
   if (!response.ok) {
     throw new Error(`API ${response.status}: ${response.statusText}`);

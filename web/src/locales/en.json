@@ -57,6 +57,11 @@
         "title": "Fees & Edge Calculation",
         "desc": "fee_mode, VIP tiers, and edge fields",
         "tag": "Reference"
+      },
+      "serverlessPipeline": {
+        "title": "Serverless Data Pipeline",
+        "desc": "GitHub Actions → gh-pages → jsDelivr → Vercel: zero-cost live demo architecture",
+        "tag": "Deploy"
       }
     }
   },

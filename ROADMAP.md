@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-06-13
+Last updated: 2026-06-21
 
 ## Completed
 
@@ -56,6 +56,26 @@ Last updated: 2026-06-13
 ### AI / CLI skill
 
 Project CLI skill: [`SKILL.md`](SKILL.md) (repo root)
+
+### Telegram digest broadcaster (cron / serverless)
+
+| Area | Status | Entry points |
+|------|--------|--------------|
+| `scripts/notify/telegram_push.py` | Done | scan → format → push; chunked HTML messages; `--dry-run` smoke test |
+| GitHub Actions cron | Done | `.github/workflows/telegram-push.yml` — hourly at :07, manual dispatch |
+| Tests | Done | `scripts/tests/test_telegram_push.py` (32 cases) |
+
+### Vercel demo (no-server data pipeline)
+
+| Area | Status | Entry points |
+|------|--------|--------------|
+| `scripts/notify/snapshot_to_pages.py` | Done | builds `scanner-latest.json` from scanner result |
+| gh-pages orphan branch push | Done | `telegram-push.yml` step 2 — `[skip ci]` commits, no main pollution |
+| Frontend demo mode | Done | `web/src/composables/useDemoSnapshot.ts`; `VITE_DEMO_MODE=1` or `?demo=1` |
+| Demo banner | Done | `web/src/components/DemoBanner.vue` — top alert w/ last-scan timestamp |
+| Vercel config | Done | `web/vercel.json` — SPA rewrite, Vite framework |
+| In-app doc (3 langs) | Done | `docs/{zh-CN,en,zh-TW}/serverless-pipeline.md` |
+| Tests | Done | `scripts/tests/test_snapshot_to_pages.py` (18 cases) |
 
 ---
 

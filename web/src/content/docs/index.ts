@@ -17,6 +17,7 @@ import { unifiedCarryArticle } from "./articles/unifiedCarry";
 import { pureFuturesArticle } from "./articles/pureFutures";
 import { crossIntervalArticle } from "./articles/crossInterval";
 import { feesAndEdgeArticle } from "./articles/feesAndEdge";
+import { serverlessPipelineArticle } from "./articles/serverlessPipeline";
 import type { DocArticleDef, DocSection } from "./types";
 
 export type { DocBlock, DocSection, DocArticleDef } from "./types";
@@ -30,6 +31,7 @@ export const DOC_ARTICLES: DocArticleDef[] = [
   pureFuturesArticle,
   crossIntervalArticle,
   feesAndEdgeArticle,
+  serverlessPipelineArticle,
 ];
 
 export const DEFAULT_DOC_SLUG = DOC_ARTICLES[0]?.slug ?? "overview";

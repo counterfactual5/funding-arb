@@ -57,6 +57,11 @@
         "title": "費率與邊際計算",
         "desc": "fee_mode、VIP 等級與各類邊際欄位",
         "tag": "參考"
+      },
+      "serverlessPipeline": {
+        "title": "無伺服器資料管線",
+        "desc": "GitHub Actions → gh-pages → jsDelivr → Vercel 的零成本即時 demo 架構",
+        "tag": "部署"
       }
     }
   },
