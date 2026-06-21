@@ -1,0 +1,73 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "generated_at": "2026-06-21T10:08:29.924160+00:00",
+    "scan_timestamp": "2026-06-21T10:08:29.924079+00:00",
+    "pipeline": {
+      "runner": "Linux",
+      "repo": "counterfactual5/funding-arb",
+      "run_id": "27900991651",
+      "git_sha": "a9a84de",
+      "elapsed_sec": 15.91
+    }
+  },
+  "scanner_status": {
+    "scanning": false,
+    "last_scan_time": "2026-06-21T10:08:29.924079+00:00",
+    "has_data": true,
+    "live": false,
+    "is_demo_snapshot": true
+  },
+  "scanner_opportunities": {
+    "venues": [
+      "binance",
+      "bitget",
+      "bybit",
+      "okx",
+      "hyperliquid"
+    ],
+    "total_assets_scanned": 731,
+    "total_spreads_found": 1,
+    "forward": [],
+    "reverse": [
+      {
+        "base": "HOME",
+        "direction": "reverse",
+        "long_venue": "okx",
+        "short_venue": "bitget",
+        "long_rate_pct": -0.212415,
+        "short_rate_pct": -0.0566,
+        "spread_pct": 0.151535,
+        "long_fee_pct": 0.05,
+        "short_fee_pct": 0.06,
+        "fee_pct": 0.11,
+        "round_trip_fee_pct": 0.22,
+        "net_edge_pct": 0.041535,
+        "annual_apy_pct": 331.9,
+        "net_apy_pct": 331.6,
+        "long_settle_ms": 1782043200000,
+        "short_settle_ms": 1782057600000,
+        "long_interval_h": 4.0,
+        "short_interval_h": 8.0,
+        "settle_mismatch": true,
+        "same_interval": false,
+        "long_mark": 0.0199,
+        "short_mark": 0.01991,
+        "mark_spread_pct": 0.050226,
+        "real_edge_pct": -0.008691,
+        "long_basis_pct": null,
+        "short_basis_pct": -0.3,
+        "long_settle_progress": null,
+        "short_settle_progress": 0.2677,
+        "spread_source": "basis_blend"
+      }
+    ],
+    "venue_pair_stats": [
+      {
+        "pair": "okx↔bitget",
+        "count": 1
+      }
+    ],
+    "timestamp": "2026-06-21T10:08:29.924079+00:00"
+  }
+}
