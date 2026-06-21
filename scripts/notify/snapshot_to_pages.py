@@ -81,7 +81,15 @@ def build_snapshot(
         x.setdefault("direction", "reverse")
 
     all_rows = forward + reverse
-    all_rows.sort(key=lambda x: -float(x.get("net_edge_pct", -1e9)))
+    # Rank by basis-adjusted real edge (scanner's primary metric), falling back
+    # to net edge so older snapshots without the field still sort sanely.
+    all_rows.sort(
+        key=lambda x: -float(
+            x["real_edge_pct"]
+            if x.get("real_edge_pct") is not None
+            else x.get("net_edge_pct", -1e9)
+        )
+    )
     top_rows = all_rows[:top_n]
 
     ts = scan_result.get("timestamp") or datetime.now(timezone.utc).isoformat()
@@ -136,8 +144,8 @@ def main() -> int:
     parser.add_argument(
         "--min-edge",
         type=float,
-        default=0.03,
-        help="Minimum net edge % (default 0.03)",
+        default=0.0,
+        help="Minimum net edge %% after fees (default 0.0 — any positive edge)",
     )
     parser.add_argument(
         "--min-spread",

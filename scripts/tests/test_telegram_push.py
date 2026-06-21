@@ -42,12 +42,22 @@ def _make_spread(**overrides) -> dict:
         "short_rate_pct": -0.0050,
         "spread_pct": 0.0175,
         "fee_pct": 0.0080,
+        "round_trip_fee_pct": 0.0160,
         "net_edge_pct": 0.0095,
         "annual_apy_pct": 83.0,
+        "net_apy_pct": 41.0,
         "mark_spread_pct": 0.03,
+        "long_interval_h": 8.0,
+        "short_interval_h": 8.0,
         "settle_mismatch": False,
     }
     base.update(overrides)
+    # real_edge mirrors the scanner: net_edge − mark divergence. Derive it from
+    # whatever net_edge the caller supplied so ranking tests stay monotonic.
+    base.setdefault(
+        "real_edge_pct",
+        round(base["net_edge_pct"] - base.get("mark_spread_pct", 0.0), 6),
+    )
     return base
 
 
@@ -141,14 +151,44 @@ class TestFormatDigest:
         assert "🔴" in format_digest(reverse)[0]
 
     def test_settle_mismatch_flag(self):
-        # Footer always mentions "⚠️ = settlement mismatch" as a legend, so we
-        # assert on the in-row flag (right after the leg pair) not the whole msg.
         clean = _make_result(rows=[_make_spread(base="CLEAN", settle_mismatch=False)])
         bad = _make_result(rows=[_make_spread(base="RISKY", settle_mismatch=True)])
-        clean_body = format_digest(clean)[0].split("net_edge = funding")[0]
-        bad_body = format_digest(bad)[0].split("net_edge = funding")[0]
+        clean_body = format_digest(clean)[0]
+        bad_body = format_digest(bad)[0]
         assert "bybitS ⚠️" not in clean_body
         assert "bybitS ⚠️" in bad_body
+
+    def test_settle_mismatch_shows_actual_intervals(self):
+        bad = _make_result(
+            rows=[
+                _make_spread(
+                    base="HOME",
+                    settle_mismatch=True,
+                    long_interval_h=1.0,
+                    short_interval_h=8.0,
+                )
+            ]
+        )
+        body = format_digest(bad)[0]
+        assert "⚠️ 1h/8h" in body
+
+    def test_shows_real_edge_and_net_apr(self):
+        result = _make_result(
+            rows=[_make_spread(net_edge_pct=0.05, annual_apy_pct=300.0, net_apy_pct=150.0)]
+        )
+        body = format_digest(result)[0]
+        assert "real_edge" in body
+        assert "300% gross" in body
+        assert "150% net" in body
+
+    def test_ranks_by_real_edge_not_net_edge(self):
+        # A row with a big net_edge but huge mark divergence (small real_edge)
+        # must rank BELOW a clean row with a smaller net_edge.
+        dirty = _make_spread(base="DIRTY", net_edge_pct=0.09, real_edge_pct=0.001)
+        clean = _make_spread(base="CLEAN", net_edge_pct=0.04, real_edge_pct=0.039)
+        result = _make_result(rows=[dirty, clean])
+        body = format_digest(result, top_n=2)[0]
+        assert body.index("CLEAN") < body.index("DIRTY")
 
     def test_title_prepended(self):
         result = _make_result()

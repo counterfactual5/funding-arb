@@ -63,7 +63,9 @@ DEFAULT_CEX_VENUES = ["binance", "bitget", "bybit", "okx"]
 DEFAULT_DEX_VENUES = ["hyperliquid", "aster", "lighter", "edgex", "dydx"]
 
 DEFAULT_TOP_N = 10
-DEFAULT_MIN_EDGE = 0.03  # 0.03% per settlement cycle — same as CLI default band
+# Push anything with a positive net edge (spread − open-leg taker fee >= 0).
+# Tighten via --min-edge when the channel gets noisy in calm markets.
+DEFAULT_MIN_EDGE = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +101,15 @@ def _fmt_pct(x: float | None, plus: bool = True) -> str:
         return "n/a"
 
 
+def _fmt_interval(h: Any) -> str:
+    """Funding interval in hours → compact label (8.0 → '8h', 0.5 → '0.5h')."""
+    try:
+        hv = float(h)
+    except (TypeError, ValueError):
+        return "?"
+    return f"{int(hv)}h" if hv == int(hv) else f"{hv:g}h"
+
+
 def _escape_html(text: str) -> str:
     """Telegram sendMessage parse_mode=HTML needs the five XML entities."""
     return (
@@ -122,21 +133,62 @@ def _format_one(spread: dict[str, Any]) -> str:
     short_rate = _fmt_pct(spread.get("short_rate_pct"))
     spread_pct = _fmt_pct(spread.get("spread_pct"), plus=False)
     net_edge = _fmt_pct(spread.get("net_edge_pct"))
-    annual = spread.get("annual_apy_pct")
-    annual_str = f"{annual:.0f}% APR" if isinstance(annual, (int, float)) else "n/a"
 
+    # Settlement-interval mismatch: surface the *actual* intervals (e.g. 1h/8h)
+    # so the reader can judge how lopsided the funding accrual is.
+    if spread.get("settle_mismatch"):
+        flag = (
+            f" ⚠️ {_fmt_interval(spread.get('long_interval_h'))}"
+            f"/{_fmt_interval(spread.get('short_interval_h'))}"
+        )
+    else:
+        flag = ""
+
+    # real_edge = net_edge − cross-venue mark divergence (basis risk). This is
+    # the scanner's primary ranking metric; net_edge alone overstates a perp
+    # that is dislocated from its peer venue.
+    real_edge_val = spread.get("real_edge_pct")
     mark_spread = spread.get("mark_spread_pct")
-    mark_str = (
-        f" | markΔ {mark_spread:.3f}%" if isinstance(mark_spread, (int, float)) else ""
-    )
+    if real_edge_val is not None:
+        mark_str = (
+            f" after markΔ {mark_spread:.3f}%"
+            if isinstance(mark_spread, (int, float))
+            else ""
+        )
+        real_line = f"\n   real_edge <b>{_fmt_pct(real_edge_val)}</b>{mark_str}"
+    else:
+        real_line = ""
 
-    settle_flag = " ⚠️" if spread.get("settle_mismatch") else ""
+    # Gross vs net APR — net (net_apy_pct) deducts round-trip fees + entry basis.
+    gross = spread.get("annual_apy_pct")
+    net_apy = spread.get("net_apy_pct")
+    gross_str = f"{gross:.0f}%" if isinstance(gross, (int, float)) else "n/a"
+    net_str = f"{net_apy:.0f}%" if isinstance(net_apy, (int, float)) else "n/a"
+    rt_fee = spread.get("round_trip_fee_pct")
+    fee_str = f" · fee rt {rt_fee:.3f}%" if isinstance(rt_fee, (int, float)) else ""
 
     return (
-        f"{arrow} <b>{base}</b>  {long_venue}L / {short_venue}S{settle_flag}\n"
+        f"{arrow} <b>{base}</b>  {long_venue}L / {short_venue}S{flag}\n"
         f"   rate {long_rate} vs {short_rate}  →  spread {spread_pct}\n"
-        f"   net_edge <b>{net_edge}</b>  ({annual_str}{mark_str})"
+        f"   net_edge <b>{net_edge}</b>{real_line}\n"
+        f"   APR {gross_str} gross / {net_str} net{fee_str}"
     )
+
+
+def _rank_value(row: dict[str, Any]) -> float:
+    """Ranking metric: basis-adjusted real edge, falling back to net edge.
+
+    Mirrors the scanner's own ordering (``scan_pure_futures_spreads`` sorts by
+    ``real_edge_pct``) so the digest top-N matches what the scanner considers
+    the cleanest opportunities — not just the largest raw funding edge.
+    """
+    v = row.get("real_edge_pct")
+    if v is None:
+        v = row.get("net_edge_pct", -1e9)
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return -1e9
 
 
 def format_digest(
@@ -169,7 +221,7 @@ def format_digest(
         x = dict(x)
         x.setdefault("direction", "reverse")
         all_rows.append(x)
-    all_rows.sort(key=lambda x: -float(x.get("net_edge_pct", -1e9)))
+    all_rows.sort(key=lambda x: -_rank_value(x))
 
     top = all_rows[:top_n]
     total = len(all_rows)
@@ -199,8 +251,10 @@ def format_digest(
         current += block
 
     footer = (
-        f"\n<i>net_edge = funding spread − open-leg taker fees; "
-        f"⚠️ = settlement mismatch (e.g. 1h vs 8h).</i>"
+        "\n<i>net_edge = spread − open-leg taker fee · "
+        "real_edge = net_edge − markΔ (basis risk)\n"
+        "APR net deducts round-trip fee · fees = standard taker tier "
+        "(VIP lower) · ⚠️ = settlement-interval mismatch.</i>"
     )
     if len(current) + len(footer) > TG_MESSAGE_LIMIT:
         chunks.append(current.rstrip())
