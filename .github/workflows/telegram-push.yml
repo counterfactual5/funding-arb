@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       min_edge:
-        description: "Minimum net edge % (e.g. 0.05)"
+        description: "Minimum net edge % (0.0 = any positive edge)"
         required: false
-        default: "0.03"
+        default: "0.0"
       top_n:
         description: "How many top spreads to publish"
         required: false
@@ -18,7 +18,7 @@ on:
         description: "Include perp DEX venues (hyperliquid/aster/lighter/edgex/dydx)"
         type: boolean
         required: false
-        default: false
+        default: true
 
 # Grant the in-built GITHUB_TOKEN write access so we can push the snapshot
 # to the orphan `gh-pages` branch without needing a separate PAT.
@@ -58,9 +58,9 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python scripts/notify/telegram_push.py \
-            --min-edge "${{ github.event.inputs.min_edge || '0.03' }}" \
+            --min-edge "${{ github.event.inputs.min_edge || '0.0' }}" \
             --top "${{ github.event.inputs.top_n || '10' }}" \
-            ${{ github.event.inputs.include_dex == 'true' && '--include-dex' || '' }}
+            ${{ (github.event_name != 'workflow_dispatch' || github.event.inputs.include_dex == 'true') && '--include-dex' || '' }}
 
       # ----------------------------------------------------------------
       # Step 2 — Snapshot for the Vercel demo (commit to gh-pages orphan)
@@ -73,8 +73,8 @@ jobs:
           python scripts/notify/snapshot_to_pages.py \
             --out /tmp/scanner-latest.json \
             --top 30 \
-            --min-edge "${{ github.event.inputs.min_edge || '0.03' }}" \
-            ${{ github.event.inputs.include_dex == 'true' && '--include-dex' || '' }}
+            --min-edge "${{ github.event.inputs.min_edge || '0.0' }}" \
+            ${{ (github.event_name != 'workflow_dispatch' || github.event.inputs.include_dex == 'true') && '--include-dex' || '' }}
 
       - name: Publish snapshot to gh-pages
         env:
