@@ -3,7 +3,7 @@ name: TG Funding Push
 on:
   schedule:
     # Minutes past every hour — offset away from :00 to dodge GitHub's cron spike.
-    - cron: "7 * * *"
+    - cron: "7 * * * *"
   workflow_dispatch:
     inputs:
       min_edge:
