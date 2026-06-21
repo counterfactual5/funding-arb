@@ -200,6 +200,22 @@ class TestFormatDigest:
         body = format_digest(result)[0]
         assert "1-cycle net <b>-0.0400%</b>" in body
 
+    def test_persistence_line_rendered_from_top_rows(self):
+        row = _make_spread(
+            base="BTC", hist_cycles=24, hist_held=22, hist_held_pct=92, is_spike=False
+        )
+        result = _make_result(rows=[row])
+        body = format_digest(result, top_rows=[row])[0]
+        assert "held 22/24 cyc (92%)" in body
+        assert "⚡spike" not in body
+
+    def test_persistence_spike_flag_rendered(self):
+        row = _make_spread(
+            base="HOME", hist_cycles=24, hist_held=3, hist_held_pct=12, is_spike=True
+        )
+        body = format_digest(_make_result(rows=[row]), top_rows=[row])[0]
+        assert "⚡spike" in body
+
     def test_ranks_by_real_edge_not_net_edge(self):
         # A row with a big net_edge but huge mark divergence (small real_edge)
         # must rank BELOW a clean row with a smaller net_edge.

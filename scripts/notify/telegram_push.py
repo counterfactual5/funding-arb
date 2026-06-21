@@ -219,6 +219,21 @@ def _format_one(
     else:
         one_cycle_line = ""
 
+    # Persistence: how many recent cycles the oriented spread stayed positive,
+    # plus a ⚡ flag when the current spread is an outlier vs its own history
+    # (i.e. a transient spike, not a repeatable carry).
+    hist_cycles = spread.get("hist_cycles")
+    if isinstance(hist_cycles, (int, float)) and hist_cycles:
+        held = spread.get("hist_held", 0)
+        held_pct = spread.get("hist_held_pct", 0)
+        spike = " ⚡spike" if spread.get("is_spike") else ""
+        persist_line = (
+            f"\n   held {held:.0f}/{hist_cycles:.0f} cyc "
+            f"({held_pct:.0f}%){spike}"
+        )
+    else:
+        persist_line = ""
+
     # Gross vs net APR — net (net_apy_pct) deducts round-trip fees + entry basis.
     gross = spread.get("annual_apy_pct")
     net_apy = spread.get("net_apy_pct")
@@ -229,7 +244,7 @@ def _format_one(
     return (
         f"{arrow} <b>{base}</b>  {long_venue}L / {short_venue}S{flag}{marker_str}\n"
         f"   rate {long_rate} vs {short_rate}  →  spread {spread_pct}\n"
-        f"   net_edge <b>{net_edge}</b>{real_line}{one_cycle_line}\n"
+        f"   net_edge <b>{net_edge}</b>{real_line}{one_cycle_line}{persist_line}\n"
         f"   APR {gross_str} gross / {net_str} net{fee_str}"
     )
 
@@ -307,6 +322,7 @@ def format_digest(
     title: str | None = None,
     prev_index: dict[tuple[str, str, str, str], float] | None = None,
     change_threshold: float = DEFAULT_CHANGE_THRESHOLD,
+    top_rows: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     """Build one or more Telegram HTML messages.
 
@@ -325,7 +341,10 @@ def format_digest(
     except (TypeError, ValueError):
         ts_human = ts or datetime.now(timezone.utc).isoformat()
 
-    top, total = rank_rows(result, top_n)
+    ranked, total = rank_rows(result, top_n)
+    # Callers may pass already-ranked rows enriched with persistence metrics
+    # (rank_rows copies dicts, so re-ranking here would drop those annotations).
+    top = top_rows if top_rows is not None else ranked
     assets = result.get("total_assets_scanned", "?")
     header_venues = ", ".join(venues) if venues else "n/a"
 
@@ -362,6 +381,11 @@ def format_digest(
         "fees = standard taker tier (VIP lower) · "
         "⚠️ = settlement-interval mismatch."
     )
+    if any(r.get("hist_cycles") for r in top):
+        footer += (
+            " held = recent cycles the spread stayed positive · "
+            "⚡ = current spread >3× its own recent median (transient)."
+        )
     if prev_index:
         footer += " 🆕 new · 📈/📉 = edge moved vs last cycle."
     footer += "</i>"
@@ -527,6 +551,13 @@ def main() -> int:
         "--prev-snapshot (anti-spam for hourly cron)",
     )
     parser.add_argument(
+        "--persistence-days",
+        type=int,
+        default=3,
+        help="Days of funding history to fetch for persistence/spike labels "
+        "(0 disables; default 3)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Format the digest and print it, but do not POST to Telegram",
@@ -568,6 +599,22 @@ def main() -> int:
 
     prev_index = _load_prev_index(args.prev_snapshot)
     top, _ = rank_rows(result, args.top)
+
+    if args.persistence_days > 0:
+        try:
+            from notify.persistence import annotate_persistence
+
+            t1 = time.time()
+            annotate_persistence(top, days=args.persistence_days, workers=args.workers)
+            labeled = sum(1 for r in top if r.get("hist_cycles"))
+            print(
+                f"[push] persistence labeled {labeled}/{len(top)} rows "
+                f"in {time.time() - t1:.1f}s",
+                file=sys.stderr,
+            )
+        except Exception as e:  # best-effort — never block the push
+            print(f"[push] persistence enrichment skipped: {e}", file=sys.stderr)
+
     changed = count_new_or_changed(top, prev_index, args.change_threshold)
     if prev_index:
         print(
@@ -588,6 +635,7 @@ def main() -> int:
         title=args.title,
         prev_index=prev_index,
         change_threshold=args.change_threshold,
+        top_rows=top,
     )
     print(
         f"[push] formatted {len(messages)} message(s) for top {args.top} candidates",
