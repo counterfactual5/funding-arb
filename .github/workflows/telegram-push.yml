@@ -50,6 +50,20 @@ jobs:
           pip install requests
 
       # ----------------------------------------------------------------
+      # Step 0 — Fetch last cycle's snapshot for dedup (best-effort)
+      # ----------------------------------------------------------------
+      # The previous run committed scanner-latest.json to gh-pages; pull it so
+      # the push can tag 🆕/📈/📉 and skip posting when nothing moved. Missing
+      # branch / file is fine — the push silently disables dedup.
+      - name: Fetch previous snapshot
+        run: |
+          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            git fetch --no-tags --depth=1 origin gh-pages
+            git show origin/gh-pages:scanner-latest.json > /tmp/prev-snapshot.json \
+              2>/dev/null || true
+          fi
+
+      # ----------------------------------------------------------------
       # Step 1 — Telegram broadcast (top-N digest)
       # ----------------------------------------------------------------
       - name: Push digest to Telegram
@@ -60,6 +74,8 @@ jobs:
           python scripts/notify/telegram_push.py \
             --min-edge "${{ github.event.inputs.min_edge || '0.0' }}" \
             --top "${{ github.event.inputs.top_n || '10' }}" \
+            --prev-snapshot /tmp/prev-snapshot.json \
+            ${{ github.event_name == 'schedule' && '--skip-if-unchanged' || '' }} \
             ${{ (github.event_name != 'workflow_dispatch' || github.event.inputs.include_dex == 'true') && '--include-dex' || '' }}
 
       # ----------------------------------------------------------------

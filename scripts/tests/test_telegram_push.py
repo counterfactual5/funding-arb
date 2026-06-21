@@ -22,7 +22,9 @@ from notify.telegram_push import (  # noqa: E402
     _load_config,
     _resolve_venues,
     broadcast,
+    count_new_or_changed,
     format_digest,
+    rank_rows,
     send_telegram_message,
 )
 
@@ -271,6 +273,71 @@ class TestFormatDigest:
         result = _make_result(rows=[row])
         body = format_digest(result)[0]
         assert "n/a" in body
+
+
+# ---------------------------------------------------------------------------
+# Dedup against previous snapshot (markers + skip-if-unchanged)
+# ---------------------------------------------------------------------------
+
+
+class TestDedup:
+    def _prev_index(self, rows):
+        # Mirror _load_prev_index's key/value contract without touching disk.
+        from notify.telegram_push import _opportunity_key, _rank_value
+
+        return {_opportunity_key(r): _rank_value(r) for r in rows}
+
+    def test_new_opportunity_marked(self):
+        prev = self._prev_index([_make_spread(base="OLD")])
+        result = _make_result(rows=[_make_spread(base="FRESH")])
+        body = format_digest(result, prev_index=prev)[0]
+        assert "🆕" in body
+
+    def test_unchanged_opportunity_no_marker(self):
+        row = _make_spread(base="SAME", real_edge_pct=0.05)
+        prev = self._prev_index([dict(row)])
+        result = _make_result(rows=[row])
+        body = format_digest(result, prev_index=prev)[0]
+        # FRESH/up/down markers absent on the row line
+        row_line = body.split("\n")[5]  # the leg-pair line
+        assert "🆕" not in row_line and "📈" not in row_line and "📉" not in row_line
+
+    def test_edge_up_and_down_markers(self):
+        prev = self._prev_index([_make_spread(base="MOVER", real_edge_pct=0.02)])
+        up = _make_result(rows=[_make_spread(base="MOVER", real_edge_pct=0.08)])
+        down = _make_result(rows=[_make_spread(base="MOVER", real_edge_pct=0.005)])
+        assert "📈" in format_digest(up, prev_index=prev)[0]
+        assert "📉" in format_digest(down, prev_index=prev)[0]
+
+    def test_count_new_or_changed(self):
+        prev = self._prev_index([_make_spread(base="STAY", real_edge_pct=0.05)])
+        rows = [
+            _make_spread(base="STAY", real_edge_pct=0.05),  # unchanged
+            _make_spread(base="NEW", real_edge_pct=0.04),  # new
+        ]
+        top, _ = rank_rows(_make_result(rows=rows), top_n=10)
+        assert count_new_or_changed(top, prev) == 1
+
+    def test_load_prev_index_from_file(self, tmp_path):
+        from notify.telegram_push import _load_prev_index, _opportunity_key
+
+        snap = {
+            "scanner_opportunities": {
+                "forward": [_make_spread(base="AAA", direction="forward")],
+                "reverse": [_make_spread(base="BBB", direction="reverse")],
+            }
+        }
+        p = tmp_path / "prev.json"
+        p.write_text(__import__("json").dumps(snap), encoding="utf-8")
+        idx = _load_prev_index(str(p))
+        assert _opportunity_key(_make_spread(base="AAA")) in idx
+        assert len(idx) == 2
+
+    def test_load_prev_index_missing_file_returns_empty(self):
+        from notify.telegram_push import _load_prev_index
+
+        assert _load_prev_index("/no/such/file.json") == {}
+        assert _load_prev_index(None) == {}
 
 
 # ---------------------------------------------------------------------------
