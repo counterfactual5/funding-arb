@@ -38,6 +38,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backtest.funding_providers import get_funding_provider
+from market.futures_depth import depth_usd_within, fetch_futures_depth
 from market.parallel_fetch import run_io_parallel
 
 TZ = timezone(timedelta(hours=8))
@@ -50,6 +51,12 @@ DEFAULT_IO_WORKERS = 16  # I/O-bound; threads release GIL during urllib calls
 DEFAULT_WATCH_INTERVAL = 5  # minutes
 DEFAULT_JSONL_FILE = "data/pure_futures_spreads.jsonl"
 HOURS_PER_YEAR = 365.0 * 24.0
+
+# Liquidity context (futures_depth enrichment).
+# Only the top-N entries (by real_edge) get depth lookups — the rest are
+# truncated downstream anyway (TG: top 10, snapshot: top 30).
+DEFAULT_DEPTH_TOP_N = 30
+DEFAULT_DEPTH_WINDOW_PCT = 0.3  # ±0.3% around mid, aligned with executor pre-check
 
 from core.cross_interval_funding import (
     infer_last_settle_ts,
@@ -91,6 +98,17 @@ def _mins_to_settle(ts_ms: int) -> str:
     if mins < 60:
         return f"{mins:.0f}m"
     return f"{mins / 60:.1f}h"
+
+
+def _fmt_depth_usd(usd: float | None) -> str:
+    """Compact USD formatter for the max_exec column (e.g. 12.3k / 4.5M / N/A)."""
+    if usd is None:
+        return "N/A"
+    if usd >= 1_000_000:
+        return f"{usd / 1_000_000:.2f}M"
+    if usd >= 1_000:
+        return f"{usd / 1_000:.1f}k"
+    return f"{usd:.0f}"
 
 
 def _annual_from_rate(rate_pct: float, interval_h: float) -> float:
@@ -395,6 +413,82 @@ def _scan_spreads(
     return forward, reverse
 
 
+def _enrich_with_depth(
+    entries: list[dict[str, Any]],
+    *,
+    top_n: int = DEFAULT_DEPTH_TOP_N,
+    window_pct: float = DEFAULT_DEPTH_WINDOW_PCT,
+    workers: int = DEFAULT_IO_WORKERS,
+) -> None:
+    """Add ``long_depth_usd`` / ``short_depth_usd`` / ``max_exec_usd`` to the top-N entries.
+
+    Mutates ``entries`` in place (each dict gets the four depth fields set;
+    entries beyond ``top_n`` get ``None`` placeholders for symmetry).
+
+    Caches (venue, base) → book so a venue/base combo shared by many pairs is
+    fetched at most once per scan. On fetch failure the entry's depth fields
+    stay ``None`` and ``depth_ok=False`` — the scan never blocks on a thin
+    or unresponsive book (same fail-open philosophy as ``check_pair_depth``).
+    """
+    # Rank by real_edge (the scan's primary ranking metric) and pick the top.
+    ranked = sorted(entries, key=lambda x: -x.get("real_edge_pct", -1e9))
+    targets = ranked[:top_n]
+
+    # Collect unique (venue, base) keys actually needed by the targets.
+    needed: set[tuple[str, str]] = set()
+    for e in targets:
+        needed.add((e["long_venue"], e["base"]))
+        needed.add((e["short_venue"], e["base"]))
+    if not needed:
+        for e in entries:
+            e.setdefault("long_depth_usd", None)
+            e.setdefault("short_depth_usd", None)
+            e.setdefault("max_exec_usd", None)
+            e.setdefault("depth_ok", None)
+        return
+
+    def _fetch_one(key: tuple[str, str]) -> tuple[tuple[str, str], dict | None]:
+        venue, base = key
+        try:
+            book = fetch_futures_depth(venue, base)
+        except Exception:
+            return key, None
+        long_usd = depth_usd_within(book, "asks", window_pct)
+        short_usd = depth_usd_within(book, "bids", window_pct)
+        return key, {"asks_usd": long_usd, "bids_usd": short_usd}
+
+    cache: dict[tuple[str, str], dict | None] = run_io_parallel(
+        list(needed),
+        _fetch_one,
+        max_workers=workers,
+        swallow_errors=True,
+    )
+
+    for e in entries:
+        long_d = cache.get((e["long_venue"], e["base"]))
+        short_d = cache.get((e["short_venue"], e["base"]))
+        if e in targets:
+            long_usd = long_d["asks_usd"] if long_d else None
+            short_usd = short_d["bids_usd"] if short_d else None
+            if long_usd is not None and short_usd is not None:
+                max_exec = min(long_usd, short_usd)
+                depth_ok = True
+            else:
+                max_exec = None
+                depth_ok = False
+            e["long_depth_usd"] = round(long_usd, 2) if long_usd is not None else None
+            e["short_depth_usd"] = (
+                round(short_usd, 2) if short_usd is not None else None
+            )
+            e["max_exec_usd"] = round(max_exec, 2) if max_exec is not None else None
+            e["depth_ok"] = depth_ok
+        else:
+            e.setdefault("long_depth_usd", None)
+            e.setdefault("short_depth_usd", None)
+            e.setdefault("max_exec_usd", None)
+            e.setdefault("depth_ok", None)
+
+
 def scan_pure_futures_spreads(
     venues: list[str] | None = None,
     min_spread: float = DEFAULT_MIN_SPREAD,
@@ -402,6 +496,9 @@ def scan_pure_futures_spreads(
     max_mark_spread_pct: float = 1.0,
     workers: int = DEFAULT_IO_WORKERS,
     fee_policy: dict[str, Any] | None = None,
+    with_depth: bool = True,
+    depth_top_n: int = DEFAULT_DEPTH_TOP_N,
+    depth_window_pct: float = DEFAULT_DEPTH_WINDOW_PCT,
 ) -> dict[str, Any]:
     """Main entry point — scan and return structured results."""
     if venues is None:
@@ -415,6 +512,16 @@ def scan_pure_futures_spreads(
     forward, reverse = _scan_spreads(
         by_base, min_spread, min_edge, fee_cache, max_mark_spread_pct
     )
+
+    # Liquidity context — only fetched for the top-N entries to bound latency.
+    # Disabled in unit tests / fast scans via with_depth=False.
+    if with_depth and (forward or reverse):
+        _enrich_with_depth(
+            forward + reverse,
+            top_n=depth_top_n,
+            window_pct=depth_window_pct,
+            workers=workers,
+        )
 
     # Compute venue-level stats
     venue_pairs: dict[str, int] = {}
@@ -456,10 +563,12 @@ def _print_human(result: dict[str, Any], verbose: bool = False) -> None:
         print(
             f"  {'asset':<10s} {'long@':>8s} {'short@':>8s} "
             f"{'long_rate':>10s} {'short_rate':>10s} {'spread':>8s} "
-            f"{'fee':>6s} {'net_edge':>9s} {'APY':>7s} {'mark_diff':>10s} {'settle':>18s}"
+            f"{'fee':>6s} {'net_edge':>9s} {'APY':>7s} {'mark_diff':>10s} "
+            f"{'max_exec':>10s} {'settle':>18s}"
         )
         print(
-            f"  {'-' * 10} {'-' * 8} {'-' * 8} {'-' * 10} {'-' * 10} {'-' * 8} {'-' * 6} {'-' * 9} {'-' * 7} {'-' * 10} {'-' * 18}"
+            f"  {'-' * 10} {'-' * 8} {'-' * 8} {'-' * 10} {'-' * 10} {'-' * 8} "
+            f"{'-' * 6} {'-' * 9} {'-' * 7} {'-' * 10} {'-' * 10} {'-' * 18}"
         )
         for x in fwd[: verbose and 50 or 20]:
             settle = (
@@ -470,12 +579,14 @@ def _print_human(result: dict[str, Any], verbose: bool = False) -> None:
                 settle += " ⚠️"
             mark_spread = x.get("mark_spread_pct", 0.0)
             mark_str = f"{mark_spread:9.4f}%" if mark_spread > 0 else "      N/A"
+            max_exec = x.get("max_exec_usd")
+            exec_str = _fmt_depth_usd(max_exec)
             print(
                 f"  {x['base']:<10s} {x['long_venue']:>8s} {x['short_venue']:>8s} "
                 f"{x['long_rate_pct']:+9.4f}% {x['short_rate_pct']:+9.4f}% "
                 f"{x['spread_pct']:7.4f}% {x['fee_pct']:5.3f}% "
                 f"{x['net_edge_pct']:+8.4f}% {x['annual_apy_pct']:6.0f}% "
-                f"{mark_str} {settle}"
+                f"{mark_str} {exec_str:>10s} {settle}"
             )
         if len(fwd) > 20 and not verbose:
             print(f"  ... ({len(fwd) - 20} more, use --verbose to see all)")
@@ -487,10 +598,12 @@ def _print_human(result: dict[str, Any], verbose: bool = False) -> None:
         print(
             f"  {'asset':<10s} {'long@':>8s} {'short@':>8s} "
             f"{'long_rate':>10s} {'short_rate':>10s} {'spread':>8s} "
-            f"{'fee':>6s} {'net_edge':>9s} {'APY':>7s} {'mark_diff':>10s} {'settle':>18s}"
+            f"{'fee':>6s} {'net_edge':>9s} {'APY':>7s} {'mark_diff':>10s} "
+            f"{'max_exec':>10s} {'settle':>18s}"
         )
         print(
-            f"  {'-' * 10} {'-' * 8} {'-' * 8} {'-' * 10} {'-' * 10} {'-' * 8} {'-' * 6} {'-' * 9} {'-' * 7} {'-' * 10} {'-' * 18}"
+            f"  {'-' * 10} {'-' * 8} {'-' * 8} {'-' * 10} {'-' * 10} {'-' * 8} "
+            f"{'-' * 6} {'-' * 9} {'-' * 7} {'-' * 10} {'-' * 10} {'-' * 18}"
         )
         for x in rev[: verbose and 50 or 20]:
             settle = (
@@ -501,12 +614,14 @@ def _print_human(result: dict[str, Any], verbose: bool = False) -> None:
                 settle += " ⚠️"
             mark_spread = x.get("mark_spread_pct", 0.0)
             mark_str = f"{mark_spread:9.4f}%" if mark_spread > 0 else "      N/A"
+            max_exec = x.get("max_exec_usd")
+            exec_str = _fmt_depth_usd(max_exec)
             print(
                 f"  {x['base']:<10s} {x['long_venue']:>8s} {x['short_venue']:>8s} "
                 f"{x['long_rate_pct']:+9.4f}% {x['short_rate_pct']:+9.4f}% "
                 f"{x['spread_pct']:7.4f}% {x['fee_pct']:5.3f}% "
                 f"{x['net_edge_pct']:+8.4f}% {x['annual_apy_pct']:6.0f}% "
-                f"{mark_str} {settle}"
+                f"{mark_str} {exec_str:>10s} {settle}"
             )
         if len(rev) > 20 and not verbose:
             print(f"  ... ({len(rev) - 20} more, use --verbose to see all)")
@@ -582,6 +697,25 @@ def main() -> None:
         default=1.0,
         help="Max mark price spread %% between venues (default 1.0%%)",
     )
+    parser.add_argument(
+        "--with-depth",
+        dest="with_depth",
+        action="store_true",
+        default=True,
+        help="Enrich top-N entries with order-book depth (long/short/max_exec USD). Default on.",
+    )
+    parser.add_argument(
+        "--no-depth",
+        dest="with_depth",
+        action="store_false",
+        help="Skip depth enrichment (faster scan, no liquidity fields in output).",
+    )
+    parser.add_argument(
+        "--depth-top",
+        type=int,
+        default=DEFAULT_DEPTH_TOP_N,
+        help=f"How many top entries to enrich with depth (default {DEFAULT_DEPTH_TOP_N})",
+    )
     parser.add_argument("--verbose", "-V", action="store_true", help="Show all results")
     parser.add_argument("--json", action="store_true", help="JSON output (single scan)")
     parser.add_argument(
@@ -624,6 +758,8 @@ def main() -> None:
                     min_edge=args.min_edge,
                     max_mark_spread_pct=args.max_mark_spread,
                     workers=args.workers,
+                    with_depth=args.with_depth,
+                    depth_top_n=args.depth_top,
                 )
                 result["min_spread"] = args.min_spread
                 result["min_edge"] = args.min_edge
@@ -656,6 +792,8 @@ def main() -> None:
         min_edge=args.min_edge,
         max_mark_spread_pct=args.max_mark_spread,
         workers=args.workers,
+        with_depth=args.with_depth,
+        depth_top_n=args.depth_top,
     )
     elapsed = time.time() - t0
     result["min_spread"] = args.min_spread

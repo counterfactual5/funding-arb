@@ -1,13 +1,15 @@
 name: TG Funding Push
 
 on:
-  schedule:
-    # Minutes past every hour — offset away from :00 to dodge GitHub's cron spike.
-    - cron: "7 * * * *"
+  # NOTE: GitHub Actions' built-in `schedule:` cron is unreliable for
+  # low-activity public repos — observed 3-6h gaps with silently skipped
+  # runs. Hourly cadence is driven by Vercel Cron → workflow_dispatch
+  # (see web/api/trigger-scan.ts + web/vercel.json). A manual dispatch is
+  # always available for testing.
   workflow_dispatch:
     inputs:
       min_edge:
-        description: "Minimum net edge % (0.0 = any positive edge)"
+        description: "Minimum net edge % (e.g. 0.05)"
         required: false
         default: "0.0"
       top_n:

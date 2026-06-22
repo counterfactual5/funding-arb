@@ -115,6 +115,20 @@ def _fmt_interval(h: Any) -> str:
     return f"{int(hv)}h" if hv == int(hv) else f"{hv:g}h"
 
 
+def _fmt_usd(usd: float | None) -> str:
+    """Compact USD for the max_exec liquidity hint (250 / 1.4k / 6.2k / 2.5M)."""
+    if usd is None:
+        return "n/a"
+    try:
+        if usd >= 1_000_000:
+            return f"${usd / 1_000_000:.2f}M"
+        if usd >= 1_000:
+            return f"${usd / 1_000:.1f}k"
+        return f"${usd:.0f}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
 def _escape_html(text: str) -> str:
     """Telegram sendMessage parse_mode=HTML needs the five XML entities."""
     return (
@@ -228,11 +242,19 @@ def _format_one(
         held_pct = spread.get("hist_held_pct", 0)
         spike = " ⚡spike" if spread.get("is_spike") else ""
         persist_line = (
-            f"\n   held {held:.0f}/{hist_cycles:.0f} cyc "
-            f"({held_pct:.0f}%){spike}"
+            f"\n   held {held:.0f}/{hist_cycles:.0f} cyc ({held_pct:.0f}%){spike}"
         )
     else:
         persist_line = ""
+
+    # Liquidity context: max USD deployable on both legs within ±0.3% window.
+    # None means the book fetch failed or the pair was outside the depth top-N;
+    # we don't surface n/a when the field is genuinely absent to avoid noise.
+    max_exec = spread.get("max_exec_usd")
+    if isinstance(max_exec, (int, float)) and max_exec > 0:
+        liquidity_line = f"\n   💧 max_exec {_fmt_usd(max_exec)}"
+    else:
+        liquidity_line = ""
 
     # Gross vs net APR — net (net_apy_pct) deducts round-trip fees + entry basis.
     gross = spread.get("annual_apy_pct")
@@ -244,7 +266,7 @@ def _format_one(
     return (
         f"{arrow} <b>{base}</b>  {long_venue}L / {short_venue}S{flag}{marker_str}\n"
         f"   rate {long_rate} vs {short_rate}  →  spread {spread_pct}\n"
-        f"   net_edge <b>{net_edge}</b>{real_line}{one_cycle_line}{persist_line}\n"
+        f"   net_edge <b>{net_edge}</b>{real_line}{one_cycle_line}{persist_line}{liquidity_line}\n"
         f"   APR {gross_str} gross / {net_str} net{fee_str}"
     )
 
@@ -290,9 +312,7 @@ def _load_prev_index(
     return index
 
 
-def rank_rows(
-    result: dict[str, Any], top_n: int
-) -> tuple[list[dict[str, Any]], int]:
+def rank_rows(result: dict[str, Any], top_n: int) -> tuple[list[dict[str, Any]], int]:
     """Flatten forward+reverse, rank by real_edge, return (top_n rows, total)."""
     all_rows: list[dict[str, Any]] = []
     for x in result.get("forward", []):
@@ -365,9 +385,7 @@ def format_digest(
     current = head + "\n\n"
     for i, row in enumerate(top, start=1):
         block = (
-            f"<b>{i}.</b>  "
-            + _format_one(row, prev_index, change_threshold)
-            + "\n\n"
+            f"<b>{i}.</b>  " + _format_one(row, prev_index, change_threshold) + "\n\n"
         )
         if len(current) + len(block) > TG_CHUNK_LIMIT:
             chunks.append(current.rstrip())
