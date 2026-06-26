@@ -1,7 +1,7 @@
 /**
- * Vercel Cron → GitHub Actions trigger.
+ * External cron (cron-job.org) → GitHub Actions trigger.
  *
- * Vercel Cron hits this endpoint on schedule (see vercel.json `crons`).
+ * An external free cron service (cron-job.org) hits this endpoint hourly.
  * The handler calls GitHub's `workflow_dispatch` API to launch the
  * "TG Funding Push" workflow on main, which does the actual scan +
  * Telegram broadcast + gh-pages snapshot publish.
@@ -9,15 +9,18 @@
  * Why this exists:
  *   GitHub Actions' built-in `schedule:` cron is heavily deprioritized for
  *   low-activity repos — we observed 3-6 hour gaps where scheduled runs were
- *   silently skipped. Vercel Cron's free tier runs at 99%+ reliability and
- *   gives us a real hourly cadence without a VPS.
+ *   silently skipped. cron-job.org's free tier runs at 1-minute precision
+ *   and gives us a real hourly cadence without a VPS or Vercel Pro.
+ *
+ *   (Vercel Cron itself is Hobby-limited to once-per-day, so we can't use
+ *   the built-in `crons` config — hence the external trigger.)
  *
  * Auth:
- *   Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`. We compare
+ *   The external cron sends `Authorization: Bearer <CRON_SECRET>`. We compare
  *   against the `CRON_SECRET` env var to reject random external POSTs.
  *
  * Env vars (set in Vercel project settings):
- *   - CRON_SECRET  random string, shared with the vercel.json cron config
+ *   - CRON_SECRET  random string, also configured in cron-job.org's headers
  *   - GH_PAT       GitHub Personal Access Token with `actions: write` on this repo
  *   - GH_REPO      owner/name, defaults to "counterfactual5/funding-arb"
  */

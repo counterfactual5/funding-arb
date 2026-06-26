@@ -19,11 +19,5 @@
         }
       ]
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/trigger-scan",
-      "schedule": "5 * * * *"
-    }
   ]
 }
