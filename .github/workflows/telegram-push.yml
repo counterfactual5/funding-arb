@@ -104,22 +104,27 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Fetch any existing gh-pages (orphan — empty tree if absent).
+          # Save the freshly built snapshot before we touch git state.
+          cp /tmp/scanner-latest.json /tmp/scanner-latest.json.bak
+
+          # Fetch gh-pages (orphan branch) and switch to it so the commit
+          # actually lands on gh-pages, not main. Using `git checkout <path>`
+          # (the old approach) only populated the worktree without moving HEAD,
+          # so commits silently went to main and `git push origin gh-pages`
+          # reported "Everything up-to-date" (no-op).
           if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
-            git fetch --no-tags --depth=1 origin gh-pages:gh-pages
-            git checkout gh-pages -- .
-            # Drop the index so we can rewrite the worktree from scratch.
-            git rm -rf --cached --quiet . 2>/dev/null || true
+            git fetch --no-tags --depth=1 origin gh-pages
+            git checkout -B gh-pages FETCH_HEAD
           else
             git checkout --orphan gh-pages
-            git rm -rf --cached --quiet . 2>/dev/null || true
           fi
 
-          # Place the new snapshot (single source of truth for the demo).
-          # A small README documents the branch so anyone landing here via
-          # the GitHub UI understands what it is.
-          mkdir -p .
-          cp /tmp/scanner-latest.json ./scanner-latest.json
+          # Wipe the worktree clean — gh-pages should only ever hold the
+          # snapshot + README, nothing else.
+          git rm -rf --quiet . 2>/dev/null || true
+
+          # Restore the new snapshot.
+          cp /tmp/scanner-latest.json.bak ./scanner-latest.json
           cat > README.md <<'EOF'
           # gh-pages — Vercel demo snapshot
 
