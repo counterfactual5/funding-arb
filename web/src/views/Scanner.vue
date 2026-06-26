@@ -278,6 +278,7 @@ import { NCard, NGrid, NGi, NDataTable, NButton, NSpace, NText, NIcon, NSpin, NT
 import { RouterLink } from 'vue-router'
 import { SearchOutline, TrendingUpOutline, FlashOutline, AnalyticsOutline } from '@vicons/ionicons5'
 import { post, useWebSocket, type ScannerOpportunities, type CarryVenue, type CarryCand, type UnifiedCarryCand, type WsMessage } from '@/composables/useApi'
+import { isDemoMode, useDemoSnapshot } from '@/composables/useDemoSnapshot'
 import { WALLET_TRADE_VENUES } from '@/constants/walletTrade'
 import { useWallet } from '@/composables/wallet'
 import { useI18n } from 'vue-i18n'
@@ -427,6 +428,16 @@ function renderVenueTag({ option, handleClose }: { option: SelectOption; handleC
 }
 
 async function loadStrategyVenues() {
+  // Demo mode: no backend to ask — seed from the snapshot's venue list so the
+  // venue filter and pure-futures default selection match what was scanned.
+  if (isDemoMode) {
+    const snap = useDemoSnapshot().snapshot.value
+    const venues = snap?.scanner_opportunities?.venues
+    if (Array.isArray(venues) && venues.length > 0) {
+      selectedVenues.value = venuesForStrategy(strategy.value, venues)
+    }
+    return
+  }
   try {
     const resp = await fetch('/api/settings/strategy')
     const json = await resp.json()
@@ -515,6 +526,19 @@ function handleVenuesChange(val: string[]) {
 const venueCaps = ref<Record<string, { trade: boolean; reason: string }>>({})
 
 async function loadVenueCapabilities() {
+  // Demo mode: every venue in the snapshot is treated as scan-capable but
+  // not trade-capable (no backend to execute through). This disables the
+  // "Open position" button in the Scanner table — demo is read-only.
+  if (isDemoMode) {
+    const snap = useDemoSnapshot().snapshot.value
+    const venues = snap?.scanner_opportunities?.venues ?? []
+    const caps: Record<string, { trade: boolean; reason: string }> = {}
+    for (const v of venues) {
+      caps[v] = { trade: false, reason: 'demo mode — read-only' }
+    }
+    venueCaps.value = caps
+    return
+  }
   try {
     const resp = await fetch('/api/settings/venues')
     const json = await resp.json()
@@ -566,6 +590,13 @@ function formatScanTime(iso: string | null | undefined) {
 }
 
 async function refreshScanLabel(st: Strategy) {
+  // Demo mode: derive the label from the snapshot's status block, not the API.
+  if (isDemoMode) {
+    const snap = useDemoSnapshot().snapshot.value
+    const ts = (snap?.scanner_status as any)?.last_scan_time
+    lastScanLabel.value = formatScanTime(ts)
+    return
+  }
   try {
     const resp = await fetch(`/api/scanner/status?strategy=${st}`)
     const json = await resp.json()
@@ -573,6 +604,37 @@ async function refreshScanLabel(st: Strategy) {
   } catch {
     lastScanLabel.value = ''
   }
+}
+
+/**
+ * Demo-mode data loader. Reads the cached snapshot from jsDelivr (via
+ * useDemoSnapshot) and feeds it into the same applyScanData path the live
+ * backend would use, so the Scanner table renders identically.
+ *
+ * Only the `pure` strategy is backed by the snapshot — carry / unified have
+ * no demo answer (they need spot/borrow data), so we surface an empty state
+ * and let the UI's "carryRequiresScan" / "unifiedRequiresScan" notices show.
+ */
+async function loadDemoData(st: Strategy) {
+  const demo = useDemoSnapshot()
+  await demo.ensure()
+  const snap = demo.snapshot.value
+  if (!snap) {
+    // Snapshot fetch failed — let the empty-state UI surface the error.
+    if (st === 'pure') pureData.value = null
+    else if (st === 'carry') carryData.value = []
+    else unifiedData.value = []
+    lastScanLabel.value = ''
+    return
+  }
+  if (st === 'pure') {
+    applyScanData('pure', snap.scanner_opportunities)
+  } else if (st === 'carry') {
+    carryData.value = []
+  } else {
+    unifiedData.value = []
+  }
+  await refreshScanLabel(st)
 }
 
 async function waitForScanData(st: Strategy, maxMs = 120000) {
@@ -599,6 +661,13 @@ async function loadData(s?: Strategy | MouseEvent, autoScan = true) {
   const st = (s && typeof s !== 'object') ? s : strategy.value
   loading.value = true
   try {
+    // ─── Demo mode: read from the static snapshot, skip the backend entirely.
+    // The snapshot holds scanner_opportunities + scanner_status in the exact
+    // shape applyScanData expects — no {success, data} envelope, no live flag.
+    if (isDemoMode) {
+      await loadDemoData(st)
+      return
+    }
     const vq = venuesQuery(st)
     const resp = await fetch(
       `/api/scanner/opportunities?strategy=${st}&venues=${encodeURIComponent(vq)}`,
@@ -641,6 +710,22 @@ async function loadData(s?: Strategy | MouseEvent, autoScan = true) {
 
 async function handleTriggerScan() {
   const st = strategy.value
+  // Demo mode: there's no backend to trigger — just re-fetch the snapshot
+  // (forces jsDelivr to refresh) and re-apply. Gives the user a sense that
+  // the "Scan Now" button does something in the live demo.
+  if (isDemoMode) {
+    refreshing.value = true
+    try {
+      await useDemoSnapshot().refresh()
+      await loadDemoData(st)
+      message.success(t('scanner.scanComplete'))
+    } catch {
+      message.warning(t('scanner.scanFailed'))
+    } finally {
+      refreshing.value = false
+    }
+    return
+  }
   if (st === 'pure' && scanVenuesForStrategy(st).length < 2) {
     message.info(t('scanner.venuesNeedTwo'))
     return
@@ -1164,10 +1249,17 @@ const unifiedColumns = computed<DataTableColumns<UnifiedCarryCand>>(() => [
 ])
 
 onMounted(async () => {
+  // In demo mode, prime the snapshot first so loadStrategyVenues() /
+  // loadVenueCapabilities() have data to read from.
+  if (isDemoMode) {
+    await useDemoSnapshot().ensure()
+  }
   await loadStrategyVenues()
   loadVenueCapabilities()
   loadData()
-  ws.connect()
+  // WebSocket is backend-only — skip in demo mode to avoid the endless
+  // reconnect loop against a static host.
+  if (!isDemoMode) ws.connect()
 })
 onUnmounted(() => {
   ws.disconnect()
