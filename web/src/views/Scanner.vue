@@ -514,6 +514,10 @@ function handleVenuesChange(val: string[]) {
     return
   }
 
+  // Demo mode: venue filter is applied client-side (pureRows filters by
+  // selectedVenues). No backend to re-scan — the snapshot is the snapshot.
+  if (isDemoMode) return
+
   // Rescan only the selected venues (debounced)
   if (refreshing.value) return
   if (_venuesWatchTimer) clearTimeout(_venuesWatchTimer)
@@ -1108,11 +1112,17 @@ function pureRowRiskHint(row: PureRow): string {
 const pureRows = computed<PureRow[]>(() => {
   const d = pureData.value
   if (!d) return []
-  // Rows are already scoped to the venues used in the last scan — only apply UI filters here
+  // Rows are already scoped to the venues used in the last scan — only apply UI filters here.
+  // In demo mode the snapshot contains all scanned venues, so we additionally
+  // filter by the user's venue selection client-side (no backend to rescan).
   let all = [
     ...(d.forward || []).map((i) => toPureRow(i, 'Forward')),
     ...(d.reverse || []).map((i) => toPureRow(i, 'Reverse')),
   ]
+  if (isDemoMode && selectedVenues.value.length > 0) {
+    const sel = new Set(selectedVenues.value)
+    all = all.filter((r) => sel.has(r.long_venue) && sel.has(r.short_venue))
+  }
   if (minEdgeFilter.value > 0) all = all.filter((r) => r.real_edge_pct >= minEdgeFilter.value)
   if (intervalFilter.value === 'same') all = all.filter((r) => !r.settle_mismatch)
   else if (intervalFilter.value === 'cross') all = all.filter((r) => r.settle_mismatch)

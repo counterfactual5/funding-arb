@@ -3,6 +3,7 @@
     "title": "资金费率套利系统",
     "connected": "已连接",
     "disconnected": "未连接",
+    "demoLive": "实时数据",
     "tradingMode": "模拟盘"
   },
   "menu": {

@@ -215,9 +215,9 @@ onUnmounted(() => {
               size="tiny"
               style="width: 120px"
             />
-            <n-badge :type="connected ? 'success' : 'error'" :dot="true" />
+            <n-badge :type="isDemoMode ? 'success' : (connected ? 'success' : 'error')" :dot="true" />
             <n-text depth="3" class="header-status">
-              {{ connected ? t('app.connected') : t('app.disconnected') }}
+              {{ isDemoMode ? t('app.demoLive') : (connected ? t('app.connected') : t('app.disconnected')) }}
             </n-text>
           </div>
         </n-layout-header>
