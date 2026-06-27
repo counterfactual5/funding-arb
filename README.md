@@ -339,7 +339,6 @@ funding-arb/
 │   └── routes/                # scanner, positions, backtest, settings
 ├── web/                       # Vue 3 + Naive UI (+ src-tauri optional)
 ├── SKILL.md                   # AI agent CLI playbook
-├── ROADMAP.md                 # Completed work + venue expansion plan
 ├── start.sh / start.ps1
 └── setup.sh
 ```
@@ -363,7 +362,7 @@ pip install -r requirements.txt   # or: bash setup.sh
 | [`docs/README.md`](docs/README.md) | **Algorithm docs index** — zh-CN / en / zh-TW (funding basics, C&C, Pure Futures, fees, cross-interval) |
 | [`docs/cross-interval-funding-model.md`](docs/cross-interval-funding-model.md) | Cross-interval basis-blend model (legacy path; synced copy: `docs/zh-CN/cross-interval.md`) |
 | [`SKILL.md`](SKILL.md) | CLI-first workflow for AI agents (`@SKILL.md` in Cursor) |
-| [`ROADMAP.md`](ROADMAP.md) | Shipped features, Perp DEX status, planned work |
+| [GitHub Issues](https://github.com/counterfactual5/funding-arb/issues) | Roadmap — planned features, venue expansion, known gaps |
 | [`plans/edgex-integration-plan.md`](plans/edgex-integration-plan.md) | EdgeX scan + trade integration notes |
 
 In-app **Docs** page mirrors `docs/{locale}/`. After editing `web/src/content/docs/articles/*.ts`, regenerate Markdown:
