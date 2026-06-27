@@ -63,7 +63,7 @@ onMounted(() => {
           <span v-if="stale" class="stale-flag"> (stale — pipeline may be down)</span>
         </span>
         <span v-else class="banner-meta">
-          — connecting to jsDelivr CDN…
+          — connecting to raw.githubusercontent.com…
         </span>
       </span>
     </template>

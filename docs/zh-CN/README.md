@@ -12,7 +12,7 @@ Algorithm and strategy reference for the Funding Arb scanner. Generated from `we
 | [Pure Futures 永续套利](./pure-futures.md) | 双永续费率差、net / real edge |
 | [跨周期资金费率套利](./cross-interval.md) | basis blend、real_edge 与代码实现 |
 | [费率与边际计算](./fees-and-edge.md) | fee_mode、VIP 档位与各类边际字段 |
-| [无服务器数据流水线](./serverless-pipeline.md) | GitHub Actions → gh-pages → jsDelivr → Vercel 的零成本实时 demo 架构 |
+| [无服务器数据流水线](./serverless-pipeline.md) | GitHub Actions → gh-pages → raw.githubusercontent.com → Vercel 的零成本实时 demo 架构 |
 
 ## Repository docs
 

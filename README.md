@@ -184,15 +184,15 @@ HTML escaping, venue resolution; no network).
 
 A read-only public demo of the dashboard runs on Vercel, refreshed hourly by
 the same GitHub Actions cron that drives the Telegram bot. Zero ongoing cost,
-zero servers, **zero Vercel rebuilds** — fresh data lands via a CDN fetch at
-runtime.
+zero servers, **zero Vercel rebuilds** — fresh data lands via a runtime fetch
+from `raw.githubusercontent.com`.
 
 ```mermaid
 graph LR
-    A[GitHub Actions<br/>cron hourly :07] -->|scan 9 venues| B[scanner-latest.json]
+    A[GitHub Actions<br/>hourly cron-job.org trigger] -->|scan 9 venues| B[scanner-latest.json]
     A -->|push top-N digest| C[Telegram channel]
     B -->|commit to orphan branch| D[gh-pages]
-    D -->|mirror| E[jsDelivr CDN]
+    D -->|raw mirror<br/>5-min cache| E[raw.githubusercontent.com]
     F[Vercel static site] -->|runtime fetch<br/>no rebuild| E
     G[User opens URL] --> F
 ```
@@ -201,11 +201,11 @@ graph LR
 
 1. Push to `main` — the workflow (`telegram-push.yml`) creates the `gh-pages`
    orphan branch automatically on first run.
-2. Import the repo on Vercel → set framework to **Vite** → add env vars:
-   - `VITE_DEMO_MODE=1`
-   - `VITE_DEMO_SNAPSHOT_PATH=/gh/<USER>/funding-arb@gh-pages/scanner-latest.json`
+2. Import the repo on Vercel → set framework to **Vite** → set root directory
+   to `web`. Demo mode auto-activates on any `*.vercel.app` deployment, so
+   `VITE_DEMO_MODE=1` is optional (but recommended for clarity).
 3. Deploy. Open the URL — you'll see the `🎭 Demo Mode` banner with the last
-   scan timestamp, refreshed every 10 minutes.
+   scan timestamp, auto-refreshed every 5 minutes.
 
 **Local demo smoke-test:**
 

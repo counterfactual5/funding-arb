@@ -3,13 +3,15 @@
 
 The output JSON is consumed by the frontend in "demo mode" — see
 ``web/src/composables/useApi.ts`` (``VITE_DEMO_MODE`` branch). It is committed
-to the ``gh-pages`` orphan branch by the CI workflow, then served via the
-jsDelivr CDN at:
+to the ``gh-pages`` orphan branch by the CI workflow, then served directly
+from ``raw.githubusercontent.com`` at:
 
-    https://cdn.jsdelivr.net/gh/<USER>/<REPO>@gh-pages/<file>
+    https://raw.githubusercontent.com/<USER>/<REPO>/gh-pages/<file>
 
 so the Vercel static site can fetch fresh data every hour **without triggering
-a rebuild**.
+a rebuild**. (We intentionally do NOT use jsDelivr here — its edge cache holds
+``gh`` content for up to 12h and ignores cache-buster query strings, which
+made the demo display stale snapshots long after the hourly refresh.)
 
 The payload schema is the union of what the demo UI needs:
 
@@ -107,15 +109,14 @@ def _scan_carry_for_snapshot(
         )
 
         # Rank + truncate each bucket by net_edge to keep payload bounded.
+        # NOTE: we intentionally keep the top rows *regardless of sign* so the
+        # demo dashboard always shows the shape of the carry universe. In calm
+        # markets almost every candidate has net_edge < 0 (fees > funding), and
+        # showing an empty table would make the demo look broken. The
+        # net_edge_pct column makes it obvious which rows are actually
+        # profitable, so this is honest rather than misleading.
         def _top(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-            # Only keep candidates with positive net_edge — the demo is meant
-            # to show *actionable* opportunities, not every coin that happens
-            # to clear the funding-rate floor. In calm markets this list is
-            # short or empty, which is the honest signal.
-            profitable = [x for x in rows if float(x.get("net_edge_pct", -1e9)) > 0]
-            ranked = sorted(
-                profitable, key=lambda x: -float(x.get("net_edge_pct", -1e9))
-            )
+            ranked = sorted(rows, key=lambda x: -float(x.get("net_edge_pct", -1e9)))
             return ranked[:top_n_per_venue]
 
         return v, {
@@ -164,11 +165,10 @@ def _scan_unified_for_snapshot(
     )
 
     def _top(rows: list[Any]) -> list[dict[str, Any]]:
-        # Same profitable-only filter as carry — demo shows actionable routes.
-        profitable = [r for r in rows if float(getattr(r, "net_edge_pct", -1e9)) > 0]
-        ranked = sorted(
-            profitable, key=lambda x: -float(getattr(x, "net_edge_pct", -1e9))
-        )
+        # Same rank-only policy as carry — demo shows the shape of the route
+        # universe even when no route is profitable after fees. The
+        # net_edge_pct column signals profitability to the viewer.
+        ranked = sorted(rows, key=lambda x: -float(getattr(x, "net_edge_pct", -1e9)))
         return [r.to_dict() for r in ranked[:top_n]]
 
     return {

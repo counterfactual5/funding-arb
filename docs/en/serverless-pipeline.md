@@ -1,27 +1,27 @@
 # Serverless Data Pipeline
 
-GitHub Actions → gh-pages → jsDelivr → Vercel: zero-cost live demo architecture
+GitHub Actions → gh-pages → raw.githubusercontent.com → Vercel: zero-cost live demo architecture
 
 ## Overview
 
 <!-- id: overview -->
 
-The public demo dashboard needs to refresh scanner data every hour, but we do not want to pay for a server or trigger a Vercel rebuild on every data update. The pattern documented here lets GitHub Actions push a static JSON snapshot to an orphan gh-pages branch every hour; the frontend fetches it at runtime via the jsDelivr CDN. The result: zero servers, zero Vercel rebuilds, zero ongoing cost.
+The public demo dashboard needs to refresh scanner data every hour, but we do not want to pay for a server or trigger a Vercel rebuild on every data update. The pattern documented here lets GitHub Actions push a static JSON snapshot to an orphan gh-pages branch every hour; the frontend fetches it at runtime directly from raw.githubusercontent.com (5-minute edge cache + permissive CORS). The result: zero servers, zero Vercel rebuilds, zero ongoing cost.
 
-> ℹ️ Four building blocks: GitHub Actions (hourly :07 trigger) / gh-pages orphan branch (holds scanner-latest.json) / jsDelivr CDN (mirrors gh-pages globally) / Vercel static site (fetches the JSON at runtime).
+> ℹ️ Four building blocks: GitHub Actions (hourly trigger) / gh-pages orphan branch (holds scanner-latest.json) / raw.githubusercontent.com (5-minute edge cache, raw file mirror) / Vercel static site (fetches the JSON at runtime).
 
 ## Data Flow
 
 <!-- id: data-flow -->
 
-The whole pipeline is one-directional: after the scanner runs in CI it writes a single JSON file and commits it to the orphan branch; the frontend fetches that JSON from the CDN at runtime. No request ever flows back to our own servers.
+The whole pipeline is one-directional: after the scanner runs in CI it writes a single JSON file and commits it to the orphan branch; the frontend fetches that JSON directly from raw.githubusercontent.com at runtime. No request ever flows back to our own servers.
 
-- GitHub Actions cron fires hourly at :07 (see .github/workflows/telegram-push.yml)
+- GitHub Actions fires hourly (cron-job.org → workflow_dispatch; see .github/workflows/telegram-push.yml)
 - Scanner scans 9 venues / ~946 perpetual assets
 - scripts/notify/telegram_push.py posts the Top-10 digest to the Telegram channel
 - scripts/notify/snapshot_to_pages.py writes scanner-latest.json
 - Workflow commits to the gh-pages orphan branch with [skip ci]
-- Vercel dashboard fetches via the jsDelivr CDN at runtime — no rebuild
+- Vercel dashboard fetches directly from raw.githubusercontent.com at runtime — no rebuild
 
 ## Why an orphan branch
 

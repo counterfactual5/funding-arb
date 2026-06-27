@@ -1,27 +1,27 @@
 # 無伺服器資料管線
 
-GitHub Actions → gh-pages → jsDelivr → Vercel 的零成本即時 demo 架構
+GitHub Actions → gh-pages → raw.githubusercontent.com → Vercel 的零成本即時 demo 架構
 
 ## 總覽
 
 <!-- id: overview -->
 
-公開 demo 儀表盤需要每小時刷新一次掃描資料，但我們不想為它付伺服器費用、也不想每次資料更新都觸發 Vercel 重新建置。本篇記錄的方案讓 GitHub Actions 每小時把掃描結果以靜態 JSON 推到 gh-pages 孤兒分支，前端在執行時透過 jsDelivr CDN 直接拉取，從而實現零伺服器、零 Vercel 重建、零持續成本的即時 demo。
+公開 demo 儀表盤需要每小時刷新一次掃描資料，但我們不想為它付伺服器費用、也不想每次資料更新都觸發 Vercel 重新建置。本篇記錄的方案讓 GitHub Actions 每小時把掃描結果以靜態 JSON 推到 gh-pages 孤兒分支，前端在執行時直接從 raw.githubusercontent.com 拉取（5 分鐘邊緩存 + 完整 CORS 支援），從而實現零伺服器、零 Vercel 重建、零持續成本的即時 demo。
 
-> ℹ️ 四個建構區塊：GitHub Actions（每小時 :07 觸發）/ gh-pages 孤兒分支（存放 scanner-latest.json）/ jsDelivr CDN（全球鏡像 gh-pages）/ Vercel 靜態站點（執行時拉 JSON）。
+> ℹ️ 四個建構區塊：GitHub Actions（每小時觸發）/ gh-pages 孤兒分支（存放 scanner-latest.json）/ raw.githubusercontent.com（5 分鐘邊緩存，原始檔案鏡像）/ Vercel 靜態站點（執行時拉 JSON）。
 
 ## 資料流
 
 <!-- id: data-flow -->
 
-整條鏈路是單向的：掃描器在 CI 裡跑完後把結果寫成一個 JSON 檔案，提交到孤兒分支；前端執行時去 CDN 拉這個 JSON。沒有任何反向請求落在我們自己的伺服器。
+整條鏈路是單向的：掃描器在 CI 裡跑完後把結果寫成一個 JSON 檔案，提交到孤兒分支；前端執行時直接從 raw.githubusercontent.com 拉這個 JSON。沒有任何反向請求落在我們自己的伺服器。
 
-- GitHub Actions cron 每小時 :07 觸發（見 .github/workflows/telegram-push.yml）
+- GitHub Actions 每小時觸發（cron-job.org → workflow_dispatch；見 .github/workflows/telegram-push.yml）
 - Scanner 掃描 9 個所、約 946 個永續資產
 - scripts/notify/telegram_push.py 把 Top-10 摘要推送到 Telegram 頻道
 - scripts/notify/snapshot_to_pages.py 寫出 scanner-latest.json
 - Workflow 用 [skip ci] 提交到 gh-pages 孤兒分支
-- Vercel 儀表盤執行時透過 jsDelivr CDN 拉取 JSON —— 不觸發任何重建
+- Vercel 儀表盤執行時直接從 raw.githubusercontent.com 拉取 JSON —— 不觸發任何重建
 
 ## 為什麼用孤兒分支
 

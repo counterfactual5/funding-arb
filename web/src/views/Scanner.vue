@@ -1201,7 +1201,15 @@ function carryRowsForVenue(ven: CarryVenue): CarryRow[] {
   ]
 }
 
-const carryVenues = computed(() => carryData.value)
+// In demo mode, hide venues the user has deselected (the snapshot holds every
+// scanned venue; client-side filtering is the only way to narrow the view). In
+// live mode the backend rescans only the selected venues, so the data is
+// already scoped and we pass it through unchanged.
+const carryVenues = computed(() => {
+  if (!isDemoMode || selectedVenues.value.length === 0) return carryData.value
+  const sel = new Set(selectedVenues.value)
+  return carryData.value.filter((v) => sel.has(v.venue))
+})
 const carryTotalFwd = computed(() => carryVenues.value.reduce((s, v) => s + (v.forward?.length ?? 0), 0))
 const carryTotalRev = computed(() => carryVenues.value.reduce((s, v) => s + (v.reverse?.length ?? 0), 0))
 const carryStatCards = computed(() => [
@@ -1232,7 +1240,16 @@ const carryColumns = computed<DataTableColumns<CarryRow>>(() => [
 ])
 
 // ---- Unified C&C ----
-const unifiedRows = computed(() => unifiedData.value)
+const unifiedRows = computed(() => {
+  // In demo mode the snapshot holds every route; narrow to the selected venues
+  // client-side. Unified routes involve two venues (futures + spot), so both
+  // must be selected for the route to show.
+  if (!isDemoMode || selectedVenues.value.length === 0) return unifiedData.value
+  const sel = new Set(selectedVenues.value)
+  return unifiedData.value.filter(
+    (u) => sel.has(u.futures_venue) && sel.has(u.spot_venue),
+  )
+})
 const unifiedCrossVenue = computed(() => unifiedRows.value.filter((u) => !u.same_venue).length)
 const unifiedSameVenue = computed(() => unifiedRows.value.filter((u) => u.same_venue).length)
 const unifiedStatCards = computed(() => [
