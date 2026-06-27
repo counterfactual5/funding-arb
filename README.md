@@ -2,7 +2,8 @@
 
 This orphan branch holds a single file, `scanner-latest.json`, refreshed
 hourly by the `TG Funding Push` GitHub Actions workflow. The Vercel
-dashboard fetches it via the jsDelivr CDN — see
+dashboard fetches it directly from raw.githubusercontent.com (5-min
+edge cache) — see
 [`docs/zh-CN/serverless-pipeline.md`](../main/docs/zh-CN/serverless-pipeline.md)
 for the full architecture.
 
