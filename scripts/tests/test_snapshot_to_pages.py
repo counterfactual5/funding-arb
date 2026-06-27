@@ -63,7 +63,16 @@ def _make_scan_result(rows=None) -> dict:
 class TestBuildSnapshotShape:
     def test_has_meta_status_opportunities_keys(self):
         snap = build_snapshot(_make_scan_result())
-        assert set(snap.keys()) == {"meta", "scanner_status", "scanner_opportunities"}
+        assert set(snap.keys()) == {
+            "meta",
+            "scanner_status",
+            "scanner_opportunities",
+            # Carry / Unified slices (added when --include-carry is on,
+            # which is the default). Always present in the schema even if
+            # empty, so the frontend's demo route table can rely on them.
+            "scanner_carry_venues",
+            "scanner_unified_routes",
+        }
 
     def test_meta_carries_schema_version(self):
         snap = build_snapshot(_make_scan_result())
@@ -94,6 +103,32 @@ class TestBuildSnapshotShape:
         assert snap["scanner_status"]["last_scan_time"] == ts
         assert snap["scanner_opportunities"]["timestamp"] == ts
         assert snap["meta"]["scan_timestamp"] == ts
+
+    def test_carry_and_unified_defaults_to_empty(self):
+        # When caller passes nothing, the snapshot still carries the keys
+        # (empty) so the frontend demo route table has stable shape.
+        snap = build_snapshot(_make_scan_result())
+        assert snap["scanner_carry_venues"] == []
+        assert snap["scanner_unified_routes"] == {
+            "venues": [],
+            "forward": [],
+            "reverse": [],
+        }
+
+    def test_carry_and_unified_are_passed_through(self):
+        carry = [{"venue": "binance", "forward": [{"base": "BTC"}], "reverse": []}]
+        unified = {
+            "venues": ["binance", "okx"],
+            "forward": [{"base": "ETH"}],
+            "reverse": [],
+        }
+        snap = build_snapshot(
+            _make_scan_result(),
+            carry_venues=carry,
+            unified_routes=unified,
+        )
+        assert snap["scanner_carry_venues"] == carry
+        assert snap["scanner_unified_routes"] == unified
 
 
 class TestBuildSnapshotSortingAndTruncation:

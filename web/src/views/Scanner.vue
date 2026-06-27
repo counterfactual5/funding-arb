@@ -634,9 +634,15 @@ async function loadDemoData(st: Strategy) {
   if (st === 'pure') {
     applyScanData('pure', snap.scanner_opportunities)
   } else if (st === 'carry') {
-    carryData.value = []
+    // Carry: snapshot holds per-venue buckets; feed them straight in.
+    const carryVenues = (snap as any).scanner_carry_venues ?? []
+    carryData.value = carryVenues as CarryVenue[]
+    lastScannedVenues.value = carryVenues.map((v: any) => v.venue).filter(Boolean)
   } else {
-    unifiedData.value = []
+    // Unified: snapshot holds a {venues, forward, reverse} route list.
+    const routes = (snap as any).scanner_unified_routes ?? { forward: [], reverse: [] }
+    unifiedData.value = [...(routes.forward ?? []), ...(routes.reverse ?? [])] as UnifiedCarryCand[]
+    lastScannedVenues.value = routes.venues ?? scanVenuesForStrategy(st)
   }
   await refreshScanLabel(st)
 }
