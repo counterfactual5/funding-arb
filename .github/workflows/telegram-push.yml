@@ -138,14 +138,15 @@ jobs:
           Do **not** open PRs against this branch.
           EOF
 
-          # Tell Vercel to skip the build on this branch. Without this file,
+          # Tell Vercel to succeed the build on this branch. Without this file,
           # Vercel tries to build gh-pages (which has no web/ directory) and
           # fails with "Root Directory 'web' does not exist" — sending error
           # emails every hour. A trivial buildCommand makes it succeed silently.
           cat > vercel.json <<'VZEOF'
           {
             "buildCommand": "echo ok",
-            "outputDirectory": "."
+            "outputDirectory": ".",
+            "ignoredBuildStep": ["vercel/steps/build-command"]
           }
           VZEOF
 
