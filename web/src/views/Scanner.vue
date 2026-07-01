@@ -617,7 +617,7 @@ async function refreshScanLabel(st: Strategy) {
 }
 
 /**
- * Demo-mode data loader. Reads the cached snapshot from jsDelivr (via
+ * Demo-mode data loader. Reads the cached snapshot from raw.githubusercontent.com (via
  * useDemoSnapshot) and feeds it into the same applyScanData path the live
  * backend would use, so the Scanner table renders identically.
  *
@@ -727,7 +727,7 @@ async function loadData(s?: Strategy | MouseEvent, autoScan = true) {
 async function handleTriggerScan() {
   const st = strategy.value
   // Demo mode: there's no backend to trigger — just re-fetch the snapshot
-  // (forces jsDelivr to refresh) and re-apply. Gives the user a sense that
+  // (forces a fresh snapshot fetch) and re-apply. Gives the user a sense that
   // the "Scan Now" button does something in the live demo.
   if (isDemoMode) {
     refreshing.value = true

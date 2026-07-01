@@ -57,7 +57,7 @@ chore: bump lighter-sdk dependency
 
 ## Adding a new venue
 
-Follow the shared engineering checklist in [`ROADMAP.md`](ROADMAP.md) (the "Shared engineering tasks for each new venue" table). In short:
+Follow the venue integration checklist in [GitHub Issues](https://github.com/counterfactual5/funding-arb/issues) and the completed examples in [`plans/edgex-integration-plan.md`](plans/edgex-integration-plan.md). In short:
 
 1. `scripts/venues/<name>.py` — ticker, funding, fees, positions, dry-run + live orders
 2. Register in `scripts/venues/__init__.py` and the scanner's `PURE_ALL_VENUES`
