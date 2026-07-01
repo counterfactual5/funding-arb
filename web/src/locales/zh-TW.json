@@ -61,7 +61,7 @@
       },
       "serverlessPipeline": {
         "title": "無伺服器資料管線",
-        "desc": "GitHub Actions → gh-pages → jsDelivr → Vercel 的零成本即時 demo 架構",
+        "desc": "GitHub Actions → gh-pages → raw.githubusercontent.com → Vercel 的零成本即時 demo 架構",
         "tag": "部署"
       }
     }

@@ -149,7 +149,8 @@ Two parallel execution paths coexist:
 ### Telegram digest bot (cron-friendly)
 
 A thin scan-and-push wrapper that runs once, formats the top-N pure-futures
-spreads, posts a Markdown digest to a Telegram chat/channel, and exits. No
+spreads into a compact HTML digest, posts it to a Telegram chat/channel (with
+optional inline URL buttons to the demo dashboard), and exits. No
 long-running state, no order execution — perfect for GitHub Actions cron,
 systemd timers, or any serverless scheduler.
 
@@ -166,19 +167,24 @@ export TELEGRAM_CHAT_ID="@your_channel"          # or numeric -100...
 
 # 4. Include perp DEX venues (HL / Aster / Lighter / EdgeX / dYdX)
 .venv/bin/python scripts/notify/telegram_push.py --include-dex
+
+# 5. Override demo URL for inline buttons (or "" to disable)
+.venv/bin/python scripts/notify/telegram_push.py --dashboard-url https://your-demo.vercel.app
 ```
 
-**GitHub Actions cron** — see [`.github/workflows/telegram-push.yml`](.github/workflows/telegram-push.yml).
-Runs hourly at `:07`. Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` under
-`Settings → Secrets and variables → Actions`, then trigger via
-`Actions → TG Funding Push → Run workflow`.
+**GitHub Actions** — see [`.github/workflows/telegram-push.yml`](.github/workflows/telegram-push.yml)
+and [`docs/zh-CN/serverless-pipeline.md`](docs/zh-CN/serverless-pipeline.md). Hourly cadence
+is driven by an external **cron-job.org** task that POSTs to `workflow_dispatch`
+(with `"source": "cron"` for anti-spam). Add `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID` under `Settings → Secrets and variables → Actions`, then
+trigger via `Actions → TG Funding Push → Run workflow`.
 
 > 💡 GitHub-hosted runners are outside China, so they reach `api.telegram.org`
 > without a proxy. If you self-host the cron from a mainland CN network,
 > route through a HK / SG box or configure an HTTPS proxy.
 
-Tests: `scripts/tests/test_telegram_push.py` (32 cases — formatting, chunking,
-HTML escaping, venue resolution; no network).
+Tests: `scripts/tests/test_telegram_push.py` (48 cases — compact formatting,
+inline keyboard, chunking, HTML escaping, venue resolution; no network).
 
 ### Live Demo (Vercel + GitHub Actions data pipeline)
 
@@ -350,7 +356,7 @@ funding-arb/
 ```bash
 pip install -r requirements.txt   # or: bash setup.sh
 .venv/bin/python -m pytest scripts/tests/ -q
-# 290+ tests — scanners, fees, venues (incl. HL/Aster/Lighter/EdgeX), executor, backtest
+# 370+ tests — scanners, fees, venues (incl. HL/Aster/Lighter/EdgeX), executor, backtest, notify
 ```
 
 ---

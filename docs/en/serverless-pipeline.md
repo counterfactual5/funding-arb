@@ -6,7 +6,7 @@ GitHub Actions → gh-pages → raw.githubusercontent.com → Vercel: zero-cost 
 
 <!-- id: overview -->
 
-The public demo dashboard needs to refresh scanner data every hour, but we do not want to pay for a server or trigger a Vercel rebuild on every data update. The pattern documented here lets GitHub Actions push a static JSON snapshot to an orphan gh-pages branch every hour; the frontend fetches it at runtime directly from raw.githubusercontent.com (5-minute edge cache + permissive CORS). The result: zero servers, zero Vercel rebuilds, zero ongoing cost.
+The public demo dashboard needs to refresh scanner data every hour, but we do not want to pay for a server or trigger a Vercel rebuild on every data update. The pattern documented here lets GitHub Actions push a static JSON snapshot to an orphan gh-pages branch every hour; the frontend fetches it at runtime directly from raw.githubusercontent.com (5-minute edge TTL + permissive CORS). The result: zero servers, zero Vercel rebuilds, zero ongoing cost.
 
 > ℹ️ Four building blocks: GitHub Actions (hourly trigger) / gh-pages orphan branch (holds scanner-latest.json) / raw.githubusercontent.com (5-minute edge cache, raw file mirror) / Vercel static site (fetches the JSON at runtime).
 
@@ -14,7 +14,7 @@ The public demo dashboard needs to refresh scanner data every hour, but we do no
 
 <!-- id: data-flow -->
 
-The whole pipeline is one-directional: after the scanner runs in CI it writes a single JSON file and commits it to the orphan branch; the frontend fetches that JSON directly from raw.githubusercontent.com at runtime. No request ever flows back to our own servers.
+The whole pipeline is one-directional: after the scanner runs in CI it writes a single JSON file and commits it to the orphan branch; the frontend fetches that JSON from the CDN at runtime. No request ever flows back to our own servers.
 
 - GitHub Actions fires hourly (cron-job.org → workflow_dispatch; see .github/workflows/telegram-push.yml)
 - Scanner scans 9 venues / ~946 perpetual assets
@@ -27,22 +27,12 @@ The whole pipeline is one-directional: after the scanner runs in CI it writes a 
 
 <!-- id: cron-job-org -->
 
-GitHub Actions `workflow_dispatch` does not run on its own; an external cron service must call the GitHub REST API.
-
-**Endpoint**
+GitHub Actions workflow_dispatch does not run on its own; an external cron service must call the GitHub REST API. Use a fine-grained PAT (Actions: Read and write) to POST to actions/workflows/telegram-push.yml/dispatches.
 
 ```text
 POST https://api.github.com/repos/{owner}/{repo}/actions/workflows/telegram-push.yml/dispatches
 Authorization: Bearer <fine-grained PAT>
-Accept: application/vnd.github+json
-Content-Type: application/json
-```
 
-**PAT scopes**: Repository access for this repo; Permissions → Actions → **Read and write**.
-
-**POST body (recommended)**
-
-```json
 {
   "ref": "main",
   "inputs": {
@@ -54,11 +44,23 @@ Content-Type: application/json
 }
 ```
 
-- `source: "cron"` passes `--skip-if-unchanged` to telegram_push.py: skip the Telegram post when nothing in the Top-N is new or moved vs the previous snapshot (the demo snapshot still refreshes).
-- Manual "Run workflow" in the GitHub UI keeps the default `source=manual` and always posts — useful for debugging.
-- If any step fails, the workflow's `Alert on failure` step posts a link to the run in the same `TELEGRAM_CHAT_ID`.
+source=cron passes --skip-if-unchanged (skip Telegram when Top-N unchanged); manual Run workflow keeps source=manual and always posts. Alert on failure sends a run link to Telegram if any step fails.
 
-> ⚠️ If the cron-job.org body omits `"source": "cron"`, anti-spam is disabled and Telegram receives an unconditional post every hour.
+> ⚠️ If the cron-job.org body omits source: cron, anti-spam is disabled and Telegram receives an unconditional post every hour.
+
+## Telegram digest format
+
+<!-- id: telegram-digest -->
+
+telegram_push.py formats the Pure Futures Top-N as a compact HTML message (parse_mode=HTML). Each opportunity is one line: direction, asset, leg pair, net edge (after open-leg taker fees), APR (net annualized when available), recent persistence P% and spike ⚡, plus ⚠️ settlement-interval mismatch and 🆕/📈/📉 change markers vs the previous snapshot.
+
+Material cross-venue mark divergence (mkΔ) is inlined when significant; full tables and Carry / Unified strategies are one tap away via URL buttons at the bottom (no callback server — plain links).
+
+- 📊 Dashboard — demo site Pure Futures scanner
+- 📈 Carry — /?strategy=carry deep-links to the Cash & Carry tab
+- 🔀 Unified — /?strategy=unified deep-links to the Unified tab
+
+Buttons default to the Vercel demo; override with --dashboard-url for self-hosted deployments, or pass an empty string to disable.
 
 ## Why an orphan branch
 
@@ -68,7 +70,7 @@ Committing scanner-latest.json to main every hour would pollute git history with
 
 An orphan branch has no shared history with main; each commit only touches the single scanner-latest.json file. Main stays clean for normal development, while gh-pages is an independent, artifact-only linear history.
 
-> ℹ️ The workflow runs git checkout --orphan gh-pages on first run, and fetches the existing branch on subsequent runs (see .github/workflows/telegram-push.yml).
+> ℹ️ The workflow runs git checkout --orphan gh-pages on first run, and fetches the existing branch on subsequent runs; it also writes web/vercel.json on gh-pages (git.deploymentEnabled:false) so Vercel does not treat gh-pages pushes as failed preview builds (see .github/workflows/telegram-push.yml).
 
 ## Frontend demo mode
 

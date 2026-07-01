@@ -4,7 +4,7 @@
 A thin "scan → format → push" wrapper around the existing
 :func:`scripts.cli.scan_pure_futures_spreads.scan_pure_futures_spreads`.
 Designed for cron / serverless invocation (GitHub Actions, systemd timers,
-cron, Airflow, …) — runs one scan, pushes a Markdown digest to a Telegram
+cron, Airflow, …) — runs one scan, pushes a compact HTML digest to a Telegram
 chat, and exits. No long-running state, no WebSocket, no order execution.
 
 Environment variables

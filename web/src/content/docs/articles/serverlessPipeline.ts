@@ -74,6 +74,32 @@ const zhCN: DocSection[] = [
     ],
   },
   {
+    id: "telegram-digest",
+    title: "Telegram 推送格式",
+    blocks: [
+      {
+        type: "p",
+        text: "telegram_push.py 把 Pure Futures Top-N 格式化为紧凑型 HTML 消息（parse_mode=HTML）。每条机会占一行：方向、资产、腿组合、net edge（扣开仓腿 taker 手续费后的边际）、APR（优先 net 年化）、近期持续性 P% 与异常波动 ⚡，以及 ⚠️ 结算周期错配、🆕/📈/📉 相对上轮变化标记。",
+      },
+      {
+        type: "p",
+        text: "当跨所 mark 价差（mkΔ）显著时，在同一行标注基差风险；完整表格与 Carry / Unified 策略见消息底部的 URL 按钮（无需额外服务端，纯跳转）。",
+      },
+      {
+        type: "ul",
+        items: [
+          "📊 Dashboard — demo 站点 Pure Futures 扫描页",
+          "📈 Carry — /?strategy=carry 深链到 Cash & Carry tab",
+          "🔀 Unified — /?strategy=unified 深链到 Unified tab",
+        ],
+      },
+      {
+        type: "p",
+        text: "默认按钮指向 Vercel demo；本地或自建部署可用 --dashboard-url 覆盖，传空字符串禁用按钮。",
+      },
+    ],
+  },
+  {
     id: "orphan-branch",
     title: "为什么用孤儿分支",
     blocks: [
@@ -88,7 +114,7 @@ const zhCN: DocSection[] = [
       {
         type: "callout",
         variant: "info",
-        text: "Workflow 首次运行时执行 git checkout --orphan gh-pages，后续运行直接 fetch 已存在的分支（详见 .github/workflows/telegram-push.yml）。",
+        text: "Workflow 首次运行时执行 git checkout --orphan gh-pages，后续运行直接 fetch 已存在的分支；同时在 gh-pages 写入 web/vercel.json（git.deploymentEnabled:false），避免 Vercel 把 gh-pages 当成普通分支触发失败构建（详见 .github/workflows/telegram-push.yml）。",
       },
     ],
   },
@@ -219,6 +245,32 @@ const zhTW: DocSection[] = [
     ],
   },
   {
+    id: "telegram-digest",
+    title: "Telegram 推送格式",
+    blocks: [
+      {
+        type: "p",
+        text: "telegram_push.py 把 Pure Futures Top-N 格式化為緊湊型 HTML 訊息（parse_mode=HTML）。每條機會佔一行：方向、資產、腿組合、net edge（扣開倉腿 taker 手續費後的邊際）、APR（優先 net 年化）、近期持續性 P% 與異常波動 ⚡，以及 ⚠️ 結算週期錯配、🆕/📈/📉 相對上輪變化標記。",
+      },
+      {
+        type: "p",
+        text: "當跨所 mark 價差（mkΔ）顯著時，在同一行標註基差風險；完整表格與 Carry / Unified 策略見訊息底部的 URL 按鈕（無需額外服務端，純跳轉）。",
+      },
+      {
+        type: "ul",
+        items: [
+          "📊 Dashboard — demo 站點 Pure Futures 掃描頁",
+          "📈 Carry — /?strategy=carry 深鏈到 Cash & Carry tab",
+          "🔀 Unified — /?strategy=unified 深鏈到 Unified tab",
+        ],
+      },
+      {
+        type: "p",
+        text: "預設按鈕指向 Vercel demo；本地或自建部署可用 --dashboard-url 覆蓋，傳空字串禁用按鈕。",
+      },
+    ],
+  },
+  {
     id: "orphan-branch",
     title: "為什麼用孤兒分支",
     blocks: [
@@ -233,7 +285,7 @@ const zhTW: DocSection[] = [
       {
         type: "callout",
         variant: "info",
-        text: "Workflow 首次執行時執行 git checkout --orphan gh-pages，後續執行直接 fetch 已存在的分支（詳見 .github/workflows/telegram-push.yml）。",
+        text: "Workflow 首次執行時執行 git checkout --orphan gh-pages，後續執行直接 fetch 已存在的分支；同時在 gh-pages 寫入 web/vercel.json（git.deploymentEnabled:false），避免 Vercel 把 gh-pages 當成普通分支觸發失敗建置（詳見 .github/workflows/telegram-push.yml）。",
       },
     ],
   },
@@ -364,6 +416,32 @@ const en: DocSection[] = [
     ],
   },
   {
+    id: "telegram-digest",
+    title: "Telegram digest format",
+    blocks: [
+      {
+        type: "p",
+        text: "telegram_push.py formats the Pure Futures Top-N as a compact HTML message (parse_mode=HTML). Each opportunity is one line: direction, asset, leg pair, net edge (after open-leg taker fees), APR (net annualized when available), recent persistence P% and spike ⚡, plus ⚠️ settlement-interval mismatch and 🆕/📈/📉 change markers vs the previous snapshot.",
+      },
+      {
+        type: "p",
+        text: "Material cross-venue mark divergence (mkΔ) is inlined when significant; full tables and Carry / Unified strategies are one tap away via URL buttons at the bottom (no callback server — plain links).",
+      },
+      {
+        type: "ul",
+        items: [
+          "📊 Dashboard — demo site Pure Futures scanner",
+          "📈 Carry — /?strategy=carry deep-links to the Cash & Carry tab",
+          "🔀 Unified — /?strategy=unified deep-links to the Unified tab",
+        ],
+      },
+      {
+        type: "p",
+        text: "Buttons default to the Vercel demo; override with --dashboard-url for self-hosted deployments, or pass an empty string to disable.",
+      },
+    ],
+  },
+  {
     id: "orphan-branch",
     title: "Why an orphan branch",
     blocks: [
@@ -378,7 +456,7 @@ const en: DocSection[] = [
       {
         type: "callout",
         variant: "info",
-        text: "The workflow runs git checkout --orphan gh-pages on first run, and fetches the existing branch on subsequent runs (see .github/workflows/telegram-push.yml).",
+        text: "The workflow runs git checkout --orphan gh-pages on first run, and fetches the existing branch on subsequent runs; it also writes web/vercel.json on gh-pages (git.deploymentEnabled:false) so Vercel does not treat gh-pages pushes as failed preview builds (see .github/workflows/telegram-push.yml).",
       },
     ],
   },

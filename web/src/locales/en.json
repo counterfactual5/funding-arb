@@ -61,7 +61,7 @@
       },
       "serverlessPipeline": {
         "title": "Serverless Data Pipeline",
-        "desc": "GitHub Actions → gh-pages → jsDelivr → Vercel: zero-cost live demo architecture",
+        "desc": "GitHub Actions → gh-pages → raw.githubusercontent.com → Vercel: zero-cost live demo architecture",
         "tag": "Deploy"
       }
     }

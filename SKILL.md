@@ -85,11 +85,13 @@ Long-running; start it in the background.
 .venv/bin/python scripts/cli/setup_credentials.py           # interactive setup (live trading only)
 ```
 
-Supported venues: CEX `binance`, `bitget`, `bybit`, `okx` + perp DEX `hyperliquid`, `aster`, `lighter`. All seven scan and dry-run without keys. Live trading requirements:
+Supported venues: CEX `binance`, `bitget`, `bybit`, `okx` + perp DEX `hyperliquid`, `aster`, `lighter`, `edgex`, `dydx`. All nine scan and dry-run without keys. Live trading requirements:
 
 - `hyperliquid` — sibling `../hyperliquid` repo checkout + `HYPERLIQUID_API_KEY` / `HYPERLIQUID_API_SECRET`
 - `aster` — `ASTER_API_KEY` / `ASTER_API_SECRET` (Binance-compatible HMAC)
 - `lighter` — `lighter-sdk` installed + `LIGHTER_API_PRIVATE_KEY`, `LIGHTER_ACCOUNT_INDEX` (or `LIGHTER_L1_ADDRESS`), optional `LIGHTER_API_KEY_INDEX` (default 2)
+- `edgex` — `EDGEX_ACCOUNT_ID` / `EDGEX_TRADING_PRIVATE_KEY`
+- `dydx` — scan-only; live trading adapter pending
 
 DEX legs are perp-only (no spot/margin); cash-and-carry and unified strategies remain CEX-only.
 
