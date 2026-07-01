@@ -1,5 +1,0 @@
-{
-  "buildCommand": "echo ok",
-  "outputDirectory": ".",
-  "ignoredBuildStep": ["vercel/steps/build-command"]
-}
