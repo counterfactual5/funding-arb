@@ -8,10 +8,6 @@ In-app docs are mirrored here for offline / repo browsing.
 | English | [en/README.md](./en/README.md) |
 | 繁體中文（台灣） | [zh-TW/README.md](./zh-TW/README.md) |
 
-## Legacy
-
-- [cross-interval-funding-model.md](./cross-interval-funding-model.md) — original cross-interval reference (zh-CN, kept for backward-compatible links)
-
 ## Regenerate
 
 ```bash

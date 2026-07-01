@@ -97,13 +97,6 @@ function buildIndex(locale: Locale, locales: LocaleFile): string {
     '| --- | --- |',
     '| Project README | [../../README.md](../../README.md) |',
     '| CLI playbook (SKILL) | [../../SKILL.md](../../SKILL.md) |',
-  )
-  if (locale === 'zh-CN') {
-    lines.push(
-      '| Cross-interval model (legacy path) | [cross-interval-funding-model.md](../cross-interval-funding-model.md) |',
-    )
-  }
-  lines.push(
     '',
     '---',
     '',
@@ -146,10 +139,6 @@ function main() {
     '| 简体中文 | [zh-CN/README.md](./zh-CN/README.md) |',
     '| English | [en/README.md](./en/README.md) |',
     '| 繁體中文（台灣） | [zh-TW/README.md](./zh-TW/README.md) |',
-    '',
-    '## Legacy',
-    '',
-    '- [cross-interval-funding-model.md](./cross-interval-funding-model.md) — original cross-interval reference (zh-CN, kept for backward-compatible links)',
     '',
     '## Regenerate',
     '',

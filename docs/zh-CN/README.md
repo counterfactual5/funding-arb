@@ -20,7 +20,6 @@ Algorithm and strategy reference for the Funding Arb scanner. Generated from `we
 | --- | --- |
 | Project README | [../../README.md](../../README.md) |
 | CLI playbook (SKILL) | [../../SKILL.md](../../SKILL.md) |
-| Cross-interval model (legacy path) | [cross-interval-funding-model.md](../cross-interval-funding-model.md) |
 
 ---
 

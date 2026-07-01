@@ -33,7 +33,7 @@ Default scanner venues are **CEX-only**; DEX venues are opt-in via the UI or `--
 | `real_edge_pct` | `net_edge_pct − mark_spread_pct` (conservative edge) |
 | `settle_mismatch` | Different funding intervals (e.g. HL 1h vs CEX 8h) |
 
-Cross-interval pairs use a **basis-blend model** (mark vs index, weighted by settlement progress). See [`docs/cross-interval-funding-model.md`](docs/cross-interval-funding-model.md).
+Cross-interval pairs use a **basis-blend model** (mark vs index, weighted by settlement progress). See [`docs/en/cross-interval.md`](docs/en/cross-interval.md).
 
 ---
 
@@ -325,8 +325,7 @@ Strategy JSON: `scripts/data/strategy_config.json` (also editable in Settings UI
 funding-arb/
 ├── docs/
 │   ├── README.md                         # Doc index (zh-CN / en / zh-TW)
-│   ├── zh-CN/ en/ zh-TW/                 # Strategy & algorithm docs (from web UI)
-│   └── cross-interval-funding-model.md   # Legacy cross-interval reference
+│   └── zh-CN/ en/ zh-TW/                 # Strategy & algorithm docs (from web UI)
 ├── plans/
 │   └── edgex-integration-plan.md
 ├── templates/                 # Strategy config templates
@@ -366,7 +365,6 @@ pip install -r requirements.txt   # or: bash setup.sh
 | Doc | Contents |
 |-----|----------|
 | [`docs/README.md`](docs/README.md) | **Algorithm docs index** — zh-CN / en / zh-TW (funding basics, C&C, Pure Futures, fees, cross-interval) |
-| [`docs/cross-interval-funding-model.md`](docs/cross-interval-funding-model.md) | Cross-interval basis-blend model (legacy path; synced copy: `docs/zh-CN/cross-interval.md`) |
 | [`SKILL.md`](SKILL.md) | CLI-first workflow for AI agents (`@SKILL.md` in Cursor) |
 | [GitHub Issues](https://github.com/counterfactual5/funding-arb/issues) | Roadmap — planned features, venue expansion, known gaps |
 | [`plans/edgex-integration-plan.md`](plans/edgex-integration-plan.md) | EdgeX scan + trade integration notes |
