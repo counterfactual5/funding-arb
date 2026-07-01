@@ -26,6 +26,7 @@ Usage
     python3 scripts/notify/telegram_push.py --top 5 --min-edge 0.05
     python3 scripts/notify/telegram_push.py --include-dex
     python3 scripts/notify/telegram_push.py --dry-run    # skip the HTTP POST
+    python3 scripts/notify/telegram_push.py --dashboard-url ""  # no inline buttons
 
 Exit codes
 ----------
@@ -71,6 +72,13 @@ DEFAULT_MIN_EDGE = 0.0
 # this many percentage points vs the previous snapshot — used for 📈/📉 markers
 # and the --skip-if-unchanged anti-spam gate.
 DEFAULT_CHANGE_THRESHOLD = 0.01
+# Only annotate a row with its cross-venue mark divergence (mkΔ) when it is
+# large enough to plausibly matter — below this, net_edge and real_edge are
+# close enough that spelling it out is just noise.
+BASIS_ANNOTATION_THRESHOLD = 0.05
+# Default demo dashboard — Telegram inline "view more" buttons deep-link here
+# (see README's Live Demo link). Override with --dashboard-url.
+DEFAULT_DASHBOARD_URL = "https://funding-arb-drab.vercel.app"
 
 
 # ---------------------------------------------------------------------------
@@ -113,20 +121,6 @@ def _fmt_interval(h: Any) -> str:
     except (TypeError, ValueError):
         return "?"
     return f"{int(hv)}h" if hv == int(hv) else f"{hv:g}h"
-
-
-def _fmt_usd(usd: float | None) -> str:
-    """Compact USD for the max_exec liquidity hint (250 / 1.4k / 6.2k / 2.5M)."""
-    if usd is None:
-        return "n/a"
-    try:
-        if usd >= 1_000_000:
-            return f"${usd / 1_000_000:.2f}M"
-        if usd >= 1_000:
-            return f"${usd / 1_000:.1f}k"
-        return f"${usd:.0f}"
-    except (TypeError, ValueError):
-        return "n/a"
 
 
 def _escape_html(text: str) -> str:
@@ -180,7 +174,14 @@ def _format_one(
     prev_index: dict[tuple[str, str, str, str], float] | None = None,
     change_threshold: float = DEFAULT_CHANGE_THRESHOLD,
 ) -> str:
-    """One spread entry → one Telegram line (HTML)."""
+    """One spread entry → one compact Telegram line (HTML).
+
+    Deliberately terse — a phone notification needs the decision-relevant
+    numbers (fee-adjusted edge, annualized return, whether it's a repeatable
+    carry vs a one-off spike, and any settlement risk), not every intermediate
+    figure the scanner computes. Full detail is one tap away via the
+    dashboard buttons appended to the digest.
+    """
     base = _escape_html(str(spread.get("base", "?")))
     long_venue = _escape_html(str(spread.get("long_venue", "?")))
     short_venue = _escape_html(str(spread.get("short_venue", "?")))
@@ -188,11 +189,6 @@ def _format_one(
     arrow = "🟢" if direction == "forward" else "🔴"
     marker, _ = _change_marker(spread, prev_index, change_threshold)
     marker_str = f" {marker}" if marker else ""
-
-    long_rate = _fmt_pct(spread.get("long_rate_pct"))
-    short_rate = _fmt_pct(spread.get("short_rate_pct"))
-    spread_pct = _fmt_pct(spread.get("spread_pct"), plus=False)
-    net_edge = _fmt_pct(spread.get("net_edge_pct"))
 
     # Settlement-interval mismatch: surface the *actual* intervals (e.g. 1h/8h)
     # so the reader can judge how lopsided the funding accrual is.
@@ -204,70 +200,37 @@ def _format_one(
     else:
         flag = ""
 
-    # real_edge = net_edge − cross-venue mark divergence (basis risk). This is
-    # the scanner's primary ranking metric; net_edge alone overstates a perp
-    # that is dislocated from its peer venue.
-    real_edge_val = spread.get("real_edge_pct")
+    net_edge = _fmt_pct(spread.get("net_edge_pct"))
+
+    # net_edge already deducts the open-leg fee. Only call out the extra
+    # cross-venue mark-price gap (mkΔ, the basis-risk discount baked into
+    # real_edge) when it's large enough to plausibly change the decision.
     mark_spread = spread.get("mark_spread_pct")
-    if real_edge_val is not None:
-        mark_str = (
-            f" after markΔ {mark_spread:.3f}%"
-            if isinstance(mark_spread, (int, float))
-            else ""
-        )
-        real_line = f"\n   real_edge <b>{_fmt_pct(real_edge_val)}</b>{mark_str}"
+    if isinstance(mark_spread, (int, float)) and mark_spread >= BASIS_ANNOTATION_THRESHOLD:
+        basis = f" (mkΔ{mark_spread:.2f}%)"
     else:
-        real_line = ""
+        basis = ""
 
-    # One-cycle net: profit if you enter and exit after a single settlement —
-    # this must clear the *round-trip* fee (open + close, both legs), not just
-    # the open leg. A transient funding spike is only worth eating once if this
-    # is positive; otherwise it only pays as a multi-cycle carry.
-    spread_val = spread.get("spread_pct")
-    rt_fee = spread.get("round_trip_fee_pct")
-    if isinstance(spread_val, (int, float)) and isinstance(rt_fee, (int, float)):
-        one_cycle_line = (
-            f"\n   1-cycle net <b>{_fmt_pct(spread_val - rt_fee)}</b> "
-            f"(eat once, after round-trip fee)"
-        )
-    else:
-        one_cycle_line = ""
+    # APR: net (fee + entry-basis adjusted) when available, else gross.
+    apr = spread.get("net_apy_pct")
+    if not isinstance(apr, (int, float)):
+        apr = spread.get("annual_apy_pct")
+    apr_str = f"{apr:.0f}%" if isinstance(apr, (int, float)) else "n/a"
 
-    # Persistence: how many recent cycles the oriented spread stayed positive,
+    # Persistence: % of recent cycles the oriented spread stayed positive,
     # plus a ⚡ flag when the current spread is an outlier vs its own history
     # (i.e. a transient spike, not a repeatable carry).
     hist_cycles = spread.get("hist_cycles")
     if isinstance(hist_cycles, (int, float)) and hist_cycles:
-        held = spread.get("hist_held", 0)
         held_pct = spread.get("hist_held_pct", 0)
-        spike = " ⚡spike" if spread.get("is_spike") else ""
-        persist_line = (
-            f"\n   held {held:.0f}/{hist_cycles:.0f} cyc ({held_pct:.0f}%){spike}"
-        )
+        spike = "⚡" if spread.get("is_spike") else ""
+        persist = f"  P{held_pct:.0f}%{spike}"
     else:
-        persist_line = ""
-
-    # Liquidity context: max USD deployable on both legs within ±0.3% window.
-    # None means the book fetch failed or the pair was outside the depth top-N;
-    # we don't surface n/a when the field is genuinely absent to avoid noise.
-    max_exec = spread.get("max_exec_usd")
-    if isinstance(max_exec, (int, float)) and max_exec > 0:
-        liquidity_line = f"\n   💧 max_exec {_fmt_usd(max_exec)}"
-    else:
-        liquidity_line = ""
-
-    # Gross vs net APR — net (net_apy_pct) deducts round-trip fees + entry basis.
-    gross = spread.get("annual_apy_pct")
-    net_apy = spread.get("net_apy_pct")
-    gross_str = f"{gross:.0f}%" if isinstance(gross, (int, float)) else "n/a"
-    net_str = f"{net_apy:.0f}%" if isinstance(net_apy, (int, float)) else "n/a"
-    fee_str = f" · fee rt {rt_fee:.3f}%" if isinstance(rt_fee, (int, float)) else ""
+        persist = ""
 
     return (
-        f"{arrow} <b>{base}</b>  {long_venue}L / {short_venue}S{flag}{marker_str}\n"
-        f"   rate {long_rate} vs {short_rate}  →  spread {spread_pct}\n"
-        f"   net_edge <b>{net_edge}</b>{real_line}{one_cycle_line}{persist_line}{liquidity_line}\n"
-        f"   APR {gross_str} gross / {net_str} net{fee_str}"
+        f"{arrow} <b>{base}</b>  {long_venue}L/{short_venue}S{flag}{marker_str}  "
+        f"net <b>{net_edge}</b>{basis}  APR {apr_str}{persist}"
     )
 
 
@@ -366,13 +329,11 @@ def format_digest(
     # (rank_rows copies dicts, so re-ranking here would drop those annotations).
     top = top_rows if top_rows is not None else ranked
     assets = result.get("total_assets_scanned", "?")
-    header_venues = ", ".join(venues) if venues else "n/a"
 
     head = (
         f"📊 <b>Funding Spread Digest</b>\n"
         f"<i>{_escape_html(ts_human)}</i>\n"
-        f"venues: {_escape_html(header_venues)} · assets: {assets} · "
-        f"candidates: {total}\n"
+        f"{len(venues)} venues · assets: {assets} · candidates: {total}\n"
         f"{'─' * 24}"
     )
     if title:
@@ -392,21 +353,25 @@ def format_digest(
             current = ""
         current += block
 
-    footer = (
-        "\n<i>net_edge = spread − open-leg fee (carry, fee amortized) · "
-        "real_edge = net_edge − markΔ (basis risk)\n"
-        "1-cycle net = spread − round-trip fee (profit if you eat one cycle) · "
-        "fees = standard taker tier (VIP lower) · "
-        "⚠️ = settlement-interval mismatch."
-    )
+    # Only spell out legends for markers actually present this cycle — keeps
+    # the footer short on quiet cycles instead of always listing everything.
+    legend = ["net = fee-adjusted edge", "APR = net annualized"]
+    if any(
+        isinstance(r.get("mark_spread_pct"), (int, float))
+        and r["mark_spread_pct"] >= BASIS_ANNOTATION_THRESHOLD
+        for r in top
+    ):
+        legend.append("mkΔ = cross-venue mark gap (basis risk)")
     if any(r.get("hist_cycles") for r in top):
-        footer += (
-            " held = recent cycles the spread stayed positive · "
-            "⚡ = current spread >3× its own recent median (transient)."
-        )
+        legend.append("P = % of recent cycles held positive")
+        legend.append("⚡ = spike (>3× recent median)")
+    if any(r.get("settle_mismatch") for r in top):
+        legend.append("⚠️ = settlement-interval mismatch")
     if prev_index:
-        footer += " 🆕 new · 📈/📉 = edge moved vs last cycle."
-    footer += "</i>"
+        legend.append("🆕 new")
+        legend.append("📈/📉 = edge moved vs last cycle")
+    footer = f"\n<i>{' · '.join(legend)}</i>"
+
     if len(current) + len(footer) > TG_MESSAGE_LIMIT:
         chunks.append(current.rstrip())
         chunks.append(footer.strip())
@@ -426,24 +391,28 @@ def send_telegram_message(
     config: dict[str, str],
     *,
     timeout: float = 10.0,
+    reply_markup: dict[str, Any] | None = None,
 ) -> bool:
     """POST a single ``sendMessage`` to Telegram.
 
     Returns True on HTTP 200. Raises on network errors so callers can
-    decide between retry / abort.
+    decide between retry / abort. ``reply_markup`` (e.g. an inline keyboard)
+    is attached only when given — most chunks of a multi-message digest
+    don't need one.
     """
     token = config["telegram_bot_token"]
     chat_id = config["telegram_chat_id"]
     url = f"https://api.telegram.org/bot{token}/sendMessage"
 
-    payload = json.dumps(
-        {
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        }
-    ).encode("utf-8")
+    body: dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    if reply_markup:
+        body["reply_markup"] = reply_markup
+    payload = json.dumps(body).encode("utf-8")
 
     req = urllib.request.Request(
         url, data=payload, headers={"Content-Type": "application/json"}
@@ -464,16 +433,26 @@ def broadcast(
     *,
     dry_run: bool = False,
     sleep_between: float = 0.5,
+    reply_markup_last: dict[str, Any] | None = None,
 ) -> tuple[int, int]:
-    """Send a sequence of messages. Returns (sent, failed)."""
+    """Send a sequence of messages. Returns (sent, failed).
+
+    ``reply_markup_last`` (e.g. an inline keyboard with dashboard links) is
+    attached only to the final message, so it appears once after the whole
+    digest rather than repeated on every chunk.
+    """
+    msgs = list(messages)
     sent, failed = 0, 0
-    for msg in messages:
+    for i, msg in enumerate(msgs):
+        markup = reply_markup_last if i == len(msgs) - 1 else None
         if dry_run:
             print(f"[dry-run] Would post {len(msg)} chars:\n{msg}\n")
+            if markup:
+                print(f"[dry-run] buttons: {markup}")
             sent += 1
             continue
         try:
-            ok = send_telegram_message(msg, config)
+            ok = send_telegram_message(msg, config, reply_markup=markup)
         except RuntimeError as e:
             print(f"[push] failed: {e}", file=sys.stderr)
             failed += 1
@@ -580,6 +559,12 @@ def main() -> int:
         action="store_true",
         help="Format the digest and print it, but do not POST to Telegram",
     )
+    parser.add_argument(
+        "--dashboard-url",
+        default=DEFAULT_DASHBOARD_URL,
+        help="Base URL for the digest's inline 'view more' buttons "
+        f"(default {DEFAULT_DASHBOARD_URL}; pass an empty string to disable)",
+    )
     args = parser.parse_args()
 
     config = _load_config()
@@ -660,7 +645,22 @@ def main() -> int:
         file=sys.stderr,
     )
 
-    sent, failed = broadcast(messages, config, dry_run=args.dry_run)
+    reply_markup = None
+    if args.dashboard_url:
+        base = args.dashboard_url.rstrip("/")
+        reply_markup = {
+            "inline_keyboard": [
+                [
+                    {"text": "📊 Dashboard", "url": base},
+                    {"text": "📈 Carry", "url": f"{base}/?strategy=carry"},
+                    {"text": "🔀 Unified", "url": f"{base}/?strategy=unified"},
+                ]
+            ]
+        }
+
+    sent, failed = broadcast(
+        messages, config, dry_run=args.dry_run, reply_markup_last=reply_markup
+    )
     print(f"[push] sent={sent} failed={failed}", file=sys.stderr)
     if failed > 0 and not args.dry_run:
         return 3

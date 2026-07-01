@@ -7,6 +7,7 @@ regressions tend to creep in, so that's what we lock down.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -157,8 +158,8 @@ class TestFormatDigest:
         bad = _make_result(rows=[_make_spread(base="RISKY", settle_mismatch=True)])
         clean_body = format_digest(clean)[0]
         bad_body = format_digest(bad)[0]
-        assert "bybitS ⚠️" not in clean_body
-        assert "bybitS ⚠️" in bad_body
+        assert "⚠️" not in clean_body
+        assert "⚠️" in bad_body
 
     def test_settle_mismatch_shows_actual_intervals(self):
         bad = _make_result(
@@ -174,31 +175,28 @@ class TestFormatDigest:
         body = format_digest(bad)[0]
         assert "⚠️ 1h/8h" in body
 
-    def test_shows_real_edge_and_net_apr(self):
+    def test_shows_net_edge_and_apr(self):
         result = _make_result(
             rows=[_make_spread(net_edge_pct=0.05, annual_apy_pct=300.0, net_apy_pct=150.0)]
         )
         body = format_digest(result)[0]
-        assert "real_edge" in body
-        assert "300% gross" in body
-        assert "150% net" in body
+        assert "net <b>+0.0500%</b>" in body
+        # net_apy_pct (fee + basis adjusted) is preferred over the gross APR.
+        assert "APR 150%" in body
+        assert "300%" not in body
 
-    def test_one_cycle_net_uses_round_trip_fee(self):
-        # spread 0.1441, round-trip 0.10 → eat-once net = +0.0441%
+    def test_apr_falls_back_to_gross_when_net_missing(self):
         result = _make_result(
-            rows=[_make_spread(spread_pct=0.1441, round_trip_fee_pct=0.10)]
+            rows=[_make_spread(annual_apy_pct=300.0, net_apy_pct=None)]
         )
         body = format_digest(result)[0]
-        assert "1-cycle net" in body
-        assert "+0.0441%" in body
+        assert "APR 300%" in body
 
-    def test_one_cycle_net_negative_when_spread_below_round_trip(self):
-        # spread 0.06 < round-trip 0.10 → eating one cycle loses money
-        result = _make_result(
-            rows=[_make_spread(spread_pct=0.06, round_trip_fee_pct=0.10)]
-        )
-        body = format_digest(result)[0]
-        assert "1-cycle net <b>-0.0400%</b>" in body
+    def test_basis_annotation_shown_only_when_material(self):
+        small = _make_result(rows=[_make_spread(base="TINY", mark_spread_pct=0.01)])
+        large = _make_result(rows=[_make_spread(base="BIG", mark_spread_pct=0.30)])
+        assert "mkΔ" not in format_digest(small)[0]
+        assert "mkΔ0.30%" in format_digest(large)[0]
 
     def test_persistence_line_rendered_from_top_rows(self):
         row = _make_spread(
@@ -206,15 +204,16 @@ class TestFormatDigest:
         )
         result = _make_result(rows=[row])
         body = format_digest(result, top_rows=[row])[0]
-        assert "held 22/24 cyc (92%)" in body
-        assert "⚡spike" not in body
+        row_line = next(line for line in body.split("\n") if "BTC" in line)
+        assert "P92%" in row_line
+        assert "⚡" not in row_line
 
     def test_persistence_spike_flag_rendered(self):
         row = _make_spread(
             base="HOME", hist_cycles=24, hist_held=3, hist_held_pct=12, is_spike=True
         )
         body = format_digest(_make_result(rows=[row]), top_rows=[row])[0]
-        assert "⚡spike" in body
+        assert "P12%⚡" in body
 
     def test_ranks_by_real_edge_not_net_edge(self):
         # A row with a big net_edge but huge mark divergence (small real_edge)
@@ -426,6 +425,21 @@ class TestBroadcastDryRun:
         sent, failed = broadcast([], config={}, dry_run=True)
         assert (sent, failed) == (0, 0)
 
+    def test_reply_markup_attached_only_to_last_message(self):
+        markup = {"inline_keyboard": [[{"text": "Dashboard", "url": "https://x"}]]}
+        with patch("notify.telegram_push.send_telegram_message") as m:
+            m.return_value = True
+            broadcast(
+                ["first", "second"],
+                config={"telegram_bot_token": "t", "telegram_chat_id": "c"},
+                reply_markup_last=markup,
+                sleep_between=0,
+            )
+        assert m.call_count == 2
+        first_call, second_call = m.call_args_list
+        assert first_call.kwargs.get("reply_markup") is None
+        assert second_call.kwargs.get("reply_markup") == markup
+
 
 # ---------------------------------------------------------------------------
 # send_telegram_message (mocked HTTP)
@@ -446,6 +460,25 @@ class TestSendTelegramMessage:
             m.return_value = self._mock_response(200)
             assert send_telegram_message("hi", cfg) is True
             m.assert_called_once()
+
+    def test_reply_markup_included_in_payload(self):
+        cfg = {"telegram_bot_token": "tok", "telegram_chat_id": "@ch"}
+        markup = {"inline_keyboard": [[{"text": "Dashboard", "url": "https://x"}]]}
+        with patch("notify.telegram_push.urllib.request.urlopen") as m:
+            m.return_value = self._mock_response(200)
+            send_telegram_message("hi", cfg, reply_markup=markup)
+            req = m.call_args[0][0]
+            body = json.loads(req.data)
+            assert body["reply_markup"] == markup
+
+    def test_no_reply_markup_key_when_not_given(self):
+        cfg = {"telegram_bot_token": "tok", "telegram_chat_id": "@ch"}
+        with patch("notify.telegram_push.urllib.request.urlopen") as m:
+            m.return_value = self._mock_response(200)
+            send_telegram_message("hi", cfg)
+            req = m.call_args[0][0]
+            body = json.loads(req.data)
+            assert "reply_markup" not in body
 
     def test_http_400_raises_runtime_error(self):
         import urllib.error

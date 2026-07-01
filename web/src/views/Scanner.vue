@@ -275,7 +275,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, h, watch } from 'vue'
 import { NCard, NGrid, NGi, NDataTable, NButton, NSpace, NText, NIcon, NSpin, NTag, NEmpty, NInputNumber, NModal, NForm, NFormItem, NSwitch, NSelect, NTooltip, NTabs, NTab, NAlert, NRadioGroup, NRadio, useMessage, type DataTableColumns, type SelectOption, type SelectGroupOption } from 'naive-ui'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import { SearchOutline, TrendingUpOutline, FlashOutline, AnalyticsOutline } from '@vicons/ionicons5'
 import { post, useWebSocket, type ScannerOpportunities, type CarryVenue, type CarryCand, type UnifiedCarryCand, type WsMessage } from '@/composables/useApi'
 import { isDemoMode, useDemoSnapshot } from '@/composables/useDemoSnapshot'
@@ -295,6 +295,7 @@ async function getWalletTrade() {
 }
 
 const { t } = useI18n()
+const route = useRoute()
 
 const CEX_VENUES = CEX_VENUE_RANK
 const PERP_DEX_VENUES = DEX_VENUE_RANK
@@ -320,6 +321,11 @@ type Strategy = 'pure' | 'carry' | 'unified'
 const SCANNER_STRATEGY_KEY = 'scanner_strategy'
 
 function loadSavedStrategy(): Strategy {
+  // Deep-link support (e.g. Telegram digest buttons: /?strategy=carry) takes
+  // priority over the locally remembered tab so a shared link always opens
+  // where it points, regardless of what the visitor last had open.
+  const q = route.query.strategy
+  if (q === 'pure' || q === 'carry' || q === 'unified') return q
   try {
     const v = localStorage.getItem(SCANNER_STRATEGY_KEY)
     if (v === 'pure' || v === 'carry' || v === 'unified') return v
