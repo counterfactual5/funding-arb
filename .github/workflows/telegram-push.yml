@@ -149,19 +149,21 @@ jobs:
           Do **not** open PRs against this branch.
           EOF
 
-          # Tell Vercel to succeed the build on this branch. Without this file,
-          # Vercel tries to build gh-pages (which has no web/ directory) and
-          # fails with "Root Directory 'web' does not exist" — sending error
-          # emails every hour. A trivial buildCommand makes it succeed silently.
-          cat > vercel.json <<'VZEOF'
+          # Vercel project Root Directory is `web/`. gh-pages has no app to build —
+          # only scanner-latest.json at repo root for raw.githubusercontent.com.
+          # Place a stub web/vercel.json so Vercel sees deploymentEnabled:false and
+          # skips Preview builds (avoids hourly "deployment failed" emails).
+          mkdir -p web
+          cat > web/vercel.json <<'VZEOF'
           {
-            "buildCommand": "echo ok",
-            "outputDirectory": ".",
-            "ignoredBuildStep": ["vercel/steps/build-command"]
+            "$schema": "https://openapi.vercel.sh/vercel.json",
+            "git": {
+              "deploymentEnabled": false
+            }
           }
           VZEOF
 
-          git add scanner-latest.json README.md vercel.json
+          git add scanner-latest.json README.md web/vercel.json
           git commit --allow-empty -m "chore(demo): refresh scanner snapshot [skip ci]"
           git push origin gh-pages
 
