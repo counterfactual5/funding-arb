@@ -138,6 +138,17 @@ jobs:
           Do **not** open PRs against this branch.
           EOF
 
-          git add scanner-latest.json README.md
+          # Tell Vercel to skip the build on this branch. Without this file,
+          # Vercel tries to build gh-pages (which has no web/ directory) and
+          # fails with "Root Directory 'web' does not exist" — sending error
+          # emails every hour. A trivial buildCommand makes it succeed silently.
+          cat > vercel.json <<'VZEOF'
+          {
+            "buildCommand": "echo ok",
+            "outputDirectory": "."
+          }
+          VZEOF
+
+          git add scanner-latest.json README.md vercel.json
           git commit --allow-empty -m "chore(demo): refresh scanner snapshot [skip ci]"
           git push origin gh-pages
