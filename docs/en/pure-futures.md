@@ -109,7 +109,7 @@ Full derivation, per-venue index sources, and a numerical example: see "Cross-In
 | Path | Role |
 | --- | --- |
 | scripts/cli/scan_pure_futures_spreads.py | Scan entry (invokes basis blend) |
-| scripts/strategies/futures/pure_futures_spread.py | Decision engine (pairing, filters, net edge) |
+| scripts/execution/run_pure_futures_spread.py | Automated runner (scan → filter → open/close) |
 | scripts/execution/pure_futures_executor.py | Two-leg order placement and rollback |
 | scripts/execution/pure_futures_watcher.py | Position monitoring |
 | scripts/execution/settle_mismatch_planner.py | Cross-interval cash-flow analysis (executor side) |

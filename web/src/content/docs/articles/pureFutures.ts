@@ -176,7 +176,7 @@ const zhCN: DocSection[] = [
         headers: ['路径', '职责'],
         rows: [
           ['scripts/cli/scan_pure_futures_spreads.py', '扫描入口（含 basis blend 调用）'],
-          ['scripts/strategies/futures/pure_futures_spread.py', '决策引擎（配对、过滤、净边际）'],
+          ['scripts/execution/run_pure_futures_spread.py', '自动执行 runner（scan → filter → open/close）'],
           ['scripts/execution/pure_futures_executor.py', '双腿下单与回滚'],
           ['scripts/execution/pure_futures_watcher.py', '持仓监控'],
           ['scripts/execution/settle_mismatch_planner.py', '跨周期现金流分析（执行侧）'],
@@ -364,7 +364,7 @@ const zhTW: DocSection[] = [
         headers: ['路徑', '職責'],
         rows: [
           ['scripts/cli/scan_pure_futures_spreads.py', '掃描入口（含 basis blend 呼叫）'],
-          ['scripts/strategies/futures/pure_futures_spread.py', '決策引擎（配對、過濾、淨邊際）'],
+          ['scripts/execution/run_pure_futures_spread.py', '自動執行 runner（scan → filter → open/close）'],
           ['scripts/execution/pure_futures_executor.py', '雙腿下單與回滾'],
           ['scripts/execution/pure_futures_watcher.py', '持倉監控'],
           ['scripts/execution/settle_mismatch_planner.py', '跨週期現金流分析（執行側）'],
@@ -546,7 +546,7 @@ const en: DocSection[] = [
         headers: ['Path', 'Role'],
         rows: [
           ['scripts/cli/scan_pure_futures_spreads.py', 'Scan entry (invokes basis blend)'],
-          ['scripts/strategies/futures/pure_futures_spread.py', 'Decision engine (pairing, filters, net edge)'],
+          ['scripts/execution/run_pure_futures_spread.py', 'Automated runner (scan → filter → open/close)'],
           ['scripts/execution/pure_futures_executor.py', 'Two-leg order placement and rollback'],
           ['scripts/execution/pure_futures_watcher.py', 'Position monitoring'],
           ['scripts/execution/settle_mismatch_planner.py', 'Cross-interval cash-flow analysis (executor side)'],

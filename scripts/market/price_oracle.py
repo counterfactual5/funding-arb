@@ -12,7 +12,7 @@ Design:
 - K-lines fetched from primary only (fallback sources provide last price only)
 
 Usage:
-    from venues.price_oracle import fetch_price_with_fallback
+    from market.price_oracle import fetch_price_with_fallback
     px, meta = fetch_price_with_fallback("BTC", "USDT", primary="bitget")
 """
 
