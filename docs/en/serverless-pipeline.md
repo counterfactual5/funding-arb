@@ -23,6 +23,43 @@ The whole pipeline is one-directional: after the scanner runs in CI it writes a 
 - Workflow commits to the gh-pages orphan branch with [skip ci]
 - Vercel dashboard fetches directly from raw.githubusercontent.com at runtime — no rebuild
 
+## External scheduler (cron-job.org)
+
+<!-- id: cron-job-org -->
+
+GitHub Actions `workflow_dispatch` does not run on its own; an external cron service must call the GitHub REST API.
+
+**Endpoint**
+
+```text
+POST https://api.github.com/repos/{owner}/{repo}/actions/workflows/telegram-push.yml/dispatches
+Authorization: Bearer <fine-grained PAT>
+Accept: application/vnd.github+json
+Content-Type: application/json
+```
+
+**PAT scopes**: Repository access for this repo; Permissions → Actions → **Read and write**.
+
+**POST body (recommended)**
+
+```json
+{
+  "ref": "main",
+  "inputs": {
+    "source": "cron",
+    "min_edge": "0.0",
+    "top_n": "10",
+    "include_dex": true
+  }
+}
+```
+
+- `source: "cron"` passes `--skip-if-unchanged` to telegram_push.py: skip the Telegram post when nothing in the Top-N is new or moved vs the previous snapshot (the demo snapshot still refreshes).
+- Manual "Run workflow" in the GitHub UI keeps the default `source=manual` and always posts — useful for debugging.
+- If any step fails, the workflow's `Alert on failure` step posts a link to the run in the same `TELEGRAM_CHAT_ID`.
+
+> ⚠️ If the cron-job.org body omits `"source": "cron"`, anti-spam is disabled and Telegram receives an unconditional post every hour.
+
 ## Why an orphan branch
 
 <!-- id: orphan-branch -->
@@ -65,4 +102,4 @@ VITE_DEMO_MODE=1 npm run dev
 open 'http://localhost:1420/?demo=1'
 ```
 
-useDemoSnapshot.ts auto-refreshes every 10 minutes to surface new commits pushed by the pipeline.
+useDemoSnapshot.ts auto-refreshes every 5 minutes to surface new commits pushed by the pipeline.

@@ -1,13 +1,24 @@
 name: TG Funding Push
 
 on:
-  # NOTE: GitHub Actions' built-in `schedule:` cron is unreliable for
-  # low-activity public repos — observed 3-6h gaps with silently skipped
-  # runs. Hourly cadence is driven by Vercel Cron → workflow_dispatch
-  # (see web/api/trigger-scan.ts + web/vercel.json). A manual dispatch is
-  # always available for testing.
+  # Hourly cadence is driven by an external cron-job.org task that POSTs to
+  # GitHub's workflow_dispatch API (see docs/*/serverless-pipeline.md).
+  # GitHub's built-in schedule: cron is unreliable for low-activity public
+  # repos (observed 3–6h gaps with silently skipped runs).
+  #
+  # Set inputs.source=cron in the cron-job.org POST body so telegram_push.py
+  # receives --skip-if-unchanged (anti-spam). Manual "Run workflow" keeps
+  # source=manual (default) and always posts — useful for debugging.
   workflow_dispatch:
     inputs:
+      source:
+        description: "Trigger source — cron enables skip-if-unchanged anti-spam"
+        type: choice
+        required: false
+        default: manual
+        options:
+          - manual
+          - cron
       min_edge:
         description: "Minimum net edge % (e.g. 0.05)"
         required: false
@@ -77,7 +88,7 @@ jobs:
             --min-edge "${{ github.event.inputs.min_edge || '0.0' }}" \
             --top "${{ github.event.inputs.top_n || '10' }}" \
             --prev-snapshot /tmp/prev-snapshot.json \
-            ${{ github.event_name == 'schedule' && '--skip-if-unchanged' || '' }} \
+            ${{ github.event.inputs.source == 'cron' && '--skip-if-unchanged' || '' }} \
             ${{ (github.event_name != 'workflow_dispatch' || github.event.inputs.include_dex == 'true') && '--include-dex' || '' }}
 
       # ----------------------------------------------------------------
@@ -153,3 +164,17 @@ jobs:
           git add scanner-latest.json README.md vercel.json
           git commit --allow-empty -m "chore(demo): refresh scanner snapshot [skip ci]"
           git push origin gh-pages
+
+      # ----------------------------------------------------------------
+      # Step 3 — Alert on any prior step failure (scan / TG / gh-pages)
+      # ----------------------------------------------------------------
+      - name: Alert on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then exit 0; fi
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d text="⚠️ TG Funding Push failed — https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"

@@ -27,13 +27,49 @@ const zhCN: DocSection[] = [
       {
         type: "ul",
         items: [
-          "GitHub Actions cron 每小时 :07 触发（见 .github/workflows/telegram-push.yml）",
+          "GitHub Actions 每小时触发（cron-job.org → workflow_dispatch；见 .github/workflows/telegram-push.yml）",
           "Scanner 扫描 9 个所、约 946 个永续资产",
           "scripts/notify/telegram_push.py 把 Top-10 摘要推送到 Telegram 频道",
           "scripts/notify/snapshot_to_pages.py 写出 scanner-latest.json",
           "Workflow 用 [skip ci] 提交到 gh-pages 孤儿分支",
           "Vercel 仪表盘运行时直接从 raw.githubusercontent.com 拉取 JSON —— 不触发任何重建",
         ],
+      },
+    ],
+  },
+  {
+    id: "cron-job-org",
+    title: "外部定时调度（cron-job.org）",
+    blocks: [
+      {
+        type: "p",
+        text: "GitHub Actions 的 workflow_dispatch 不会自己按小时跑；需要外部 cron 服务调用 GitHub REST API。使用 fine-grained PAT（Actions: Read and write）POST 到 actions/workflows/telegram-push.yml/dispatches。",
+      },
+      {
+        type: "formula",
+        lines: [
+          'POST https://api.github.com/repos/{owner}/{repo}/actions/workflows/telegram-push.yml/dispatches',
+          'Authorization: Bearer <fine-grained PAT>',
+          "",
+          '{',
+          '  "ref": "main",',
+          '  "inputs": {',
+          '    "source": "cron",',
+          '    "min_edge": "0.0",',
+          '    "top_n": "10",',
+          '    "include_dex": true',
+          "  }",
+          "}",
+        ],
+      },
+      {
+        type: "p",
+        text: "source=cron 会传入 --skip-if-unchanged（Top-N 无变化则跳过 Telegram）；手动 Run workflow 默认 source=manual 始终推送。任一步失败时 Alert on failure 步骤会向 Telegram 发送运行链接。",
+      },
+      {
+        type: "callout",
+        variant: "warn",
+        text: "若 cron-job.org 的 body 未包含 source: cron，防刷屏不会生效，每小时都会无条件推送。",
       },
     ],
   },
@@ -103,7 +139,7 @@ const zhCN: DocSection[] = [
       },
       {
         type: "p",
-        text: "useDemoSnapshot.ts 每 10 分钟自动刷新一次快照，从而把流水线新提交的 JSON 拉到前端。",
+        text: "useDemoSnapshot.ts 每 5 分钟自动刷新一次快照，从而把流水线新提交的 JSON 拉到前端。",
       },
     ],
   },
@@ -136,13 +172,49 @@ const zhTW: DocSection[] = [
       {
         type: "ul",
         items: [
-          "GitHub Actions cron 每小時 :07 觸發（見 .github/workflows/telegram-push.yml）",
+          "GitHub Actions 每小時觸發（cron-job.org → workflow_dispatch；見 .github/workflows/telegram-push.yml）",
           "Scanner 掃描 9 個所、約 946 個永續資產",
           "scripts/notify/telegram_push.py 把 Top-10 摘要推送到 Telegram 頻道",
           "scripts/notify/snapshot_to_pages.py 寫出 scanner-latest.json",
           "Workflow 用 [skip ci] 提交到 gh-pages 孤兒分支",
           "Vercel 儀表盤執行時直接從 raw.githubusercontent.com 拉取 JSON —— 不觸發任何重建",
         ],
+      },
+    ],
+  },
+  {
+    id: "cron-job-org",
+    title: "外部定時調度（cron-job.org）",
+    blocks: [
+      {
+        type: "p",
+        text: "GitHub Actions 的 workflow_dispatch 不會自己按小時跑；需要外部 cron 服務呼叫 GitHub REST API。使用 fine-grained PAT（Actions: Read and write）POST 到 actions/workflows/telegram-push.yml/dispatches。",
+      },
+      {
+        type: "formula",
+        lines: [
+          'POST https://api.github.com/repos/{owner}/{repo}/actions/workflows/telegram-push.yml/dispatches',
+          'Authorization: Bearer <fine-grained PAT>',
+          "",
+          '{',
+          '  "ref": "main",',
+          '  "inputs": {',
+          '    "source": "cron",',
+          '    "min_edge": "0.0",',
+          '    "top_n": "10",',
+          '    "include_dex": true',
+          "  }",
+          "}",
+        ],
+      },
+      {
+        type: "p",
+        text: "source=cron 會傳入 --skip-if-unchanged（Top-N 無變化則跳過 Telegram）；手動 Run workflow 預設 source=manual 始終推送。任一步失敗時 Alert on failure 步驟會向 Telegram 發送執行連結。",
+      },
+      {
+        type: "callout",
+        variant: "warn",
+        text: "若 cron-job.org 的 body 未包含 source: cron，防刷屏不會生效，每小時都會無條件推送。",
       },
     ],
   },
@@ -212,7 +284,7 @@ const zhTW: DocSection[] = [
       },
       {
         type: "p",
-        text: "useDemoSnapshot.ts 每 10 分鐘自動刷新一次快照，從而把管線新提交的 JSON 拉到前端。",
+        text: "useDemoSnapshot.ts 每 5 分鐘自動刷新一次快照，從而把管線新提交的 JSON 拉到前端。",
       },
     ],
   },
@@ -245,13 +317,49 @@ const en: DocSection[] = [
       {
         type: "ul",
         items: [
-          "GitHub Actions cron fires hourly at :07 (see .github/workflows/telegram-push.yml)",
+          "GitHub Actions fires hourly (cron-job.org → workflow_dispatch; see .github/workflows/telegram-push.yml)",
           "Scanner scans 9 venues / ~946 perpetual assets",
           "scripts/notify/telegram_push.py posts the Top-10 digest to the Telegram channel",
           "scripts/notify/snapshot_to_pages.py writes scanner-latest.json",
           "Workflow commits to the gh-pages orphan branch with [skip ci]",
           "Vercel dashboard fetches directly from raw.githubusercontent.com at runtime — no rebuild",
         ],
+      },
+    ],
+  },
+  {
+    id: "cron-job-org",
+    title: "External scheduler (cron-job.org)",
+    blocks: [
+      {
+        type: "p",
+        text: "GitHub Actions workflow_dispatch does not run on its own; an external cron service must call the GitHub REST API. Use a fine-grained PAT (Actions: Read and write) to POST to actions/workflows/telegram-push.yml/dispatches.",
+      },
+      {
+        type: "formula",
+        lines: [
+          'POST https://api.github.com/repos/{owner}/{repo}/actions/workflows/telegram-push.yml/dispatches',
+          'Authorization: Bearer <fine-grained PAT>',
+          "",
+          '{',
+          '  "ref": "main",',
+          '  "inputs": {',
+          '    "source": "cron",',
+          '    "min_edge": "0.0",',
+          '    "top_n": "10",',
+          '    "include_dex": true',
+          "  }",
+          "}",
+        ],
+      },
+      {
+        type: "p",
+        text: "source=cron passes --skip-if-unchanged (skip Telegram when Top-N unchanged); manual Run workflow keeps source=manual and always posts. Alert on failure sends a run link to Telegram if any step fails.",
+      },
+      {
+        type: "callout",
+        variant: "warn",
+        text: "If the cron-job.org body omits source: cron, anti-spam is disabled and Telegram receives an unconditional post every hour.",
       },
     ],
   },
@@ -321,7 +429,7 @@ const en: DocSection[] = [
       },
       {
         type: "p",
-        text: "useDemoSnapshot.ts auto-refreshes every 10 minutes to surface new commits pushed by the pipeline.",
+        text: "useDemoSnapshot.ts auto-refreshes every 5 minutes to surface new commits pushed by the pipeline.",
       },
     ],
   },
