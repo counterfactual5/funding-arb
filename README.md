@@ -2,7 +2,7 @@
 
 Cross-exchange **funding rate** arbitrage: Cash-and-Carry, unified cross-venue carry, and **Pure Futures** (perp–perp) spreads — with a **Vue dashboard**, CLI, and optional **Tauri** desktop shell.
 
-**🌐 Live Demo:** <https://funding-arb-drab.vercel.app> — hourly-updated scanner snapshot, no signup.
+**🌐 Live Demo:** <https://funding-arb.llm.christmas> — hourly-updated scanner snapshot, no signup.
 
 **📡 Telegram Channel:** [@FundingArbDigest](https://t.me/FundingArbDigest) — top funding spreads pushed every hour.
 
